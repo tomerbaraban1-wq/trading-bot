@@ -1,4 +1,5 @@
 import time
+import threading
 import logging
 try:
     import yfinance as yf
@@ -24,6 +25,7 @@ class TVPaperBroker(BrokerBase):
     # Class-level state — shared across all instances
     _positions: dict = {}   # ticker -> {"qty": int, "avg_cost": float}
     _cash: float = None     # initialised lazily from settings.MAX_BUDGET
+    _lock = threading.Lock()  # guards buy/sell mutations against race conditions
 
     # ------------------------------------------------------------------ #
     #  Construction                                                        #
@@ -169,31 +171,34 @@ class TVPaperBroker(BrokerBase):
         if qty <= 0:
             raise ValueError(f"qty must be positive, got {qty}")
 
-        # Use provided price or fetch from yfinance
+        # Use provided price or fetch from yfinance (outside lock - I/O)
         if price and price > 0:
             current_price = float(price)
         else:
             current_price = self._get_price(ticker)  # raises if price = 0
 
         cost = current_price * qty
-        if cost > TVPaperBroker._cash:
-            raise ValueError(
-                f"Insufficient virtual cash: need ${cost:,.2f} "
-                f"but only ${TVPaperBroker._cash:,.2f} available"
-            )
 
-        # Update position (weighted average cost if already held)
-        if ticker in TVPaperBroker._positions:
-            existing = TVPaperBroker._positions[ticker]
-            old_qty = existing["qty"]
-            old_cost = existing["avg_cost"]
-            new_qty = old_qty + qty
-            new_avg = (old_cost * old_qty + current_price * qty) / new_qty
-            TVPaperBroker._positions[ticker] = {"qty": new_qty, "avg_cost": new_avg}
-        else:
-            TVPaperBroker._positions[ticker] = {"qty": qty, "avg_cost": current_price}
+        # Atomic cash check + mutation under lock to prevent over-spending race
+        with TVPaperBroker._lock:
+            if cost > TVPaperBroker._cash:
+                raise ValueError(
+                    f"Insufficient virtual cash: need ${cost:,.2f} "
+                    f"but only ${TVPaperBroker._cash:,.2f} available"
+                )
 
-        TVPaperBroker._cash -= cost
+            # Update position (weighted average cost if already held)
+            if ticker in TVPaperBroker._positions:
+                existing = TVPaperBroker._positions[ticker]
+                old_qty = existing["qty"]
+                old_cost = existing["avg_cost"]
+                new_qty = old_qty + qty
+                new_avg = (old_cost * old_qty + current_price * qty) / new_qty
+                TVPaperBroker._positions[ticker] = {"qty": new_qty, "avg_cost": new_avg}
+            else:
+                TVPaperBroker._positions[ticker] = {"qty": qty, "avg_cost": current_price}
+
+            TVPaperBroker._cash -= cost
 
         order_id = self._order_id(ticker)
         logger.info(
@@ -230,12 +235,14 @@ class TVPaperBroker(BrokerBase):
         current_price = self._get_price(ticker)  # raises if price = 0
         proceeds = current_price * sell_qty
 
-        if sell_qty >= held_qty:
-            del TVPaperBroker._positions[ticker]
-        else:
-            TVPaperBroker._positions[ticker]["qty"] = held_qty - sell_qty
+        # Atomic state mutation under lock
+        with TVPaperBroker._lock:
+            if sell_qty >= held_qty:
+                TVPaperBroker._positions.pop(ticker, None)
+            else:
+                TVPaperBroker._positions[ticker]["qty"] = held_qty - sell_qty
 
-        TVPaperBroker._cash += proceeds
+            TVPaperBroker._cash += proceeds
 
         order_id = self._order_id(ticker)
         logger.info(

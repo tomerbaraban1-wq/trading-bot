@@ -93,7 +93,8 @@ async def stop_loss_monitor():
                     if plpc <= -settings.STOP_LOSS_PCT:
                         logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
                         order = broker.submit_sell(ticker)
-                        exit_price = float(position.get("current_price", trade["entry_price"]))
+                        # Use actual fill price from broker, not the pre-sell snapshot
+                        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
                         tax_result = process_trade_close(trade["id"], pnl_gross)
@@ -106,7 +107,7 @@ async def stop_loss_monitor():
                     elif plpc >= settings.TAKE_PROFIT_PCT:
                         logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
                         order = broker.submit_sell(ticker)
-                        exit_price = float(position.get("current_price", trade["entry_price"]))
+                        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
                         tax_result = process_trade_close(trade["id"], pnl_gross)
