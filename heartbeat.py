@@ -127,14 +127,16 @@ async def stop_loss_monitor():
 
 
 async def auto_invest_loop():
-    """Background task: run auto-invest every hour to scan and buy stocks."""
-    await asyncio.sleep(60)  # wait 1 minute after startup before first scan
+    """Background task: scan and buy every 5 minutes using full composite scoring."""
+    await asyncio.sleep(60)  # wait 1 min after startup
     while True:
         try:
-            logger.info("AUTO-INVEST: Starting scheduled scan...")
+            logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
             from scanner import WATCHLIST
             from sentiment import score_sentiment
-            from budget import get_budget_status, check_can_buy, calculate_position_size
+            from scoring import get_composite_score
+            from budget import get_budget_status, check_can_buy
+            from trade_logger import log_trade
             import asyncio as _asyncio
 
             status = get_budget_status()
@@ -143,37 +145,52 @@ async def auto_invest_loop():
             if remaining < 10:
                 logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
             else:
-                # Score all tickers
+                # Step 1: Score ALL tickers with composite engine
                 scored = []
                 for ticker in WATCHLIST[:15]:
+                    # Skip if already have open position
+                    existing = database.get_open_trade_by_ticker(ticker)
+                    if existing:
+                        continue
                     try:
-                        score, reasoning = await _asyncio.to_thread(score_sentiment, ticker)
-                        if score >= getattr(settings, 'SENTIMENT_MIN_SCORE', 4):
-                            scored.append((ticker, score, reasoning))
+                        sentiment = await _asyncio.to_thread(score_sentiment, ticker)
+                        composite = await _asyncio.to_thread(
+                            get_composite_score, ticker, sentiment.score
+                        )
+                        logger.info(
+                            f"AUTO-INVEST: {ticker} → score={composite['composite_score']}/100 "
+                            f"({'BUY' if composite['should_buy'] else 'SKIP'})"
+                        )
+                        if composite["should_buy"]:
+                            scored.append((ticker, composite["composite_score"], sentiment))
                     except Exception as e:
-                        logger.warning(f"AUTO-INVEST: sentiment error for {ticker}: {e}")
+                        logger.warning(f"AUTO-INVEST: score error for {ticker}: {e}")
 
+                # Step 2: Sort by score — buy highest scoring first
                 scored.sort(key=lambda x: x[1], reverse=True)
                 bought = 0
 
-                for ticker, score, reasoning in scored:
+                for ticker, comp_score, sentiment in scored:
                     try:
                         price = await _asyncio.to_thread(broker.get_price, ticker)
                         if not price or price <= 0:
                             continue
                         can_buy, qty, reason = check_can_buy(ticker, price, remaining)
                         if not can_buy or qty <= 0:
+                            logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
                             continue
                         order = await _asyncio.to_thread(broker.submit_buy, ticker, qty)
                         actual_price = float(order.get("price") or price)
                         spent = actual_price * qty
                         remaining -= spent
                         bought += 1
-                        from trade_logger import log_trade
-                        from database import get_open_trades
                         log_trade(ticker, "buy", qty, actual_price,
-                                  sentiment_score=score, sentiment_reasoning=reasoning)
-                        logger.info(f"AUTO-INVEST: Bought {qty}x {ticker} @ ${actual_price:.2f}")
+                                  sentiment_score=sentiment.score,
+                                  sentiment_reasoning=sentiment.reasoning)
+                        logger.info(
+                            f"AUTO-INVEST: ✅ Bought {qty}x {ticker} @ ${actual_price:.2f} "
+                            f"(score={comp_score}/100)"
+                        )
                         if remaining < 10:
                             break
                     except Exception as e:
