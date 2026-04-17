@@ -270,7 +270,7 @@ async def emergency_exit(ticker: str):
             raise HTTPException(status_code=404, detail=f"No broker position for {ticker}")
 
         order = broker.submit_sell(ticker)
-        exit_price = position["current_price"]
+        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
 
         from tax_tracker import process_trade_close

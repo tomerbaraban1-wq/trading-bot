@@ -181,3 +181,25 @@ def is_market_open() -> bool:
 
 def get_asset(ticker: str) -> dict | None:
     return _get_broker().get_asset(ticker)
+
+
+def get_price(ticker: str) -> float | None:
+    """Get the current market price for a ticker."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper())
+        hist = t.history(period="1d", interval="1m")
+        if not hist.empty:
+            price = float(hist["Close"].iloc[-1])
+            if price > 0:
+                return price
+        info = t.info
+        price = float(
+            info.get("regularMarketPrice") or
+            info.get("currentPrice") or
+            info.get("previousClose") or 0
+        )
+        return price if price > 0 else None
+    except Exception as e:
+        logger.warning(f"get_price failed for {ticker}: {e}")
+        return None

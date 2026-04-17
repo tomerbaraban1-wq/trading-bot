@@ -11,6 +11,9 @@ from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily
 
 logger = logging.getLogger(__name__)
 
+# Smart sell throttle: ticker -> last_check_timestamp (check max every 5 minutes)
+_smart_sell_last_check: dict = {}
+
 
 async def keep_alive_loop():
     """Ping ourselves every 10 minutes so Render free tier never sleeps."""
@@ -135,26 +138,30 @@ async def stop_loss_monitor():
                         await notify_sell(ticker, exit_price, pnl_gross, f"Take Profit ({plpc:.1f}%)")
 
                     else:
-                        # Smart sell: exit if composite score drops too low
-                        try:
-                            from scoring import get_composite_score
-                            score_result = await asyncio.to_thread(get_composite_score, ticker, 5)
-                            comp = score_result["composite_score"]
-                            if comp < 30:
-                                logger.warning(f"SMART SELL: {ticker} composite score={comp}/100 — exiting weak position")
-                                order = broker.submit_sell(ticker)
-                                exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
-                                pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
-                                from tax_tracker import process_trade_close
-                                tax_result = process_trade_close(trade["id"], pnl_gross)
-                                pnl_net = pnl_gross - tax_result["tax_amount"]
-                                log_trade_close(
-                                    trade["id"], exit_price, pnl_gross, pnl_net,
-                                    tax_result["tax_amount"], 0.0, "smart_sell",
-                                )
-                                await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
-                        except Exception as se:
-                            logger.warning(f"Smart sell check error for {ticker}: {se}")
+                        # Smart sell: exit if composite score drops too low (max once per 5 min)
+                        import time as _time
+                        last = _smart_sell_last_check.get(ticker, 0)
+                        if _time.time() - last >= 300:
+                            try:
+                                _smart_sell_last_check[ticker] = _time.time()
+                                from scoring import get_composite_score
+                                score_result = await asyncio.to_thread(get_composite_score, ticker, 5)
+                                comp = score_result["composite_score"]
+                                if comp < 30:
+                                    logger.warning(f"SMART SELL: {ticker} composite score={comp}/100 — exiting weak position")
+                                    order = broker.submit_sell(ticker)
+                                    exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
+                                    pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
+                                    from tax_tracker import process_trade_close
+                                    tax_result = process_trade_close(trade["id"], pnl_gross)
+                                    pnl_net = pnl_gross - tax_result["tax_amount"]
+                                    log_trade_close(
+                                        trade["id"], exit_price, pnl_gross, pnl_net,
+                                        tax_result["tax_amount"], 0.0, "smart_sell",
+                                    )
+                                    await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
+                            except Exception as se:
+                                logger.warning(f"Smart sell check error for {ticker}: {se}")
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
@@ -270,7 +277,7 @@ async def _emergency_exit(trade: dict):
             return
 
         order = broker.submit_sell(ticker)
-        exit_price = position["current_price"]
+        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
 
         from tax_tracker import process_trade_close
