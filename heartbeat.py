@@ -186,7 +186,7 @@ async def auto_invest_loop():
         except Exception as e:
             logger.error(f"AUTO-INVEST loop error: {e}")
 
-        await asyncio.sleep(60 * 60)  # run every hour
+        await asyncio.sleep(5 * 60)  # run every 5 minutes
 
 
 async def _emergency_exit(trade: dict):
