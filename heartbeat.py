@@ -7,6 +7,7 @@ import budget
 import database
 from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_close
+from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,6 @@ async def stop_loss_monitor():
                     if plpc <= -settings.STOP_LOSS_PCT:
                         logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
                         order = broker.submit_sell(ticker)
-                        # Use actual fill price from broker, not the pre-sell snapshot
                         exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
@@ -118,6 +118,7 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "stop_loss",
                         )
+                        await notify_sell(ticker, exit_price, pnl_gross, f"Stop Loss ({plpc:.1f}%)")
 
                     elif plpc >= settings.TAKE_PROFIT_PCT:
                         logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
@@ -131,6 +132,29 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "take_profit",
                         )
+                        await notify_sell(ticker, exit_price, pnl_gross, f"Take Profit ({plpc:.1f}%)")
+
+                    else:
+                        # Smart sell: exit if composite score drops too low
+                        try:
+                            from scoring import get_composite_score
+                            score_result = await asyncio.to_thread(get_composite_score, ticker, 5)
+                            comp = score_result["composite_score"]
+                            if comp < 30:
+                                logger.warning(f"SMART SELL: {ticker} composite score={comp}/100 — exiting weak position")
+                                order = broker.submit_sell(ticker)
+                                exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
+                                pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
+                                from tax_tracker import process_trade_close
+                                tax_result = process_trade_close(trade["id"], pnl_gross)
+                                pnl_net = pnl_gross - tax_result["tax_amount"]
+                                log_trade_close(
+                                    trade["id"], exit_price, pnl_gross, pnl_net,
+                                    tax_result["tax_amount"], 0.0, "smart_sell",
+                                )
+                                await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
+                        except Exception as se:
+                            logger.warning(f"Smart sell check error for {ticker}: {se}")
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
@@ -147,6 +171,7 @@ async def auto_invest_loop():
     while True:
         try:
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
+            import random
             from scanner import WATCHLIST
             from sentiment import score_sentiment
             from scoring import get_composite_score
@@ -160,9 +185,11 @@ async def auto_invest_loop():
             if remaining < 10:
                 logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
             else:
-                # Step 1: Score tickers in PARALLEL for speed
+                # Step 1: Shuffle watchlist for diversification — different stocks each scan
+                shuffled = WATCHLIST.copy()
+                random.shuffle(shuffled)
                 candidates = [
-                    t for t in WATCHLIST[:10]
+                    t for t in shuffled[:15]
                     if not database.get_open_trade_by_ticker(t)
                 ]
 
@@ -217,6 +244,7 @@ async def auto_invest_loop():
                             f"AUTO-INVEST: ✅ Bought {qty}x {ticker} @ ${actual_price:.2f} "
                             f"(score={comp_score}/100)"
                         )
+                        await notify_buy(ticker, qty, actual_price, comp_score, sentiment.score)
                         if remaining < 10:
                             break
                     except Exception as e:
@@ -254,9 +282,55 @@ async def _emergency_exit(trade: dict):
             tax_result["tax_amount"], 0.0, "emergency_exit",
         )
 
+        await notify_emergency(ticker, f"Critically bearish sentiment | PnL=${pnl_gross:+.2f}")
         logger.warning(
             f"EMERGENCY EXIT COMPLETE: {ticker} | PnL=${pnl_gross:+.2f} | "
             f"Reason: Critically bearish sentiment"
         )
     except Exception as e:
         logger.error(f"Emergency exit FAILED for {ticker}: {e}")
+
+
+async def daily_summary_loop():
+    """Background task: send daily summary to Telegram at market close (~4pm ET)."""
+    import datetime
+    while True:
+        try:
+            now = datetime.datetime.utcnow()
+            # Market closes at ~21:00 UTC (4pm ET)
+            target = now.replace(hour=21, minute=5, second=0, microsecond=0)
+            if now >= target:
+                target += datetime.timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            await asyncio.sleep(wait_seconds)
+
+            # Build summary from today's closed trades
+            today = datetime.datetime.utcnow().date()
+            all_trades = database.get_trade_history(limit=200)
+            today_trades = [
+                t for t in all_trades
+                if t.get("exit_time") and t["exit_time"][:10] == str(today)
+            ]
+            wins = [t for t in today_trades if (t.get("pnl_gross") or 0) > 0]
+            losses = [t for t in today_trades if (t.get("pnl_gross") or 0) <= 0]
+            total_pnl = sum(t.get("pnl_gross") or 0 for t in today_trades)
+
+            open_trades = database.get_open_trades()
+            status = budget.get_budget_status()
+            equity = status.get("positions_value", 0) + status.get("cash_available", 0)
+
+            await notify_daily_summary(
+                total_trades=len(today_trades),
+                wins=len(wins),
+                losses=len(losses),
+                total_pnl=total_pnl,
+                open_positions=len(open_trades),
+                equity=equity,
+            )
+            logger.info(f"Daily summary sent: {len(today_trades)} trades, PnL=${total_pnl:+.2f}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Daily summary error: {e}")
+            await asyncio.sleep(3600)  # retry in 1 hour on error
