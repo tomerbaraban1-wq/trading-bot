@@ -67,12 +67,52 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
             "reasoning": sentiment.reasoning,
         }
 
+    # Get full indicator snapshot for learning + market conditions check
+    from indicators import get_current_indicators, get_market_conditions
+    from learning import should_override_buy, get_dynamic_thresholds
+    try:
+        indicators = await asyncio.to_thread(get_current_indicators, ticker) or {}
+        market = await asyncio.to_thread(get_market_conditions)
+    except Exception:
+        indicators = {}
+        market = {}
+
+    # Block if market is too fearful (VIX > 35)
+    vix = market.get("vix")
+    if vix and vix > 35:
+        return {"status": "blocked_by_market", "reason": f"VIX too high ({vix}) — market too fearful"}
+
+    # Block if SPY is in downtrend
+    if market.get("spy_above_sma50") is False:
+        return {"status": "blocked_by_market", "reason": "SPY below SMA50 — market in downtrend"}
+
+    # Dynamic threshold checks
+    thresholds = get_dynamic_thresholds()
+    rsi = indicators.get("rsi")
+    if rsi is not None:
+        if rsi > thresholds["max_rsi"]:
+            return {"status": "blocked_by_indicators", "reason": f"RSI {rsi:.1f} too high (max {thresholds['max_rsi']})"}
+        if rsi < thresholds["min_rsi"]:
+            return {"status": "blocked_by_indicators", "reason": f"RSI {rsi:.1f} too low (min {thresholds['min_rsi']})"}
+
+    bb_pos = indicators.get("bb_position")
+    if bb_pos is not None and bb_pos > thresholds["max_bb_position"]:
+        return {"status": "blocked_by_indicators", "reason": f"Price near Bollinger Band top ({bb_pos:.2f})"}
+
+    vol_ratio = indicators.get("volume_ratio")
+    if vol_ratio is not None and vol_ratio < thresholds["min_volume_ratio"]:
+        return {"status": "blocked_by_indicators", "reason": f"Volume too low ({vol_ratio:.2f}x average)"}
+
+    # Stochastic overbought check
+    if indicators.get("stoch_overbought"):
+        return {"status": "blocked_by_indicators", "reason": f"Stochastic overbought ({indicators.get('stoch_k'):.1f})"}
+
+    # MACD must be bullish
+    if indicators.get("macd_bullish") is False:
+        return {"status": "blocked_by_indicators", "reason": "MACD bearish — no buy signal"}
+
     # Learning check - known loss patterns
-    from learning import should_override_buy
-    should_block, block_reason = should_override_buy(ticker, {
-        "rsi": payload.rsi,
-        "macd": payload.macd,
-    })
+    should_block, block_reason = should_override_buy(ticker, indicators)
     if should_block:
         logger.info(f"BUY blocked by learning: {ticker} - {block_reason}")
         return {"status": "blocked_by_learning", "reason": block_reason}
