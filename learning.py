@@ -22,7 +22,7 @@ def get_dynamic_thresholds() -> dict:
 def _update_thresholds():
     """Analyze trade history and auto-adjust thresholds."""
     losses = get_loss_trades(limit=30)
-    wins = get_win_trades(limit=30) if hasattr(__import__('database'), 'get_win_trades') else []
+    wins = get_win_trades(limit=30)
 
     if len(losses) < 3:
         return  # not enough data yet
