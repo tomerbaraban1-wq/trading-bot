@@ -194,7 +194,7 @@ async def auto_invest_loop():
                         price = await _asyncio.to_thread(broker.get_price, ticker)
                         if not price or price <= 0:
                             continue
-                        can_buy, qty, reason = check_can_buy(ticker, price, remaining)
+                        can_buy, qty, reason = check_can_buy(price)
                         if not can_buy or qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
                             continue

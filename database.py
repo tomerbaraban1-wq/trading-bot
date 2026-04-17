@@ -209,6 +209,15 @@ def get_loss_trades(limit: int = 20) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_win_trades(limit: int = 20) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM trade_log WHERE status IN ('closed','emergency_exit') AND pnl_gross > 0 ORDER BY entry_time DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 # ===== Tax Events =====
 
 def save_tax_event(trade_id: int, event_type: str, amount: float):
