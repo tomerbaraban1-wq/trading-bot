@@ -1,0 +1,60 @@
+INFO:     Started server process [16204]
+INFO:     Waiting for application startup.
+2026-04-16 10:43:24,258 | database | INFO | Database initialized
+2026-04-16 10:43:24,259 | main | INFO | === Trading Bot Started ===
+2026-04-16 10:43:24,259 | main | INFO | Budget: $10,000.00 | Broker: https://paper-api.alpaca.markets
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-04-16 10:43:24,905 | __main__ | INFO | tunnel: TUNNEL_URL=https://social-towns-pump.loca.lt
+2026-04-16 10:43:24,905 | __main__ | INFO | Webhook URL: https://social-towns-pump.loca.lt/webhook
+2026-04-16 10:43:25,222 | __main__ | INFO | Tunnel URL from file: https://social-towns-pump.loca.lt
+2026-04-16 10:43:28,599 | broker | INFO | Initialising broker: alpaca_paper
+INFO:     127.0.0.1:57256 - "GET /status HTTP/1.1" 200 OK
+2026-04-16 10:43:30,077 | broker | INFO | Switching broker to: tv_paper
+2026-04-16 10:43:30,079 | broker_tv_paper | INFO | TradingView Paper Broker ready | Cash: $10,000.00 | Positions: none
+2026-04-16 10:43:30,083 | broker | INFO | Active broker is now: tv_paper
+2026-04-16 10:43:30,083 | webhook | INFO | Broker switched to: tv_paper
+INFO:     127.0.0.1:57256 - "POST /broker HTTP/1.1" 200 OK
+2026-04-16 10:43:30,087 | webhook | INFO | Budget updated to $1,000.00
+2026-04-16 10:43:30,087 | webhook | INFO | Broker switched to: tv_paper
+INFO:     127.0.0.1:57258 - "POST /settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57263 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57264 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57480 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57487 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57626 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57627 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57635 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57638 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57653 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57654 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57666 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57667 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57677 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57679 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57686 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57687 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57694 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57695 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57704 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57705 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57714 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57715 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57730 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57731 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57758 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57759 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57770 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57771 - "GET /status HTTP/1.1" 200 OK
+2026-04-16 10:48:24,278 | heartbeat | INFO | HEARTBEAT: 0 positions | Budget: 0.0% used | Equity: $10,000.00
+INFO:     127.0.0.1:57776 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57777 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57792 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57793 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57800 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57801 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57808 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57809 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57814 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57815 - "GET /status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57821 - "GET /status HTTP/1.1" 200 OK

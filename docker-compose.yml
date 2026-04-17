@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  tradebot:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - trade_data:/app/data
+      - trade_logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  trade_data:
+  trade_logs:
