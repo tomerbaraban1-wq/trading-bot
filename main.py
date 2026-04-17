@@ -48,11 +48,12 @@ async def lifespan(app: FastAPI):
     logger.info("=== Trading Bot Started ===")
     logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {settings.ALPACA_BASE_URL}")
 
-    from heartbeat import heartbeat_loop, sentiment_monitor, stop_loss_monitor, auto_invest_loop
+    from heartbeat import heartbeat_loop, sentiment_monitor, stop_loss_monitor, auto_invest_loop, keep_alive_loop
     heartbeat_task = asyncio.create_task(heartbeat_loop())
     sentiment_task = asyncio.create_task(sentiment_monitor())
     stop_loss_task = asyncio.create_task(stop_loss_monitor())
     auto_invest_task = asyncio.create_task(auto_invest_loop())
+    keep_alive_task = asyncio.create_task(keep_alive_loop())
 
     yield
 
@@ -61,22 +62,12 @@ async def lifespan(app: FastAPI):
     sentiment_task.cancel()
     stop_loss_task.cancel()
     auto_invest_task.cancel()
-    try:
-        await heartbeat_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await sentiment_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await stop_loss_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await auto_invest_task
-    except asyncio.CancelledError:
-        pass
+    keep_alive_task.cancel()
+    for task in [heartbeat_task, sentiment_task, stop_loss_task, auto_invest_task, keep_alive_task]:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     close_connections()
     logger.info("=== Trading Bot Stopped ===")
 

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import aiohttp
 from config import settings
 import broker
 import budget
@@ -8,6 +9,20 @@ from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_close
 
 logger = logging.getLogger(__name__)
+
+
+async def keep_alive_loop():
+    """Ping ourselves every 10 minutes so Render free tier never sleeps."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            port = getattr(settings, "PORT", 8000)
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://localhost:{port}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    logger.debug(f"Keep-alive ping: {resp.status}")
+        except Exception:
+            pass
+        await asyncio.sleep(10 * 60)  # every 10 minutes
 
 
 async def heartbeat_loop():
