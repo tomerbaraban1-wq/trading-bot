@@ -145,26 +145,30 @@ async def auto_invest_loop():
             if remaining < 10:
                 logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
             else:
-                # Step 1: Score ALL tickers with composite engine
-                scored = []
-                for ticker in WATCHLIST[:15]:
-                    # Skip if already have open position
-                    existing = database.get_open_trade_by_ticker(ticker)
-                    if existing:
-                        continue
+                # Step 1: Score tickers in PARALLEL for speed
+                candidates = [
+                    t for t in WATCHLIST[:10]
+                    if not database.get_open_trade_by_ticker(t)
+                ]
+
+                async def score_ticker(ticker):
                     try:
                         sentiment = await _asyncio.to_thread(score_sentiment, ticker)
                         composite = await _asyncio.to_thread(
                             get_composite_score, ticker, sentiment.score
                         )
                         logger.info(
-                            f"AUTO-INVEST: {ticker} → score={composite['composite_score']}/100 "
-                            f"({'BUY' if composite['should_buy'] else 'SKIP'})"
+                            f"AUTO-INVEST: {ticker} → {composite['composite_score']}/100 "
+                            f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
                         )
                         if composite["should_buy"]:
-                            scored.append((ticker, composite["composite_score"], sentiment))
+                            return (ticker, composite["composite_score"], sentiment)
                     except Exception as e:
                         logger.warning(f"AUTO-INVEST: score error for {ticker}: {e}")
+                    return None
+
+                results = await _asyncio.gather(*[score_ticker(t) for t in candidates])
+                scored = [r for r in results if r is not None]
 
                 # Step 2: Sort by score — buy highest scoring first
                 scored.sort(key=lambda x: x[1], reverse=True)
