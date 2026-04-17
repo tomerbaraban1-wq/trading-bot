@@ -198,7 +198,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     mkt_score, mkt_breakdown = score_market(market)
 
     # Sentiment score — convert 1-10 to 0-100 (20% weight)
-    sent_score = (sentiment_score - 1) / 9 * 100
+    sent_score = max(0, min(100, (max(1, sentiment_score) - 1) / 9 * 100))
 
     # Weighted composite
     composite = round(

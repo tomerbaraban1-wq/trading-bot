@@ -151,7 +151,7 @@ async def auto_invest_loop():
             from sentiment import score_sentiment
             from scoring import get_composite_score
             from budget import get_budget_status, check_can_buy
-            from trade_logger import log_trade
+            from trade_logger import log_trade_open as _log_trade_open
             import asyncio as _asyncio
 
             status = get_budget_status()
@@ -203,9 +203,16 @@ async def auto_invest_loop():
                         spent = actual_price * qty
                         remaining -= spent
                         bought += 1
-                        log_trade(ticker, "buy", qty, actual_price,
-                                  sentiment_score=sentiment.score,
-                                  sentiment_reasoning=sentiment.reasoning)
+                        # Log trade using database directly (no WebhookPayload available here)
+                        from database import save_trade
+                        save_trade({
+                            "ticker": ticker, "action": "buy", "qty": qty,
+                            "entry_price": actual_price, "trailing_stop_pct": None,
+                            "rsi": None, "macd": None, "macd_signal": None,
+                            "bb_position": None, "volume_ratio": None,
+                            "sentiment_score": sentiment.score,
+                            "sentiment_reasoning": sentiment.reasoning,
+                        })
                         logger.info(
                             f"AUTO-INVEST: ✅ Bought {qty}x {ticker} @ ${actual_price:.2f} "
                             f"(score={comp_score}/100)"
