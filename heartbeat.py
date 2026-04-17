@@ -126,6 +126,69 @@ async def stop_loss_monitor():
             logger.error(f"Stop loss monitor error: {e}")
 
 
+async def auto_invest_loop():
+    """Background task: run auto-invest every hour to scan and buy stocks."""
+    await asyncio.sleep(60)  # wait 1 minute after startup before first scan
+    while True:
+        try:
+            logger.info("AUTO-INVEST: Starting scheduled scan...")
+            from scanner import WATCHLIST
+            from sentiment import score_sentiment
+            from budget import get_budget_status, check_can_buy, calculate_position_size
+            import asyncio as _asyncio
+
+            status = get_budget_status()
+            remaining = float(status.get("cash_available", 0))
+
+            if remaining < 10:
+                logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
+            else:
+                # Score all tickers
+                scored = []
+                for ticker in WATCHLIST[:15]:
+                    try:
+                        score, reasoning = await _asyncio.to_thread(score_sentiment, ticker)
+                        if score >= getattr(settings, 'SENTIMENT_MIN_SCORE', 4):
+                            scored.append((ticker, score, reasoning))
+                    except Exception as e:
+                        logger.warning(f"AUTO-INVEST: sentiment error for {ticker}: {e}")
+
+                scored.sort(key=lambda x: x[1], reverse=True)
+                bought = 0
+
+                for ticker, score, reasoning in scored:
+                    try:
+                        price = await _asyncio.to_thread(broker.get_price, ticker)
+                        if not price or price <= 0:
+                            continue
+                        can_buy, qty, reason = check_can_buy(ticker, price, remaining)
+                        if not can_buy or qty <= 0:
+                            continue
+                        order = await _asyncio.to_thread(broker.submit_buy, ticker, qty)
+                        actual_price = float(order.get("price") or price)
+                        spent = actual_price * qty
+                        remaining -= spent
+                        bought += 1
+                        from trade_logger import log_trade
+                        from database import get_open_trades
+                        log_trade(ticker, "buy", qty, actual_price,
+                                  sentiment_score=score, sentiment_reasoning=reasoning)
+                        logger.info(f"AUTO-INVEST: Bought {qty}x {ticker} @ ${actual_price:.2f}")
+                        if remaining < 10:
+                            break
+                    except Exception as e:
+                        logger.error(f"AUTO-INVEST: Error buying {ticker}: {e}")
+
+                logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"AUTO-INVEST loop error: {e}")
+
+        await asyncio.sleep(60 * 60)  # run every hour
+
+
 async def _emergency_exit(trade: dict):
     """Execute an emergency exit for a trade."""
     ticker = trade["ticker"]
