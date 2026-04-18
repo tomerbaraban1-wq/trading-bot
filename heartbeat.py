@@ -34,7 +34,7 @@ async def heartbeat_loop():
     while True:
         try:
             await asyncio.sleep(settings.HEARTBEAT_INTERVAL_MINUTES * 60)
-            status = budget.get_budget_status()
+            status = await asyncio.to_thread(budget.get_budget_status)
             open_trades = database.get_open_trades()
 
             database.save_heartbeat(
@@ -75,7 +75,13 @@ async def sentiment_monitor():
                     continue
 
                 logger.info(f"Sentiment monitor: checking {ticker}...")
-                is_emergency = check_emergency_sentiment(ticker)
+                try:
+                    is_emergency = await asyncio.wait_for(
+                        asyncio.to_thread(check_emergency_sentiment, ticker), timeout=45
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Sentiment monitor: {ticker} timed out, skipping")
+                    continue
 
                 if is_emergency:
                     logger.warning(f"EMERGENCY: Sentiment critically bearish for {ticker}! Executing exit...")
@@ -103,7 +109,9 @@ async def stop_loss_monitor():
 
                 ticker = trade["ticker"]
                 try:
-                    position = broker.get_position(ticker)
+                    position = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_position, ticker), timeout=15
+                    )
                     if not position:
                         continue
 
@@ -111,7 +119,9 @@ async def stop_loss_monitor():
 
                     if plpc <= -settings.STOP_LOSS_PCT:
                         logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
-                        order = broker.submit_sell(ticker)
+                        order = await asyncio.wait_for(
+                            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+                        )
                         exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
@@ -125,7 +135,9 @@ async def stop_loss_monitor():
 
                     elif plpc >= settings.TAKE_PROFIT_PCT:
                         logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
-                        order = broker.submit_sell(ticker)
+                        order = await asyncio.wait_for(
+                            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+                        )
                         exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
@@ -202,51 +214,51 @@ async def auto_invest_loop():
                 shuffled = WATCHLIST.copy()
                 random.shuffle(shuffled)
                 candidates = [
-                    t for t in shuffled[:8]
+                    t for t in shuffled[:6]
                     if not database.get_open_trade_by_ticker(t)
                 ]
 
-                sem = _asyncio.Semaphore(3)  # max 3 concurrent API calls
-
-                async def score_ticker(ticker):
-                    async with sem:
-                        try:
-                            sentiment = await _asyncio.to_thread(score_sentiment, ticker)
-                            composite = await _asyncio.to_thread(
-                                get_composite_score, ticker, sentiment.score
-                            )
-                            logger.info(
-                                f"AUTO-INVEST: {ticker} → {composite['composite_score']}/100 "
-                                f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
-                            )
-                            if composite["should_buy"]:
-                                return (ticker, composite["composite_score"], sentiment)
-                        except Exception as e:
-                            logger.warning(f"AUTO-INVEST: score error for {ticker}: {e}")
-                        return None
-
-                results = await _asyncio.gather(*[score_ticker(t) for t in candidates])
-                scored = [r for r in results if r is not None]
-
-                # Step 2: Sort by score — buy highest scoring first
-                scored.sort(key=lambda x: x[1], reverse=True)
                 bought = 0
 
-                for ticker, comp_score, sentiment in scored:
+                # Sequential scan — one ticker at a time to avoid memory/thread issues
+                for ticker in candidates:
+                    if remaining < 10:
+                        break
                     try:
-                        price = await _asyncio.to_thread(broker.get_price, ticker)
+                        # Score with timeout protection
+                        sentiment = await _asyncio.wait_for(
+                            _asyncio.to_thread(score_sentiment, ticker), timeout=30
+                        )
+                        composite = await _asyncio.wait_for(
+                            _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=30
+                        )
+                        score = composite["composite_score"]
+                        logger.info(
+                            f"AUTO-INVEST: {ticker} → {score}/100 "
+                            f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
+                        )
+                        if not composite["should_buy"]:
+                            continue
+
+                        price = await _asyncio.wait_for(
+                            _asyncio.to_thread(broker.get_price, ticker), timeout=15
+                        )
                         if not price or price <= 0:
                             continue
+
                         can_buy, qty, reason = check_can_buy(price)
                         if not can_buy or qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
                             continue
-                        order = await _asyncio.to_thread(broker.submit_buy, ticker, qty)
+
+                        order = await _asyncio.wait_for(
+                            _asyncio.to_thread(broker.submit_buy, ticker, qty), timeout=15
+                        )
                         actual_price = float(order.get("price") or price)
                         spent = actual_price * qty
                         remaining -= spent
                         bought += 1
-                        # Log trade using database directly (no WebhookPayload available here)
+
                         from database import save_trade
                         save_trade({
                             "ticker": ticker, "action": "buy", "qty": qty,
@@ -258,13 +270,14 @@ async def auto_invest_loop():
                         })
                         logger.info(
                             f"AUTO-INVEST: ✅ Bought {qty}x {ticker} @ ${actual_price:.2f} "
-                            f"(score={comp_score}/100)"
+                            f"(score={score}/100)"
                         )
-                        await notify_buy(ticker, qty, actual_price, comp_score, sentiment.score)
-                        if remaining < 10:
-                            break
+                        await notify_buy(ticker, qty, actual_price, score, sentiment.score)
+
+                    except _asyncio.TimeoutError:
+                        logger.warning(f"AUTO-INVEST: {ticker} timed out, skipping")
                     except Exception as e:
-                        logger.error(f"AUTO-INVEST: Error buying {ticker}: {e}")
+                        logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
@@ -280,12 +293,16 @@ async def _emergency_exit(trade: dict):
     """Execute an emergency exit for a trade."""
     ticker = trade["ticker"]
     try:
-        position = broker.get_position(ticker)
+        position = await asyncio.wait_for(
+            asyncio.to_thread(broker.get_position, ticker), timeout=15
+        )
         if not position:
             logger.warning(f"Emergency exit: no broker position for {ticker}")
             return
 
-        order = broker.submit_sell(ticker)
+        order = await asyncio.wait_for(
+            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+        )
         exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
 
