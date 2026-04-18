@@ -95,7 +95,7 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         }
 
     # Learning check - known loss patterns
-    should_block, block_reason = should_override_buy(ticker, indicators)
+    should_block, block_reason = await asyncio.to_thread(should_override_buy, ticker, indicators)
     if should_block:
         logger.info(f"BUY blocked by learning: {ticker} - {block_reason}")
         return {"status": "blocked_by_learning", "reason": block_reason}
@@ -349,7 +349,7 @@ async def auto_invest(data: dict):
     picks = picks[:10]  # עד 10 מועמדים
 
     # 3. קבל תקציב זמין
-    budget_status = budget.get_budget_status()
+    budget_status = await asyncio.to_thread(budget.get_budget_status)
     remaining = float(budget_status.get("cash_available", budget_status.get("available_budget", 0)))
     initial_available = remaining
 
@@ -429,7 +429,7 @@ async def get_news(ticker: str):
     """Fetch recent news headlines for a ticker via news_service (RSS)."""
     try:
         from news_service import get_headlines
-        headlines = get_headlines(ticker.upper(), limit=5)
+        headlines = await asyncio.to_thread(get_headlines, ticker.upper(), 5)
         results = [{"title": h, "publisher": "", "link": "", "published": 0} for h in headlines]
         return {"ticker": ticker.upper(), "news": results}
     except Exception as e:
