@@ -412,19 +412,11 @@ async def auto_invest(data: dict):
 
 @router.get("/news/{ticker}")
 async def get_news(ticker: str):
-    """Fetch recent news headlines for a ticker via yfinance."""
-    import yfinance as yf
+    """Fetch recent news headlines for a ticker via news_service (RSS)."""
     try:
-        t = yf.Ticker(ticker.upper())
-        news = t.news or []
-        results = []
-        for item in news[:5]:
-            results.append({
-                "title": item.get("title", ""),
-                "publisher": item.get("publisher", ""),
-                "link": item.get("link", ""),
-                "published": item.get("providerPublishTime", 0),
-            })
+        from news_service import get_headlines
+        headlines = get_headlines(ticker.upper(), limit=5)
+        results = [{"title": h, "publisher": "", "link": "", "published": 0} for h in headlines]
         return {"ticker": ticker.upper(), "news": results}
     except Exception as e:
         return {"ticker": ticker.upper(), "news": [], "error": str(e)}
