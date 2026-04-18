@@ -51,7 +51,11 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     # Sentiment check (MANDATORY for buys)
     from sentiment import score_sentiment
     try:
-        sentiment = score_sentiment(ticker)
+        sentiment = await asyncio.wait_for(
+            asyncio.to_thread(score_sentiment, ticker), timeout=45
+        )
+    except asyncio.TimeoutError:
+        return {"status": "rejected", "reason": "Sentiment check timed out"}
     except Exception as e:
         logger.error(f"Sentiment check failed for {ticker}: {e}")
         return {"status": "rejected", "reason": f"Sentiment check failed: {e}"}
@@ -97,14 +101,18 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         return {"status": "blocked_by_learning", "reason": block_reason}
 
     # Budget check
-    can_buy, max_qty, budget_reason = budget.check_can_buy(payload.price)
+    can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price)
     if not can_buy:
         logger.info(f"BUY blocked by budget: {ticker} - {budget_reason}")
         return {"status": "blocked_by_budget", "reason": budget_reason}
 
     # Execute buy
     try:
-        order = broker.submit_buy(ticker, max_qty)
+        order = await asyncio.wait_for(
+            asyncio.to_thread(broker.submit_buy, ticker, max_qty), timeout=15
+        )
+    except asyncio.TimeoutError:
+        return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
         logger.error(f"BUY order failed for {ticker}: {e}")
         return {"status": "error", "reason": f"Order failed: {e}"}
@@ -136,7 +144,11 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
 
     # Execute sell
     try:
-        order = broker.submit_sell(ticker)
+        order = await asyncio.wait_for(
+            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+        )
+    except asyncio.TimeoutError:
+        return {"status": "error", "reason": "Sell order timed out"}
     except Exception as e:
         logger.error(f"SELL order failed for {ticker}: {e}")
         return {"status": "error", "reason": f"Order failed: {e}"}
@@ -193,7 +205,7 @@ async def health_check():
     from main import get_uptime
     hb = database.get_last_heartbeat()
     open_trades = database.get_open_trades()
-    budget_status = budget.get_budget_status()
+    budget_status = await asyncio.to_thread(budget.get_budget_status)
 
     return HealthResponse(
         status="running",
@@ -206,8 +218,8 @@ async def health_check():
 
 @router.get("/status")
 async def trading_status():
-    status = budget.get_budget_status()
-    positions = broker.get_positions()
+    status = await asyncio.to_thread(budget.get_budget_status)
+    positions = await asyncio.to_thread(broker.get_positions)
     return {
         "budget": status,
         "positions": positions,
@@ -265,11 +277,13 @@ async def emergency_exit(ticker: str):
         raise HTTPException(status_code=404, detail=f"No open position for {ticker}")
 
     try:
-        position = broker.get_position(ticker)
+        position = await asyncio.to_thread(broker.get_position, ticker)
         if not position:
             raise HTTPException(status_code=404, detail=f"No broker position for {ticker}")
 
-        order = broker.submit_sell(ticker)
+        order = await asyncio.wait_for(
+            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+        )
         exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
 
