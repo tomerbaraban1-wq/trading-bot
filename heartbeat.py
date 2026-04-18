@@ -198,8 +198,8 @@ async def auto_invest_loop():
             from budget import get_budget_status, check_can_buy
             import asyncio as _asyncio
 
-            # Only trade during market hours
-            if not broker.is_market_open():
+            # Only trade during market hours (wrapped — may call broker API)
+            if not await asyncio.to_thread(broker.is_market_open):
                 logger.info("AUTO-INVEST: Market is closed, skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue

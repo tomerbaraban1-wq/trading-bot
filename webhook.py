@@ -26,8 +26,8 @@ async def receive_webhook(payload: WebhookPayload):
         logger.warning(f"Webhook auth failed for {payload.ticker}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
-    # 2. Validate signal
-    is_valid, reason = validate_signal(payload.ticker, payload.action.value)
+    # 2. Validate signal (wrapped — may call broker API)
+    is_valid, reason = await asyncio.to_thread(validate_signal, payload.ticker, payload.action.value)
     if not is_valid:
         logger.info(f"Signal rejected: {payload.ticker} {payload.action.value} - {reason}")
         return {"status": "rejected", "reason": reason}
