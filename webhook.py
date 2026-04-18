@@ -9,6 +9,7 @@ import database
 import scanner
 from signal_validator import validate_signal
 from trade_logger import log_trade_open, log_trade_close, log_learning
+from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,14 @@ async def receive_webhook(payload: WebhookPayload):
         logger.info(f"Signal rejected: {payload.ticker} {payload.action.value} - {reason}")
         return {"status": "rejected", "reason": reason}
 
-    # 3. Process based on action
+    # 3. Circuit breaker check (buys only)
+    if payload.action == TradeAction.BUY:
+        ok, cb_reason = check_circuit_breaker()
+        if not ok:
+            logger.warning(f"BUY blocked by circuit breaker: {cb_reason}")
+            return {"status": "blocked_by_circuit_breaker", "reason": cb_reason}
+
+    # 4. Process based on action
     if payload.action == TradeAction.BUY:
         return await _handle_buy(payload)
     else:
@@ -170,6 +178,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         trade["id"], exit_price, pnl_gross, pnl_net,
         tax_result["tax_amount"], fees, "closed",
     )
+    record_trade_result(pnl_gross)
 
     # Log learning entry
     outcome = "profit" if pnl_gross > 0 else "loss"
@@ -224,6 +233,7 @@ async def trading_status():
         "budget": status,
         "positions": positions,
         "open_trades": database.get_open_trades(),
+        "circuit_breaker": cb_status(),
     }
 
 

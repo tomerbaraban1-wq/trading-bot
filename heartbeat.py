@@ -8,6 +8,7 @@ import database
 from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_close
 from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary
+from circuit_breaker import check_circuit_breaker, record_trade_result
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "stop_loss",
                         )
+                        record_trade_result(pnl_gross)
                         await notify_sell(ticker, exit_price, pnl_gross, f"Stop Loss ({plpc:.1f}%)")
 
                     elif plpc >= settings.TAKE_PROFIT_PCT:
@@ -147,6 +149,7 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "take_profit",
                         )
+                        record_trade_result(pnl_gross)
                         await notify_sell(ticker, exit_price, pnl_gross, f"Take Profit ({plpc:.1f}%)")
 
                     else:
@@ -173,6 +176,7 @@ async def stop_loss_monitor():
                                         trade["id"], exit_price, pnl_gross, pnl_net,
                                         tax_result["tax_amount"], 0.0, "smart_sell",
                                     )
+                                    record_trade_result(pnl_gross)
                                     await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
                             except Exception as se:
                                 logger.warning(f"Smart sell check error for {ticker}: {se}")
@@ -201,6 +205,13 @@ async def auto_invest_loop():
             # Only trade during market hours (wrapped — may call broker API)
             if not await asyncio.to_thread(broker.is_market_open):
                 logger.info("AUTO-INVEST: Market is closed, skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
+
+            # Circuit breaker check — stop if daily loss limit exceeded
+            ok, cb_reason = check_circuit_breaker()
+            if not ok:
+                logger.warning(f"AUTO-INVEST: {cb_reason} — skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
 
@@ -316,7 +327,7 @@ async def _emergency_exit(trade: dict):
             trade["id"], exit_price, pnl_gross, pnl_net,
             tax_result["tax_amount"], 0.0, "emergency_exit",
         )
-
+        record_trade_result(pnl_gross)
         await notify_emergency(ticker, f"Critically bearish sentiment | PnL=${pnl_gross:+.2f}")
         logger.warning(
             f"EMERGENCY EXIT COMPLETE: {ticker} | PnL=${pnl_gross:+.2f} | "
