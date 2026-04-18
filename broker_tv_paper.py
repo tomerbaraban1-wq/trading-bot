@@ -260,17 +260,18 @@ class TVPaperBroker(BrokerBase):
 
     def is_market_open(self) -> bool:
         """
-        Check US equity market hours via yfinance.
-        Falls back to True so paper trading is never blocked.
+        Check US equity market hours using UTC time (fast, no API call).
+        Market: Mon-Fri 13:30-20:00 UTC (9:30am-4pm ET).
         """
-        try:
-            info = yf.Ticker("SPY").info
-            # yfinance exposes marketState: REGULAR, PRE, POST, CLOSED
-            market_state = info.get("marketState", "REGULAR")
-            return market_state == "REGULAR"
-        except Exception as exc:
-            logger.warning(f"[TVPaper] is_market_open check failed ({exc}), assuming open")
-            return True
+        import datetime
+        now = datetime.datetime.utcnow()
+        # Skip weekends
+        if now.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            return False
+        # Market hours: 13:30 - 20:00 UTC
+        market_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=20, minute=0,  second=0, microsecond=0)
+        return market_open <= now <= market_close
 
     def get_asset(self, ticker: str) -> dict | None:
         """Always return tradable — paper trading accepts any ticker."""

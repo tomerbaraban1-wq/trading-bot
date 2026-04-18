@@ -232,8 +232,17 @@ def get_current_indicators(symbol: str) -> dict | None:
     }
 
 
+_market_cache: dict = {"data": None, "ts": 0}
+_MARKET_CACHE_TTL = 300  # 5 minutes — reuse same SPY data across all tickers in a scan
+
+
 def get_market_conditions() -> dict:
-    """Get overall market conditions (VIX, SPY trend)."""
+    """Get overall market conditions (VIX, SPY trend). Cached for 5 minutes."""
+    import time
+    now = time.time()
+    if _market_cache["data"] and now - _market_cache["ts"] < _MARKET_CACHE_TTL:
+        return _market_cache["data"]
+
     result = {"vix": None, "market_trend": None, "spy_above_sma50": None}
     try:
         vix = get_vix()
@@ -253,4 +262,7 @@ def get_market_conditions() -> dict:
             result["spy_rsi"] = spy.get("rsi")
     except Exception as e:
         logger.warning(f"Market conditions error: {e}")
+
+    _market_cache["data"] = result
+    _market_cache["ts"] = now
     return result
