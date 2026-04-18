@@ -261,16 +261,26 @@ class TVPaperBroker(BrokerBase):
     def is_market_open(self) -> bool:
         """
         Check US equity market hours using UTC time (fast, no API call).
-        Market: Mon-Fri 13:30-20:00 UTC (9:30am-4pm ET).
+        Accounts for EDT (summer) and EST (winter) automatically.
+        EDT: 13:30-20:00 UTC | EST: 14:30-21:00 UTC
         """
         import datetime
         now = datetime.datetime.utcnow()
         # Skip weekends
         if now.weekday() >= 5:  # 5=Saturday, 6=Sunday
             return False
-        # Market hours: 13:30 - 20:00 UTC
-        market_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=20, minute=0,  second=0, microsecond=0)
+        # Determine if US is on EDT (2nd Sun Mar - 1st Sun Nov) or EST
+        # Simple approximation: EDT runs roughly March 8 – November 1
+        month = now.month
+        is_edt = 3 <= month <= 10  # close enough for trading purposes
+        if is_edt:
+            open_hour, open_min = 13, 30   # 9:30 ET = 13:30 UTC
+            close_hour, close_min = 20, 0  # 4:00 ET = 20:00 UTC
+        else:
+            open_hour, open_min = 14, 30   # 9:30 ET = 14:30 UTC
+            close_hour, close_min = 21, 0  # 4:00 ET = 21:00 UTC
+        market_open  = now.replace(hour=open_hour,  minute=open_min,  second=0, microsecond=0)
+        market_close = now.replace(hour=close_hour, minute=close_min, second=0, microsecond=0)
         return market_open <= now <= market_close
 
     def get_asset(self, ticker: str) -> dict | None:

@@ -177,13 +177,11 @@ async def auto_invest_loop():
     await asyncio.sleep(60)  # wait 1 min after startup
     while True:
         try:
-            logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
             import random
             from scanner import WATCHLIST
             from sentiment import score_sentiment
             from scoring import get_composite_score
             from budget import get_budget_status, check_can_buy
-            from trade_logger import log_trade_open as _log_trade_open
             import asyncio as _asyncio
 
             # Only trade during market hours
@@ -191,6 +189,8 @@ async def auto_invest_loop():
                 logger.info("AUTO-INVEST: Market is closed, skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
+
+            logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 
             status = get_budget_status()
             remaining = float(status.get("cash_available", 0))
