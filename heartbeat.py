@@ -202,25 +202,28 @@ async def auto_invest_loop():
                 shuffled = WATCHLIST.copy()
                 random.shuffle(shuffled)
                 candidates = [
-                    t for t in shuffled[:15]
+                    t for t in shuffled[:8]
                     if not database.get_open_trade_by_ticker(t)
                 ]
 
+                sem = _asyncio.Semaphore(3)  # max 3 concurrent API calls
+
                 async def score_ticker(ticker):
-                    try:
-                        sentiment = await _asyncio.to_thread(score_sentiment, ticker)
-                        composite = await _asyncio.to_thread(
-                            get_composite_score, ticker, sentiment.score
-                        )
-                        logger.info(
-                            f"AUTO-INVEST: {ticker} → {composite['composite_score']}/100 "
-                            f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
-                        )
-                        if composite["should_buy"]:
-                            return (ticker, composite["composite_score"], sentiment)
-                    except Exception as e:
-                        logger.warning(f"AUTO-INVEST: score error for {ticker}: {e}")
-                    return None
+                    async with sem:
+                        try:
+                            sentiment = await _asyncio.to_thread(score_sentiment, ticker)
+                            composite = await _asyncio.to_thread(
+                                get_composite_score, ticker, sentiment.score
+                            )
+                            logger.info(
+                                f"AUTO-INVEST: {ticker} → {composite['composite_score']}/100 "
+                                f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
+                            )
+                            if composite["should_buy"]:
+                                return (ticker, composite["composite_score"], sentiment)
+                        except Exception as e:
+                            logger.warning(f"AUTO-INVEST: score error for {ticker}: {e}")
+                        return None
 
                 results = await _asyncio.gather(*[score_ticker(t) for t in candidates])
                 scored = [r for r in results if r is not None]
