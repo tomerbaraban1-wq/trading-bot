@@ -6,7 +6,7 @@ import broker
 import budget
 import database
 from sentiment import check_emergency_sentiment
-from trade_logger import log_trade_close
+from trade_logger import log_trade_open, log_trade_close
 from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary
 from circuit_breaker import check_circuit_breaker, record_trade_result
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate
@@ -264,41 +264,32 @@ async def auto_invest_loop():
                         if not price or price <= 0:
                             continue
 
-                        can_buy, qty, reason = check_can_buy(price)
-                        if not can_buy or qty <= 0:
-                            logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
+                        # Risk-based position sizing (replaces naive "available/price")
+                        from budget import compute_position_size
+                        qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)
+                        if qty <= 0:
+                            logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
                             continue
 
-                        # Use limit price instead of market order to control slippage
-                        lim_price = limit_buy_price(price)
-                        slip = slippage_estimate(price, qty, "buy")
-                        logger.info(
-                            f"AUTO-INVEST: {ticker} limit_buy=${lim_price:.4f} "
-                            f"(slippage est. ${slip['total_slippage_usd']:.4f})"
-                        )
+                        # ATR-based dynamic limit price (replaces fixed 0.1% offset)
+                        lim_price = await _asyncio.to_thread(limit_buy_price, price, ticker)
+                        slip = await _asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
 
                         from utils import retry_sync
                         order = await _asyncio.wait_for(
                             _asyncio.to_thread(retry_sync, broker.submit_buy, ticker, qty, lim_price, max_retries=2), timeout=30
                         )
                         actual_price = float(order.get("price") or lim_price)
-                        spent = actual_price * qty
-                        remaining -= spent
-                        bought += 1
+                        spent        = actual_price * qty
+                        remaining   -= spent
+                        bought      += 1
 
-                        from database import save_trade
-                        save_trade({
-                            "ticker": ticker, "action": "buy", "qty": qty,
-                            "entry_price": actual_price, "trailing_stop_pct": None,
-                            "rsi": None, "macd": None, "macd_signal": None,
-                            "bb_position": None, "volume_ratio": None,
-                            "sentiment_score": sentiment.score,
-                            "sentiment_reasoning": sentiment.reasoning,
-                        })
-                        logger.info(
-                            f"AUTO-INVEST: ✅ Bought {qty}x {ticker} @ ${actual_price:.2f} "
-                            f"(score={score}/100)"
+                        from models import WebhookPayload, TradeAction
+                        fake_payload = WebhookPayload(
+                            secret=settings.WEBHOOK_SECRET,
+                            ticker=ticker, action=TradeAction.BUY, price=actual_price,
                         )
+                        log_trade_open(fake_payload, sentiment, order, qty, sizing_meta, slip)
                         await notify_buy(ticker, qty, actual_price, score, sentiment.score)
 
                     except _asyncio.TimeoutError:
