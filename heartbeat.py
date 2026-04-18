@@ -9,6 +9,7 @@ from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_close
 from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary
 from circuit_breaker import check_circuit_breaker, record_trade_result
+from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +121,12 @@ async def stop_loss_monitor():
 
                     if plpc <= -settings.STOP_LOSS_PCT:
                         logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
+                        cur_price = float(position.get("current_price", trade["entry_price"]))
+                        lim_sell = limit_sell_price(cur_price)
                         order = await asyncio.wait_for(
                             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
                         )
-                        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
+                        exit_price = float(order.get("price") or lim_sell)
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
                         tax_result = process_trade_close(trade["id"], pnl_gross)
@@ -137,10 +140,12 @@ async def stop_loss_monitor():
 
                     elif plpc >= settings.TAKE_PROFIT_PCT:
                         logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
+                        cur_price = float(position.get("current_price", trade["entry_price"]))
+                        lim_sell = limit_sell_price(cur_price)
                         order = await asyncio.wait_for(
                             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
                         )
-                        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
+                        exit_price = float(order.get("price") or lim_sell)
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
                         tax_result = process_trade_close(trade["id"], pnl_gross)
@@ -264,11 +269,19 @@ async def auto_invest_loop():
                             logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
                             continue
 
+                        # Use limit price instead of market order to control slippage
+                        lim_price = limit_buy_price(price)
+                        slip = slippage_estimate(price, qty, "buy")
+                        logger.info(
+                            f"AUTO-INVEST: {ticker} limit_buy=${lim_price:.4f} "
+                            f"(slippage est. ${slip['total_slippage_usd']:.4f})"
+                        )
+
                         from utils import retry_sync
                         order = await _asyncio.wait_for(
-                            _asyncio.to_thread(retry_sync, broker.submit_buy, ticker, qty, max_retries=2), timeout=30
+                            _asyncio.to_thread(retry_sync, broker.submit_buy, ticker, qty, lim_price, max_retries=2), timeout=30
                         )
-                        actual_price = float(order.get("price") or price)
+                        actual_price = float(order.get("price") or lim_price)
                         spent = actual_price * qty
                         remaining -= spent
                         bought += 1
