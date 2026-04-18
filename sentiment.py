@@ -1,5 +1,6 @@
 import json
 import time
+import threading
 import logging
 from openai import OpenAI
 from config import settings
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _client = None
 _sentiment_cache: dict = {}
+_cache_lock = threading.Lock()  # guards _sentiment_cache across threads
 CACHE_TTL = 300  # 5 minutes
 
 
@@ -30,10 +32,10 @@ def score_sentiment(ticker: str) -> SentimentResult:
     """
     # Check cache
     now = time.time()
-    if ticker in _sentiment_cache:
-        cached = _sentiment_cache[ticker]
-        if now - cached.timestamp < CACHE_TTL:
-            return cached
+    with _cache_lock:
+        cached = _sentiment_cache.get(ticker)
+    if cached is not None and now - cached.timestamp < CACHE_TTL:
+        return cached
 
     # Fetch headlines
     headlines = get_headlines(ticker, limit=5)
@@ -47,7 +49,8 @@ def score_sentiment(ticker: str) -> SentimentResult:
             reasoning="No recent news found - defaulting to neutral",
             timestamp=now,
         )
-        _sentiment_cache[ticker] = result
+        with _cache_lock:
+            _sentiment_cache[ticker] = result
         return result
 
     # Score with LLM
@@ -106,7 +109,8 @@ def score_sentiment(ticker: str) -> SentimentResult:
         reasoning=reasoning,
         timestamp=now,
     )
-    _sentiment_cache[ticker] = result
+    with _cache_lock:
+        _sentiment_cache[ticker] = result
 
     logger.info(f"Sentiment for {ticker}: {score}/10 - {reasoning}")
     return result
@@ -119,7 +123,8 @@ def check_emergency_sentiment(ticker: str) -> bool:
     """
     try:
         # Force fresh check (bypass cache)
-        _sentiment_cache.pop(ticker, None)
+        with _cache_lock:
+            _sentiment_cache.pop(ticker, None)
         result = score_sentiment(ticker)
         if result.score <= settings.SENTIMENT_EMERGENCY_SCORE:
             logger.warning(
