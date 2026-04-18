@@ -264,8 +264,9 @@ async def auto_invest_loop():
                             logger.info(f"AUTO-INVEST: {ticker} budget skip: {reason}")
                             continue
 
+                        from utils import retry_sync
                         order = await _asyncio.wait_for(
-                            _asyncio.to_thread(broker.submit_buy, ticker, qty), timeout=15
+                            _asyncio.to_thread(retry_sync, broker.submit_buy, ticker, qty, max_retries=2), timeout=30
                         )
                         actual_price = float(order.get("price") or price)
                         spent = actual_price * qty
