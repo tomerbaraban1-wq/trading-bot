@@ -186,6 +186,12 @@ async def auto_invest_loop():
             from trade_logger import log_trade_open as _log_trade_open
             import asyncio as _asyncio
 
+            # Only trade during market hours
+            if not broker.is_market_open():
+                logger.info("AUTO-INVEST: Market is closed, skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
+
             status = get_budget_status()
             remaining = float(status.get("cash_available", 0))
 
@@ -304,8 +310,8 @@ async def daily_summary_loop():
     while True:
         try:
             now = datetime.datetime.utcnow()
-            # Market closes at ~21:00 UTC (4pm ET)
-            target = now.replace(hour=21, minute=5, second=0, microsecond=0)
+            # Market closes at ~20:00 UTC (4pm ET / 23:00 Israel time)
+            target = now.replace(hour=20, minute=5, second=0, microsecond=0)
             if now >= target:
                 target += datetime.timedelta(days=1)
             wait_seconds = (target - now).total_seconds()
