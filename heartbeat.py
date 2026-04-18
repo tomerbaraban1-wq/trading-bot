@@ -264,6 +264,15 @@ async def auto_invest_loop():
                         if not price or price <= 0:
                             continue
 
+                        # Sanity check — price plausibility + velocity + data completeness
+                        from sanity_check import run_all as sanity_run
+                        sane, sane_reason = await _asyncio.wait_for(
+                            _asyncio.to_thread(sanity_run, ticker, price, None), timeout=20
+                        )
+                        if not sane:
+                            logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
+                            continue
+
                         # Risk-based position sizing (replaces naive "available/price")
                         from budget import compute_position_size
                         qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)

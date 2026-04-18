@@ -108,6 +108,19 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         logger.info(f"BUY blocked by learning: {ticker} - {block_reason}")
         return {"status": "blocked_by_learning", "reason": block_reason}
 
+    # Sanity check — price plausibility, velocity, data completeness
+    from sanity_check import run_all as sanity_run
+    try:
+        sane, sane_reason = await asyncio.wait_for(
+            asyncio.to_thread(sanity_run, ticker, payload.price, indicators or {}),
+            timeout=20,
+        )
+        if not sane:
+            logger.warning(f"BUY blocked by sanity check: {ticker} — {sane_reason}")
+            return {"status": "blocked_by_sanity", "reason": sane_reason}
+    except asyncio.TimeoutError:
+        return {"status": "blocked_by_sanity", "reason": "sanity check timed out"}
+
     # Budget check
     can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price)
     if not can_buy:
