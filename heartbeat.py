@@ -161,7 +161,9 @@ async def stop_loss_monitor():
                                 comp = score_result["composite_score"]
                                 if comp < 30:
                                     logger.warning(f"SMART SELL: {ticker} composite score={comp}/100 — exiting weak position")
-                                    order = broker.submit_sell(ticker)
+                                    order = await asyncio.wait_for(
+                                        asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+                                    )
                                     exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
                                     pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                                     from tax_tracker import process_trade_close
@@ -204,7 +206,7 @@ async def auto_invest_loop():
 
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 
-            status = get_budget_status()
+            status = await _asyncio.to_thread(get_budget_status)
             remaining = float(status.get("cash_available", 0))
 
             if remaining < 10:
@@ -349,7 +351,7 @@ async def daily_summary_loop():
             total_pnl = sum(t.get("pnl_gross") or 0 for t in today_trades)
 
             open_trades = database.get_open_trades()
-            status = budget.get_budget_status()
+            status = await asyncio.to_thread(budget.get_budget_status)
             equity = status.get("positions_value", 0) + status.get("cash_available", 0)
 
             await notify_daily_summary(
