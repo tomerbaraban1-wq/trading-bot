@@ -102,6 +102,17 @@ def init_db():
         )
     """)
 
+    # ── Schema migrations (safe to run repeatedly) ────────────────────────────
+    # Add ATR trailing stop columns introduced in v2
+    for ddl in (
+        "ALTER TABLE trade_log ADD COLUMN atr_stop_price REAL",
+        "ALTER TABLE trade_log ADD COLUMN high_watermark  REAL",
+    ):
+        try:
+            conn.execute(ddl)
+        except Exception:
+            pass  # column already exists — sqlite3.OperationalError is expected
+
     conn.commit()
     logger.info("Database initialized")
 
@@ -135,6 +146,16 @@ def close_trade(trade_id: int, exit_price: float, pnl_gross: float,
         pnl_gross=?, pnl_net=?, tax_reserved=?, fees=?, status=?
         WHERE id=?""",
         (exit_price, pnl_gross, pnl_net, tax_reserved, fees, status, trade_id),
+    )
+    conn.commit()
+
+
+def update_trade_stop(trade_id: int, atr_stop_price: float, high_watermark: float) -> None:
+    """Persist the current trailing stop price and high-watermark for an open trade."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE trade_log SET atr_stop_price=?, high_watermark=? WHERE id=?",
+        (atr_stop_price, high_watermark, trade_id),
     )
     conn.commit()
 

@@ -187,6 +187,22 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     actual_price = order.get("price") or payload.price
     trade_id = log_trade_open(payload, sentiment, order, max_qty)
 
+    # Set ATR trailing stop immediately after fill
+    try:
+        from atr_stop import compute_initial_stop
+        atr_stop_price, stop_meta = await asyncio.to_thread(
+            compute_initial_stop, ticker, actual_price
+        )
+        await asyncio.to_thread(
+            database.update_trade_stop, trade_id, atr_stop_price, actual_price
+        )
+        logger.info(
+            f"[ATR STOP] {ticker}: stop set @ ${atr_stop_price:.2f} "
+            f"({stop_meta['stop_pct']:.2f}% from entry, ATR=${stop_meta['atr']:.4f})"
+        )
+    except Exception as stop_err:
+        logger.warning(f"[ATR STOP] {ticker}: failed to set initial stop: {stop_err}")
+
     # Notify Telegram
     asyncio.ensure_future(notify_trade_open(
         ticker=ticker, qty=max_qty, price=actual_price,

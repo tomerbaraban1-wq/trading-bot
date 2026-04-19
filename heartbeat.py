@@ -100,8 +100,67 @@ async def sentiment_monitor():
             asyncio.ensure_future(notify_error("loop_error", "", f"sentiment_monitor: {e}"))
 
 
+async def _close_position(
+    trade:      dict,
+    cur_price:  float,
+    status:     str,
+    label:      str,
+) -> bool:
+    """
+    Execute a sell order, log the close, update circuit breaker, notify Telegram.
+    Returns True on success, False on broker failure.
+    Called by stop_loss_monitor for every exit type.
+    """
+    ticker   = trade["ticker"]
+    lim_sell = limit_sell_price(cur_price)
+    try:
+        order = await asyncio.wait_for(
+            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+        )
+    except Exception as sell_err:
+        asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(sell_err)))
+        return False
+
+    exit_price = float(order.get("price") or lim_sell)
+    pnl_gross  = (exit_price - trade["entry_price"]) * trade["qty"]
+
+    from tax_tracker import process_trade_close
+    tax_result = process_trade_close(trade["id"], pnl_gross)
+    pnl_net    = pnl_gross - tax_result["tax_amount"]
+
+    log_trade_close(
+        trade["id"], exit_price, pnl_gross, pnl_net,
+        tax_result["tax_amount"], 0.0, status,
+    )
+
+    was_ok, _ = check_circuit_breaker()
+    record_trade_result(pnl_gross)
+    is_ok, _  = check_circuit_breaker()
+    if not is_ok and was_ok:
+        st = cb_status()
+        asyncio.ensure_future(notify_circuit_breaker_tripped(
+            st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
+        ))
+
+    await notify_sell(ticker, exit_price, pnl_gross, label)
+    return True
+
+
 async def stop_loss_monitor():
-    """Background task: check open trades for stop loss / take profit every 60 seconds."""
+    """
+    Background task: check open trades every 60 seconds.
+
+    Exit hierarchy (checked in order):
+      1. ATR Trailing Stop  — price fell through the dynamic floor
+      2. Take Profit        — price rose above the fixed ceiling (TAKE_PROFIT_PCT)
+      3. Smart Sell         — composite score collapsed (< 30/100)
+
+    ATR trailing stop replaces the old fixed STOP_LOSS_PCT.
+    The stop trails upward with the high watermark, locking in gains,
+    while giving each asset room proportional to its own volatility.
+    """
+    from atr_stop import compute_initial_stop, update_trailing_stop, should_exit
+
     while True:
         try:
             await asyncio.sleep(60)
@@ -122,104 +181,94 @@ async def stop_loss_monitor():
                     if not position:
                         continue
 
-                    plpc = float(position.get("unrealized_plpc", 0)) * 100
+                    cur_price = float(position.get("current_price", trade["entry_price"]))
+                    plpc      = float(position.get("unrealized_plpc", 0)) * 100
 
-                    if plpc <= -settings.STOP_LOSS_PCT:
-                        logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
-                        cur_price = float(position.get("current_price", trade["entry_price"]))
-                        lim_sell = limit_sell_price(cur_price)
-                        try:
-                            order = await asyncio.wait_for(
-                                asyncio.to_thread(broker.submit_sell, ticker), timeout=15
-                            )
-                        except Exception as sell_err:
-                            asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(sell_err)))
-                            raise
-                        exit_price = float(order.get("price") or lim_sell)
-                        pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
-                        from tax_tracker import process_trade_close
-                        tax_result = process_trade_close(trade["id"], pnl_gross)
-                        pnl_net = pnl_gross - tax_result["tax_amount"]
-                        log_trade_close(
-                            trade["id"], exit_price, pnl_gross, pnl_net,
-                            tax_result["tax_amount"], 0.0, "stop_loss",
+                    # ── 1. ATR Trailing Stop ──────────────────────────────────
+                    atr_stop = trade.get("atr_stop_price")
+                    high_wm  = trade.get("high_watermark") or trade["entry_price"]
+
+                    # Initialise on first encounter (new trade or legacy trade)
+                    if atr_stop is None:
+                        atr_stop, stop_meta = await asyncio.to_thread(
+                            compute_initial_stop, ticker, trade["entry_price"]
                         )
-                        was_ok, _ = check_circuit_breaker()
-                        record_trade_result(pnl_gross)
-                        is_ok, _ = check_circuit_breaker()
-                        if not is_ok and was_ok:
-                            st = cb_status()
-                            asyncio.ensure_future(notify_circuit_breaker_tripped(
-                                st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
-                            ))
-                        await notify_sell(ticker, exit_price, pnl_gross, f"Stop Loss ({plpc:.1f}%)")
-
-                    elif plpc >= settings.TAKE_PROFIT_PCT:
-                        logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
-                        cur_price = float(position.get("current_price", trade["entry_price"]))
-                        lim_sell = limit_sell_price(cur_price)
-                        try:
-                            order = await asyncio.wait_for(
-                                asyncio.to_thread(broker.submit_sell, ticker), timeout=15
-                            )
-                        except Exception as sell_err:
-                            asyncio.ensure_future(notify_error("take_profit_fail", ticker, str(sell_err)))
-                            raise
-                        exit_price = float(order.get("price") or lim_sell)
-                        pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
-                        from tax_tracker import process_trade_close
-                        tax_result = process_trade_close(trade["id"], pnl_gross)
-                        pnl_net = pnl_gross - tax_result["tax_amount"]
-                        log_trade_close(
-                            trade["id"], exit_price, pnl_gross, pnl_net,
-                            tax_result["tax_amount"], 0.0, "take_profit",
+                        high_wm = trade["entry_price"]
+                        await asyncio.to_thread(
+                            database.update_trade_stop, trade["id"], atr_stop, high_wm
                         )
-                        was_ok, _ = check_circuit_breaker()
-                        record_trade_result(pnl_gross)
-                        is_ok, _ = check_circuit_breaker()
-                        if not is_ok and was_ok:
-                            st = cb_status()
-                            asyncio.ensure_future(notify_circuit_breaker_tripped(
-                                st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
-                            ))
-                        await notify_sell(ticker, exit_price, pnl_gross, f"Take Profit ({plpc:.1f}%)")
+                        logger.info(
+                            f"[ATR STOP] {ticker}: initialised stop=${atr_stop:.2f} "
+                            f"({stop_meta['stop_pct']:.2f}% from entry)"
+                        )
 
-                    else:
-                        # Smart sell: exit if composite score drops too low (max once per 5 min)
-                        import time as _time
-                        last = _smart_sell_last_check.get(ticker, 0)
-                        if _time.time() - last >= 300:
-                            try:
-                                _smart_sell_last_check[ticker] = _time.time()
-                                from scoring import get_composite_score
-                                score_result = await asyncio.to_thread(get_composite_score, ticker, 5)
-                                comp = score_result["composite_score"]
-                                if comp < 30:
-                                    logger.warning(f"SMART SELL: {ticker} composite score={comp}/100 — exiting weak position")
-                                    order = await asyncio.wait_for(
-                                        asyncio.to_thread(broker.submit_sell, ticker), timeout=15
-                                    )
-                                    exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
-                                    pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
-                                    from tax_tracker import process_trade_close
-                                    tax_result = process_trade_close(trade["id"], pnl_gross)
-                                    pnl_net = pnl_gross - tax_result["tax_amount"]
-                                    log_trade_close(
-                                        trade["id"], exit_price, pnl_gross, pnl_net,
-                                        tax_result["tax_amount"], 0.0, "smart_sell",
-                                    )
-                                    was_ok, _ = check_circuit_breaker()
-                                    record_trade_result(pnl_gross)
-                                    is_ok, _ = check_circuit_breaker()
-                                    if not is_ok and was_ok:
-                                        st = cb_status()
-                                        asyncio.ensure_future(notify_circuit_breaker_tripped(
-                                            st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
-                                        ))
-                                    await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
-                            except Exception as se:
-                                logger.warning(f"Smart sell check error for {ticker}: {se}")
-                                asyncio.ensure_future(notify_error("stop_loss_fail", ticker, f"Smart sell error: {se}"))
+                    # Trail the stop upward as price rises
+                    new_stop, new_wm, raised = await asyncio.to_thread(
+                        update_trailing_stop,
+                        ticker, cur_price, atr_stop, high_wm, trade["entry_price"]
+                    )
+                    if raised or new_wm != high_wm:
+                        await asyncio.to_thread(
+                            database.update_trade_stop, trade["id"], new_stop, new_wm
+                        )
+                        if raised:
+                            logger.info(
+                                f"[ATR STOP] {ticker}: stop raised "
+                                f"${atr_stop:.2f} → ${new_stop:.2f} "
+                                f"(price=${cur_price:.2f} | wm=${new_wm:.2f})"
+                            )
+                        atr_stop = new_stop
+                        high_wm  = new_wm
+
+                    # Check exit: price breached trailing stop
+                    if should_exit(cur_price, atr_stop):
+                        logger.warning(
+                            f"[ATR STOP] {ticker}: TRIGGERED "
+                            f"price=${cur_price:.2f} < stop=${atr_stop:.2f} "
+                            f"(P&L: {plpc:.2f}%)"
+                        )
+                        await _close_position(
+                            trade, cur_price, "stop_loss",
+                            f"ATR Trailing Stop (stop=${atr_stop:.2f} | {plpc:.1f}%)"
+                        )
+                        continue  # trade closed — skip other checks
+
+                    # ── 2. Take Profit (fixed ceiling) ────────────────────────
+                    if plpc >= settings.TAKE_PROFIT_PCT:
+                        logger.info(
+                            f"[TAKE PROFIT] {ticker}: {plpc:.2f}% "
+                            f"≥ {settings.TAKE_PROFIT_PCT}%"
+                        )
+                        await _close_position(
+                            trade, cur_price, "take_profit",
+                            f"Take Profit ({plpc:.1f}%)"
+                        )
+                        continue
+
+                    # ── 3. Smart Sell (score collapse, max once per 5 min) ────
+                    import time as _time
+                    last = _smart_sell_last_check.get(ticker, 0)
+                    if _time.time() - last >= 300:
+                        _smart_sell_last_check[ticker] = _time.time()
+                        try:
+                            from scoring import get_composite_score
+                            score_result = await asyncio.to_thread(
+                                get_composite_score, ticker, 5
+                            )
+                            comp = score_result["composite_score"]
+                            if comp < 30:
+                                logger.warning(
+                                    f"[SMART SELL] {ticker}: score={comp}/100 — exiting"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "smart_sell",
+                                    f"Smart Sell (score={comp}/100)"
+                                )
+                        except Exception as se:
+                            logger.warning(f"Smart sell check error for {ticker}: {se}")
+                            asyncio.ensure_future(
+                                notify_error("stop_loss_fail", ticker, f"Smart sell: {se}")
+                            )
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
@@ -356,7 +405,24 @@ async def auto_invest_loop():
                             secret=settings.WEBHOOK_SECRET,
                             ticker=ticker, action=TradeAction.BUY, price=actual_price,
                         )
-                        log_trade_open(fake_payload, sentiment, order, qty, sizing_meta, slip)
+                        trade_id = log_trade_open(fake_payload, sentiment, order, qty, sizing_meta, slip)
+
+                        # Set ATR trailing stop immediately after fill
+                        try:
+                            from atr_stop import compute_initial_stop
+                            atr_stop_price, stop_meta = await _asyncio.to_thread(
+                                compute_initial_stop, ticker, actual_price
+                            )
+                            await _asyncio.to_thread(
+                                database.update_trade_stop, trade_id, atr_stop_price, actual_price
+                            )
+                            logger.info(
+                                f"[ATR STOP] {ticker}: stop set @ ${atr_stop_price:.2f} "
+                                f"({stop_meta['stop_pct']:.2f}% from entry)"
+                            )
+                        except Exception as stop_err:
+                            logger.warning(f"[ATR STOP] {ticker}: failed to set stop: {stop_err}")
+
                         await notify_buy(ticker, qty, actual_price, score, sentiment.score)
 
                     except _asyncio.TimeoutError:
