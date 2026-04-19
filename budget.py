@@ -1,5 +1,5 @@
 """
-Position Sizing — Risk-per-Trade Model
+Position Sizing — Risk-per-Trade + Kelly Criterion
 
 Amateur approach (what we had before):
     qty = int(available_cash / price)
@@ -14,12 +14,20 @@ Hedge fund approach (what this module does):
         dollar_risk_per_trade = account_equity × RISK_PER_TRADE_PCT
         risk_per_share        = entry_price × STOP_LOSS_PCT / 100
 
-    Example:
-        account_equity     = $1,000
-        RISK_PER_TRADE_PCT = 1%      →  $10 max loss per trade
-        entry_price        = $100
-        stop_loss          = 5%      →  $5 risk per share
-        qty                = $10 / $5 = 2 shares ($200 notional)
+    Kelly Criterion overlay (optional, kicks in after 10+ closed trades):
+        f* = (b×p − q) / b       (full Kelly)
+        f  = f* / 2              (half-Kelly for risk control)
+        kelly_notional = equity × f
+        kelly_qty      = kelly_notional / price
+
+    Final qty = min(risk_qty, notional_cap_qty, cash_qty, kelly_qty)
+    Kelly only constrains — it never sizes UP beyond risk-per-trade.
+
+    Example — edge deteriorates (win_rate falls from 60% → 45%):
+        b=1.5, p=0.45, q=0.55 → f*=(1.5×0.45−0.55)/1.5=0.08 → f=0.04
+        On $10,000 account: kelly_notional=$400 → 4 shares at $100
+        Risk-per-trade at 1% risk: $100/5=$20/share → 5 shares
+        Kelly caps at 4 shares — automatically reducing size as edge shrinks.
 
     Hard limits still apply on top:
         - Max notional per position  ≤ MAX_POSITION_PCT of budget
@@ -30,6 +38,8 @@ Environment variables:
     RISK_PER_TRADE_PCT    float   default 1.0   (% of equity risked per trade)
     MAX_POSITION_PCT      float   default 20.0  (max notional % of total budget)
     MAX_OPEN_POSITIONS    int     default 5
+    KELLY_ENABLED         bool    default true  (use Kelly overlay)
+    KELLY_MIN_TRADES      int     default 10    (min closed trades for Kelly to activate)
 """
 
 import os
@@ -40,8 +50,89 @@ import broker
 logger = logging.getLogger(__name__)
 
 # ── Risk parameters ────────────────────────────────────────────────────────────
-RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT", "1.0"))
-MAX_OPEN_POSITIONS:  int   = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
+RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "1.0"))
+MAX_OPEN_POSITIONS:  int   = int(os.getenv("MAX_OPEN_POSITIONS",     "5"))
+KELLY_ENABLED:       bool  = os.getenv("KELLY_ENABLED", "true").lower() == "true"
+KELLY_MIN_TRADES:    int   = int(os.getenv("KELLY_MIN_TRADES",       "10"))
+
+
+def kelly_fraction() -> float:
+    """
+    Compute the Half-Kelly optimal bet fraction using closed trade history.
+
+    Formula: f* = (b×p − q) / b  then halved for conservatism.
+      b = avg_win / avg_loss  (win-to-loss dollar ratio)
+      p = historical win rate
+      q = 1 − p
+
+    Returns f ∈ [0, MAX_POSITION_PCT/100].
+    Returns 0.0 if there are fewer than KELLY_MIN_TRADES closed trades
+    (not enough history for a reliable estimate).
+
+    Notes
+    -----
+    - Negative f* (no edge) → returns 0.0 (don't size based on Kelly)
+    - Half-Kelly halves both the expected gain AND variance vs. full Kelly
+    - Always capped at MAX_POSITION_PCT to respect hard notional limits
+    """
+    if not KELLY_ENABLED:
+        return 0.0
+
+    try:
+        from database import get_win_trades, get_loss_trades
+        wins   = get_win_trades(limit=200)
+        losses = get_loss_trades(limit=200)
+
+        n_wins   = len(wins)
+        n_losses = len(losses)
+        total    = n_wins + n_losses
+
+        if total < KELLY_MIN_TRADES:
+            logger.debug(
+                f"[KELLY] only {total} closed trades — need {KELLY_MIN_TRADES} "
+                f"for reliable estimate; skipping"
+            )
+            return 0.0
+
+        p = n_wins / total
+        q = 1.0 - p
+
+        avg_win  = (
+            sum(t.get("pnl_gross", 0) or 0 for t in wins)  / n_wins
+            if n_wins > 0 else 0.0
+        )
+        avg_loss = (
+            sum(abs(t.get("pnl_gross", 0) or 0) for t in losses) / n_losses
+            if n_losses > 0 else 0.0
+        )
+
+        if avg_loss <= 0 or avg_win <= 0:
+            return 0.0
+
+        b      = avg_win / avg_loss      # win/loss ratio
+        f_full = (b * p - q) / b        # full Kelly fraction
+
+        if f_full <= 0:
+            logger.info(
+                f"[KELLY] negative edge detected: f*={f_full:.4f} "
+                f"(p={p:.2%}, b={b:.2f}) — no Kelly sizing"
+            )
+            return 0.0
+
+        f_half  = f_full / 2.0
+        max_f   = settings.MAX_POSITION_PCT / 100.0
+        f_final = min(f_half, max_f)
+
+        logger.info(
+            f"[KELLY] p={p:.2%} | W/L={b:.2f} | f*={f_full:.4f} | "
+            f"half-f*={f_half:.4f} → capped={f_final:.4f} "
+            f"({n_wins}W/{n_losses}L | ⌀win=${avg_win:.2f} ⌀loss=${avg_loss:.2f})"
+        )
+        return f_final
+
+    except Exception as exc:
+        logger.warning(f"[KELLY] computation failed: {exc}")
+        return 0.0
 
 
 def _get_account_equity() -> tuple[float, float]:
@@ -92,8 +183,26 @@ def compute_position_size(entry_price: float) -> tuple[int, dict]:
     # ── Step 5: Cash constraint ────────────────────────────────────────────────
     cash_qty = int(cash / entry_price)
 
-    # ── Step 6: Take the most conservative ────────────────────────────────────
+    # ── Step 6: Take the most conservative (risk / notional cap / cash) ─────────
     qty = min(risk_qty, notional_qty, cash_qty)
+
+    # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
+    kelly_qty  = qty      # start with unconstrained qty
+    kelly_f    = kelly_fraction()
+    kelly_note = "disabled"
+    if kelly_f > 0:
+        kelly_notional = equity * kelly_f
+        kelly_qty      = int(kelly_notional / entry_price) if entry_price > 0 else qty
+        kelly_note     = f"f={kelly_f:.4f} notional=${kelly_notional:.2f}"
+        if kelly_qty < qty:
+            qty = kelly_qty   # Kelly tightens the size
+
+    binding = (
+        "kelly"    if kelly_f > 0 and qty == kelly_qty and kelly_qty < min(risk_qty, notional_qty, cash_qty) else
+        "risk"     if qty == risk_qty     else
+        "notional" if qty == notional_qty else
+        "cash"
+    )
 
     metadata = {
         "equity":           round(equity, 2),
@@ -105,20 +214,18 @@ def compute_position_size(entry_price: float) -> tuple[int, dict]:
         "risk_qty":         risk_qty,
         "notional_cap_qty": notional_qty,
         "cash_qty":         cash_qty,
+        "kelly_qty":        kelly_qty,
+        "kelly":            kelly_note,
         "final_qty":        qty,
         "notional":         round(qty * entry_price, 2),
-        "binding_constraint": (
-            "risk"     if qty == risk_qty     else
-            "notional" if qty == notional_qty else
-            "cash"
-        ),
+        "binding_constraint": binding,
     }
 
     logger.info(
         f"[SIZING] entry=${entry_price:.2f} | risk=${dollar_risk:.2f} "
         f"({RISK_PER_TRADE_PCT}% of ${equity:.0f}) | "
-        f"stop=${risk_per_share:.2f}/share | "
-        f"qty={qty} (bound by {metadata['binding_constraint']}) | "
+        f"stop=${risk_per_share:.2f}/share | kelly={kelly_note} | "
+        f"qty={qty} (bound by {binding}) | "
         f"notional=${metadata['notional']:.2f}"
     )
 

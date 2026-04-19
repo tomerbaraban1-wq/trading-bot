@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
 
     from heartbeat import (heartbeat_loop, sentiment_monitor, stop_loss_monitor,
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
-                           weekly_report_loop)
+                           weekly_report_loop, shadow_monitor_loop)
     heartbeat_task      = asyncio.create_task(heartbeat_loop())
     sentiment_task      = asyncio.create_task(sentiment_monitor())
     stop_loss_task      = asyncio.create_task(stop_loss_monitor())
@@ -58,6 +58,7 @@ async def lifespan(app: FastAPI):
     keep_alive_task     = asyncio.create_task(keep_alive_loop())
     daily_summary_task  = asyncio.create_task(daily_summary_loop())
     weekly_report_task  = asyncio.create_task(weekly_report_loop())
+    shadow_monitor_task = asyncio.create_task(shadow_monitor_loop())
 
     yield
 
@@ -69,8 +70,9 @@ async def lifespan(app: FastAPI):
     keep_alive_task.cancel()
     daily_summary_task.cancel()
     weekly_report_task.cancel()
+    shadow_monitor_task.cancel()
     for task in [heartbeat_task, sentiment_task, stop_loss_task, auto_invest_task,
-                 keep_alive_task, daily_summary_task, weekly_report_task]:
+                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task]:
         try:
             await task
         except asyncio.CancelledError:

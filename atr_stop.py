@@ -185,6 +185,83 @@ def should_exit(current_price: float, stop_price: float) -> bool:
     return current_price <= stop_price
 
 
+def should_exit_confirmed(
+    ticker:        str,
+    current_price: float,
+    stop_price:    float,
+    bar_interval:  str = "5m",
+) -> tuple[bool, str]:
+    """
+    Flash-Crash Protection — 'Close on Confirmation' stop logic.
+
+    Problem: a standard stop-loss fires on any tick below the threshold,
+    including brief wicks that immediately recover. Flash crashes can
+    shake out long positions that would have been profitable seconds later.
+
+    Solution: only exit if BOTH conditions are true:
+      1. Current price (tick) is below the stop level
+      2. The last COMPLETED candle's close is also below the stop level
+
+    If condition 1 is false → return (False, "above_stop")  [normal case]
+    If condition 1 true but condition 2 false → hold, log a warning
+    If condition 1 and 2 both true → confirmed exit
+
+    Fail towards exiting: if candle data is unavailable, treat as confirmed
+    (standard stop behaviour — don't suppress exits on data errors).
+
+    Parameters
+    ----------
+    ticker        : e.g. "TSLA"
+    current_price : latest tick from broker
+    stop_price    : current trailing stop price
+    bar_interval  : yfinance interval for confirmation candle (default "5m")
+
+    Returns
+    -------
+    (should_exit, reason)
+    """
+    # Fast path — price above stop, nothing to do
+    if current_price > stop_price:
+        return False, f"price=${current_price:.2f} > stop=${stop_price:.2f}"
+
+    # Price is at or below stop — check last completed candle for confirmation
+    try:
+        hist = yf.Ticker(ticker).history(
+            period="1d", interval=bar_interval, auto_adjust=True
+        )
+        if hist.empty or len(hist) < 2:
+            # Can't confirm — fail open (exit as normal)
+            logger.warning(
+                f"[FLASH] {ticker}: candle data unavailable — "
+                f"applying standard stop exit"
+            )
+            return True, "candle_data_unavailable — standard exit applied"
+
+        # Use [-2]: the LAST COMPLETED candle ([-1] may still be forming)
+        last_close = float(hist["Close"].iloc[-2])
+
+        if last_close <= stop_price:
+            reason = (
+                f"CONFIRMED: closed candle @ ${last_close:.2f} ≤ stop ${stop_price:.2f}"
+            )
+            logger.info(f"[FLASH] {ticker}: exit {reason}")
+            return True, reason
+        else:
+            reason = (
+                f"FLASH GUARD: tick=${current_price:.2f} < stop=${stop_price:.2f} "
+                f"but last candle closed @ ${last_close:.2f} — waiting for close confirmation"
+            )
+            logger.warning(f"[FLASH] {ticker}: {reason}")
+            return False, reason
+
+    except Exception as exc:
+        logger.warning(
+            f"[FLASH] {ticker}: candle check failed ({exc}) — "
+            f"applying standard stop exit"
+        )
+        return True, f"candle_check_error — standard exit applied"
+
+
 def get_stop_summary(trade: dict) -> dict:
     """
     Return a human-readable stop summary for a trade dict (from database).

@@ -102,6 +102,33 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shadow_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            signal_source TEXT,
+            entry_price REAL NOT NULL,
+            qty INTEGER NOT NULL,
+            entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            exit_price REAL,
+            exit_time DATETIME,
+            composite_score REAL,
+            sentiment_score INTEGER,
+            volume_ratio REAL,
+            atr_stop_price REAL,
+            high_watermark REAL,
+            live_blocked_by TEXT,
+            live_block_reason TEXT,
+            pnl_gross REAL,
+            pnl_pct REAL,
+            status TEXT DEFAULT 'open',
+            close_reason TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shadow_ticker ON shadow_trades(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_shadow_status ON shadow_trades(status)")
+
     # ── Schema migrations (safe to run repeatedly) ────────────────────────────
     # Add ATR trailing stop columns introduced in v2
     for ddl in (
@@ -313,3 +340,87 @@ def cleanup_old_heartbeats(days: int = 7):
     conn.commit()
     if result.rowcount > 0:
         logger.info(f"Cleaned up {result.rowcount} heartbeat entries older than {days} days")
+
+
+# ===== Shadow Trades =====
+
+def save_shadow_trade(row: dict) -> int:
+    """Insert a new shadow trade and return its row id."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """INSERT INTO shadow_trades
+        (ticker, signal_source, entry_price, qty, composite_score, sentiment_score,
+         volume_ratio, atr_stop_price, high_watermark, live_blocked_by, live_block_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            row["ticker"], row.get("signal_source"), row["entry_price"], row["qty"],
+            row.get("composite_score"), row.get("sentiment_score"), row.get("volume_ratio"),
+            row.get("atr_stop_price"), row.get("high_watermark"),
+            row.get("live_blocked_by"), row.get("live_block_reason"),
+        ),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_shadow_trade(shadow_id: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM shadow_trades WHERE id=?", (shadow_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def close_shadow_trade(
+    shadow_id: int,
+    exit_price: float,
+    pnl_gross: float,
+    pnl_pct: float,
+    status: str,
+    reason: str,
+) -> None:
+    conn = get_connection()
+    conn.execute(
+        """UPDATE shadow_trades SET
+        exit_price=?, exit_time=CURRENT_TIMESTAMP,
+        pnl_gross=?, pnl_pct=?, status=?, close_reason=?
+        WHERE id=?""",
+        (exit_price, pnl_gross, pnl_pct, status, reason, shadow_id),
+    )
+    conn.commit()
+
+
+def get_open_shadow_trades() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM shadow_trades WHERE status='open' ORDER BY entry_time DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_open_shadow_trade_by_ticker(ticker: str) -> dict | None:
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM shadow_trades WHERE ticker=? AND status='open' LIMIT 1",
+        (ticker,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_shadow_trade_history(limit: int = 100) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM shadow_trades ORDER BY entry_time DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_shadow_stop(shadow_id: int, new_stop: float, new_wm: float) -> None:
+    """Update trailing stop price and high watermark for an open shadow trade."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE shadow_trades SET atr_stop_price=?, high_watermark=? WHERE id=?",
+        (new_stop, new_wm, shadow_id),
+    )
+    conn.commit()

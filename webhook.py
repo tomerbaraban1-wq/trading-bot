@@ -22,6 +22,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _shadow_eval(
+    ticker: str,
+    price: float,
+    composite_score: float,
+    sentiment_score: int,
+    volume_ratio: float | None,
+    live_blocked_by: str | None,
+    live_block_reason: str,
+    signal_source: str = "webhook",
+) -> None:
+    """Fire shadow.evaluate in a background thread — fire-and-forget."""
+    try:
+        import shadow as _shadow
+        await asyncio.to_thread(
+            _shadow.evaluate, ticker, price, composite_score,
+            sentiment_score, volume_ratio, live_blocked_by,
+            live_block_reason, signal_source,
+        )
+    except Exception as exc:
+        logger.debug(f"[SHADOW] eval error for {ticker}: {exc}")
+
+
 def _trade_duration_hours(entry_time_str: str | None) -> float:
     """Parse SQLite entry_time string and return elapsed hours."""
     if not entry_time_str:
@@ -75,6 +97,11 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     if existing:
         return {"status": "skipped", "reason": f"Already have open position for {ticker}"}
 
+    # Shadow mode tracking (updated as we learn more about the signal)
+    _cscore:    float        = 50.0   # composite score — set after scoring step
+    _vol_ratio: float | None = None   # volume ratio   — set after volume check
+    _sent:      int          = 0      # sentiment score — set after sentiment step
+
     # Sentiment check (MANDATORY for buys)
     from sentiment import score_sentiment
     try:
@@ -89,11 +116,16 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         asyncio.ensure_future(notify_error("sentiment_fail", ticker, str(e)))
         return {"status": "rejected", "reason": f"Sentiment check failed: {e}"}
 
+    _sent = sentiment.score
     if sentiment.score < settings.SENTIMENT_MIN_SCORE:
         logger.info(
             f"BUY blocked by sentiment: {ticker} score={sentiment.score}/10 "
             f"(min={settings.SENTIMENT_MIN_SCORE})"
         )
+        asyncio.ensure_future(_shadow_eval(
+            ticker, payload.price, _cscore, _sent, None,
+            "sentiment", f"score={sentiment.score} < {settings.SENTIMENT_MIN_SCORE}",
+        ))
         return {
             "status": "blocked_by_sentiment",
             "ticker": ticker,
@@ -113,7 +145,12 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         result = {"should_buy": True, "composite_score": 50}
         indicators = {}
 
+    _cscore = result.get("composite_score", 50.0)
     if not result["should_buy"]:
+        asyncio.ensure_future(_shadow_eval(
+            ticker, payload.price, _cscore, _sent, None,
+            "score", f"composite_score={_cscore:.0f} < {result.get('min_score', 65)}",
+        ))
         return {
             "status": "blocked_by_score",
             "ticker": ticker,
@@ -127,6 +164,10 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     should_block, block_reason = await asyncio.to_thread(should_override_buy, ticker, indicators)
     if should_block:
         logger.info(f"BUY blocked by learning: {ticker} - {block_reason}")
+        asyncio.ensure_future(_shadow_eval(
+            ticker, payload.price, _cscore, _sent, None,
+            "learning", block_reason,
+        ))
         return {"status": "blocked_by_learning", "reason": block_reason}
 
     # Sanity check — price plausibility, velocity, data completeness
@@ -138,9 +179,42 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         )
         if not sane:
             logger.warning(f"BUY blocked by sanity check: {ticker} — {sane_reason}")
+            asyncio.ensure_future(_shadow_eval(
+                ticker, payload.price, _cscore, _sent, None,
+                "sanity", sane_reason,
+            ))
             return {"status": "blocked_by_sanity", "reason": sane_reason}
     except asyncio.TimeoutError:
+        asyncio.ensure_future(_shadow_eval(
+            ticker, payload.price, _cscore, _sent, None,
+            "sanity", "sanity check timed out",
+        ))
         return {"status": "blocked_by_sanity", "reason": "sanity check timed out"}
+
+    # Market regime filter — skip trend-following buys in ranging markets
+    from market_regime import get_regime as _get_regime
+    try:
+        _regime, _adx, _regime_det = await asyncio.wait_for(
+            asyncio.to_thread(_get_regime, ticker), timeout=20
+        )
+        if _regime == "ranging":
+            logger.info(
+                f"BUY blocked by market regime: {ticker} ADX={_adx:.1f} "
+                f"(ranging — trend-following disabled)"
+            )
+            asyncio.ensure_future(_shadow_eval(
+                ticker, payload.price, _cscore, _sent, None,
+                "market_regime", f"ranging ADX={_adx:.1f}",
+            ))
+            return {
+                "status": "blocked_by_market_regime",
+                "ticker": ticker,
+                "regime": _regime,
+                "adx":    round(_adx, 2),
+                "reason": f"Ranging market (ADX={_adx:.1f} < {_regime_det.get('threshold', 25)}) — trend-following disabled",
+            }
+    except asyncio.TimeoutError:
+        logger.warning(f"[ADX] {ticker} regime check timed out — proceeding (fail-open)")
 
     # Volume confirmation — reject low-volume signals
     from volume_confirm import check as vol_check
@@ -148,8 +222,13 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         vol_passed, vol_reason, vol_details = await asyncio.wait_for(
             asyncio.to_thread(vol_check, ticker), timeout=15
         )
+        _vol_ratio = vol_details.get("ratio")
         if not vol_passed:
             logger.info(f"BUY blocked by volume: {ticker} — {vol_reason}")
+            asyncio.ensure_future(_shadow_eval(
+                ticker, payload.price, _cscore, _sent, _vol_ratio,
+                "volume", vol_reason,
+            ))
             return {
                 "status": "blocked_by_volume",
                 "ticker": ticker,
@@ -167,6 +246,10 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         )
         if corr_blocked:
             logger.info(f"BUY blocked by correlation: {corr_reason}")
+            asyncio.ensure_future(_shadow_eval(
+                ticker, payload.price, _cscore, _sent, _vol_ratio,
+                "correlation", corr_reason,
+            ))
             return {
                 "status":      "blocked_by_correlation",
                 "ticker":      ticker,
@@ -186,6 +269,10 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         except Exception:
             cash = 0.0
         asyncio.ensure_future(notify_budget_warning(budget_reason, cash))
+        asyncio.ensure_future(_shadow_eval(
+            ticker, payload.price, _cscore, _sent, _vol_ratio,
+            "budget", budget_reason,
+        ))
         return {"status": "blocked_by_budget", "reason": budget_reason}
 
     # Execute buy — iceberg splits large orders automatically
@@ -219,6 +306,12 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         )
     except Exception as stop_err:
         logger.warning(f"[ATR STOP] {ticker}: failed to set initial stop: {stop_err}")
+
+    # Shadow: live also traded (live_blocked_by=None → both agree)
+    asyncio.ensure_future(_shadow_eval(
+        ticker, actual_price, _cscore, _sent, _vol_ratio,
+        None, "",  # live_blocked_by=None means live also traded
+    ))
 
     # Notify Telegram
     asyncio.ensure_future(notify_trade_open(
@@ -653,6 +746,85 @@ async def get_news(ticker: str):
         return {"ticker": ticker.upper(), "news": results}
     except Exception as e:
         return {"ticker": ticker.upper(), "news": [], "error": str(e)}
+
+
+@router.get("/shadow")
+async def shadow_compare():
+    """
+    Compare shadow (aggressive) strategy vs live (conservative) strategy.
+
+    Returns:
+      shadow       — aggregate P&L stats for all shadow trades
+      live         — aggregate P&L stats for all live trades
+      shadow_only  — stats for trades shadow took but live blocked
+      agreement    — count of trades both strategies took
+      filter_analysis — per-filter breakdown: how often each guard blocked, win-rate + avg P&L
+      note         — interpretation guide
+
+    Positive avg_pnl in shadow_only means live filters ARE protecting capital.
+    Negative avg_pnl means live filters are blocking profitable trades.
+    """
+    import shadow as _shadow
+    return await asyncio.to_thread(_shadow.compare)
+
+
+@router.get("/shadow/trades")
+async def shadow_trades(limit: int = 50):
+    """
+    List recent shadow trades (open and closed).
+    ?limit=50  (default 50, max 1000)
+    """
+    import shadow as _shadow
+    trades = await asyncio.to_thread(_shadow.get_trades, min(limit, 1000))
+    return {"count": len(trades), "trades": trades}
+
+
+@router.get("/regime")
+async def market_regime_check(ticker: str):
+    """
+    Check ADX market regime for a ticker.
+    ?ticker=AAPL
+    Returns: regime (trending|ranging), ADX value, threshold, is_trending.
+    """
+    from market_regime import get_regime
+    regime, adx, details = await asyncio.to_thread(get_regime, ticker.upper())
+    return {"regime": regime, "adx": adx, **details}
+
+
+@router.get("/kelly")
+async def kelly_status():
+    """
+    Return the current Half-Kelly fraction derived from closed trade history.
+    Shows the inputs (win_rate, profit_factor) and the recommended fraction.
+    """
+    from budget import kelly_fraction
+    from database import get_win_trades, get_loss_trades
+
+    wins   = await asyncio.to_thread(get_win_trades,  200)
+    losses = await asyncio.to_thread(get_loss_trades, 200)
+    n_wins, n_losses = len(wins), len(losses)
+    total = n_wins + n_losses
+
+    frac = await asyncio.to_thread(kelly_fraction)
+
+    avg_win  = sum(t.get("pnl_gross", 0) or 0 for t in wins)  / n_wins  if n_wins  else 0
+    avg_loss = sum(abs(t.get("pnl_gross", 0) or 0) for t in losses) / n_losses if n_losses else 0
+
+    return {
+        "kelly_fraction":    round(frac, 4),
+        "kelly_pct":         round(frac * 100, 2),
+        "win_rate":          round(n_wins / total * 100, 1) if total else 0,
+        "profit_factor":     round(avg_win / avg_loss, 3) if avg_loss > 0 else None,
+        "avg_win_usd":       round(avg_win, 2),
+        "avg_loss_usd":      round(avg_loss, 2),
+        "total_closed":      total,
+        "wins":              n_wins,
+        "losses":            n_losses,
+        "note": (
+            "Kelly fraction = 0 means either no edge or too few trades (<10). "
+            "Positive fraction is used as % of equity per trade (half-Kelly applied)."
+        ),
+    }
 
 
 @router.get("/settings/trading")

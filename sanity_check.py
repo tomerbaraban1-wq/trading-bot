@@ -35,10 +35,11 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-MAX_PRICE_DRIFT_PCT:  float = float(os.getenv("SANITY_MAX_PRICE_DRIFT_PCT", "1.0"))
-MAX_VELOCITY_PCT:     float = float(os.getenv("SANITY_MAX_VELOCITY_PCT",    "2.0"))
-MAX_SPREAD_PCT:       float = float(os.getenv("SANITY_MAX_SPREAD_PCT",      "0.5"))
-CONFIRM_DELAY_SEC:    float = float(os.getenv("SANITY_CONFIRM_DELAY_SEC",   "1.5"))
+MAX_PRICE_DRIFT_PCT:        float = float(os.getenv("SANITY_MAX_PRICE_DRIFT_PCT",    "1.0"))
+MAX_VELOCITY_PCT:           float = float(os.getenv("SANITY_MAX_VELOCITY_PCT",      "2.0"))
+MAX_SPREAD_PCT:             float = float(os.getenv("SANITY_MAX_SPREAD_PCT",        "0.5"))
+CONFIRM_DELAY_SEC:          float = float(os.getenv("SANITY_CONFIRM_DELAY_SEC",     "1.5"))
+MAX_CROSS_EXCHANGE_PCT:     float = float(os.getenv("SANITY_MAX_CROSS_EXCHANGE_PCT","0.5"))
 
 # Required indicator keys for a BUY signal to be considered complete
 REQUIRED_FIELDS = ("rsi", "macd", "volume_ratio", "atr")
@@ -81,6 +82,7 @@ def run_all(
     checks = [
         _check_data_completeness,
         _check_price_plausibility,
+        _check_multi_source_price,
         _check_price_velocity,
         _check_spread,
     ]
@@ -163,6 +165,60 @@ def _check_price_plausibility(
 
     logger.debug(f"[SANITY] {ticker}: price drift={drift_pct:.3f}% ✅")
     return True, f"drift={drift_pct:.3f}%"
+
+
+def _check_multi_source_price(
+    ticker: str,
+    signal_price: float,
+    indicators: dict | None,
+) -> tuple[bool, str]:
+    """
+    Cross-validate the live price across two independent data sources:
+      Source A — yfinance (1-minute bar close)
+      Source B — Alpaca broker API (last_trade_price)
+
+    If the two sources disagree by more than MAX_CROSS_EXCHANGE_PCT the
+    price data is unreliable — there may be a feed error, stale quote,
+    or genuine market dislocation.
+
+    Fail-open: if EITHER source is unavailable, the check is skipped.
+    Both sources must be available AND disagree to block the trade.
+    """
+    # Source A: yfinance
+    yf_price = _get_live_price(ticker)
+    if yf_price is None:
+        logger.warning(f"[SANITY] {ticker}: multi-source check — yfinance unavailable, skipping")
+        return True, "multi_source_yf_unavailable"
+
+    # Source B: Alpaca broker API (lazy import to avoid circular dependency)
+    try:
+        import broker as _broker
+        alpaca_price = _broker.get_price(ticker)
+    except Exception as exc:
+        logger.warning(
+            f"[SANITY] {ticker}: multi-source check — broker API failed ({exc}), skipping"
+        )
+        return True, "multi_source_broker_unavailable"
+
+    if not alpaca_price or alpaca_price <= 0:
+        logger.debug(f"[SANITY] {ticker}: broker price unavailable — skipping multi-source check")
+        return True, "multi_source_broker_unavailable"
+
+    mid        = (yf_price + alpaca_price) / 2
+    drift_pct  = abs(yf_price - alpaca_price) / mid * 100 if mid > 0 else 0
+
+    if drift_pct > MAX_CROSS_EXCHANGE_PCT:
+        return False, (
+            f"multi-source price discrepancy {drift_pct:.2f}% exceeds "
+            f"limit {MAX_CROSS_EXCHANGE_PCT}% "
+            f"(yfinance=${yf_price:.4f}, broker=${alpaca_price:.4f})"
+        )
+
+    logger.debug(
+        f"[SANITY] {ticker}: multi-source drift={drift_pct:.3f}% ✅ "
+        f"(yf=${yf_price:.4f} broker=${alpaca_price:.4f})"
+    )
+    return True, f"multi_source_drift={drift_pct:.3f}%"
 
 
 def _check_price_velocity(

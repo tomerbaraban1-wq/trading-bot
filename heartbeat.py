@@ -159,7 +159,9 @@ async def stop_loss_monitor():
     The stop trails upward with the high watermark, locking in gains,
     while giving each asset room proportional to its own volatility.
     """
-    from atr_stop import compute_initial_stop, update_trailing_stop, should_exit
+    from atr_stop import compute_initial_stop, update_trailing_stop, should_exit_confirmed
+    import os as _os
+    MAX_HOLD_HOURS: float = float(_os.getenv("MAX_HOLD_HOURS", "48.0"))
 
     while True:
         try:
@@ -220,18 +222,52 @@ async def stop_loss_monitor():
                         atr_stop = new_stop
                         high_wm  = new_wm
 
-                    # Check exit: price breached trailing stop
-                    if should_exit(cur_price, atr_stop):
+                    # ── 1a. Time-Based Exit — free capital after MAX_HOLD_HOURS ─────
+                    from datetime import datetime, timezone as _tz
+                    entry_ts = trade.get("entry_time")
+                    if entry_ts:
+                        try:
+                            entry_dt = datetime.strptime(
+                                str(entry_ts)[:19], "%Y-%m-%d %H:%M:%S"
+                            ).replace(tzinfo=_tz.utc)
+                            hours_held = (
+                                datetime.now(_tz.utc) - entry_dt
+                            ).total_seconds() / 3600
+                            if hours_held >= MAX_HOLD_HOURS:
+                                logger.info(
+                                    f"[TIME EXIT] {ticker}: held {hours_held:.1f}h "
+                                    f"≥ {MAX_HOLD_HOURS}h — closing"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "time_exit",
+                                    f"Time-based exit ({hours_held:.1f}h held, "
+                                    f"limit={MAX_HOLD_HOURS}h)",
+                                )
+                                continue
+                        except Exception as te:
+                            logger.debug(f"[TIME EXIT] {ticker}: parse error: {te}")
+
+                    # ── 1b. ATR Trailing Stop (flash-crash confirmed) ─────────
+                    flash_exit, flash_reason = await asyncio.to_thread(
+                        should_exit_confirmed, ticker, cur_price, atr_stop
+                    )
+                    if flash_exit:
                         logger.warning(
-                            f"[ATR STOP] {ticker}: TRIGGERED "
-                            f"price=${cur_price:.2f} < stop=${atr_stop:.2f} "
-                            f"(P&L: {plpc:.2f}%)"
+                            f"[ATR STOP] {ticker}: CONFIRMED EXIT "
+                            f"price=${cur_price:.2f} stop=${atr_stop:.2f} "
+                            f"(P&L: {plpc:.2f}%) — {flash_reason}"
                         )
                         await _close_position(
                             trade, cur_price, "stop_loss",
                             f"ATR Trailing Stop (stop=${atr_stop:.2f} | {plpc:.1f}%)"
                         )
                         continue  # trade closed — skip other checks
+                    elif cur_price <= atr_stop:
+                        # Price below stop but NOT confirmed by closed candle
+                        logger.info(
+                            f"[FLASH GUARD] {ticker}: stop not yet confirmed — holding. "
+                            f"{flash_reason}"
+                        )
 
                     # ── 2. Take Profit (fixed ceiling) ────────────────────────
                     if plpc >= settings.TAKE_PROFIT_PCT:
@@ -287,6 +323,7 @@ async def auto_invest_loop():
     while True:
         try:
             import random
+            import shadow as _shadow
             from scanner import WATCHLIST
             from sentiment import score_sentiment
             from scoring import get_composite_score
@@ -345,11 +382,17 @@ async def auto_invest_loop():
                             _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=30
                         )
                         score = composite["composite_score"]
+                        _vol_ratio: float | None = None   # set after volume check
                         logger.info(
                             f"AUTO-INVEST: {ticker} → {score}/100 "
                             f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
                         )
                         if not composite["should_buy"]:
+                            asyncio.ensure_future(_asyncio.to_thread(
+                                _shadow.evaluate, ticker, price, score, sentiment.score,
+                                None, "score",
+                                f"composite_score={score:.0f} below threshold", "auto_invest",
+                            ))
                             continue
 
                         price = await _asyncio.wait_for(
@@ -358,6 +401,26 @@ async def auto_invest_loop():
                         if not price or price <= 0:
                             continue
 
+                        # Market regime filter — skip in ranging/choppy markets
+                        from market_regime import get_regime as _get_regime
+                        try:
+                            _regime, _adx, _regime_details = await _asyncio.wait_for(
+                                _asyncio.to_thread(_get_regime, ticker), timeout=20
+                            )
+                            if _regime == "ranging":
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} skipped — ranging market "
+                                    f"(ADX={_adx:.1f} < {_regime_details.get('threshold', 25)})"
+                                )
+                                asyncio.ensure_future(_asyncio.to_thread(
+                                    _shadow.evaluate, ticker, price, score, sentiment.score,
+                                    _vol_ratio, "market_regime",
+                                    f"ranging market ADX={_adx:.1f}", "auto_invest",
+                                ))
+                                continue
+                        except _asyncio.TimeoutError:
+                            logger.warning(f"[ADX] {ticker} regime check timed out — proceeding (fail-open)")
+
                         # Sanity check — price plausibility + velocity + data completeness
                         from sanity_check import run_all as sanity_run
                         sane, sane_reason = await _asyncio.wait_for(
@@ -365,16 +428,25 @@ async def auto_invest_loop():
                         )
                         if not sane:
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
+                            asyncio.ensure_future(_asyncio.to_thread(
+                                _shadow.evaluate, ticker, price, score, sentiment.score,
+                                None, "sanity", sane_reason, "auto_invest",
+                            ))
                             continue
 
                         # Volume confirmation — skip low-volume signals
                         from volume_confirm import check as vol_check
                         try:
-                            vol_passed, vol_reason, _ = await _asyncio.wait_for(
+                            vol_passed, vol_reason, vol_details = await _asyncio.wait_for(
                                 _asyncio.to_thread(vol_check, ticker), timeout=15
                             )
+                            _vol_ratio = vol_details.get("ratio")
                             if not vol_passed:
                                 logger.info(f"AUTO-INVEST: {ticker} volume skip — {vol_reason}")
+                                asyncio.ensure_future(_asyncio.to_thread(
+                                    _shadow.evaluate, ticker, price, score, sentiment.score,
+                                    _vol_ratio, "volume", vol_reason, "auto_invest",
+                                ))
                                 continue
                         except _asyncio.TimeoutError:
                             logger.warning(f"[VOLUME] {ticker} check timed out — proceeding (fail-open)")
@@ -390,6 +462,10 @@ async def auto_invest_loop():
                                     f"AUTO-INVEST: {ticker} skipped — {corr_reason} "
                                     f"(max_corr={corr_details.get('max_correlation', '?')})"
                                 )
+                                asyncio.ensure_future(_asyncio.to_thread(
+                                    _shadow.evaluate, ticker, price, score, sentiment.score,
+                                    _vol_ratio, "correlation", corr_reason, "auto_invest",
+                                ))
                                 continue
                         except _asyncio.TimeoutError:
                             logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
@@ -399,6 +475,10 @@ async def auto_invest_loop():
                         qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)
                         if qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
+                            asyncio.ensure_future(_asyncio.to_thread(
+                                _shadow.evaluate, ticker, price, score, sentiment.score,
+                                _vol_ratio, "budget", f"sizing=0 at ${price:.2f}", "auto_invest",
+                            ))
                             continue
 
                         # Slippage estimate (for metadata/audit — iceberg manages actual limit internally)
@@ -435,6 +515,11 @@ async def auto_invest_loop():
                         except Exception as stop_err:
                             logger.warning(f"[ATR STOP] {ticker}: failed to set stop: {stop_err}")
 
+                        # Shadow: live also traded — record agreement
+                        asyncio.ensure_future(_asyncio.to_thread(
+                            _shadow.evaluate, ticker, actual_price, score, sentiment.score,
+                            _vol_ratio, None, "", "auto_invest",
+                        ))
                         await notify_buy(ticker, qty, actual_price, score, sentiment.score)
 
                     except _asyncio.TimeoutError:
@@ -453,6 +538,24 @@ async def auto_invest_loop():
             asyncio.ensure_future(notify_error("loop_error", "", f"auto_invest_loop: {e}"))
 
         await asyncio.sleep(5 * 60)  # run every 5 minutes
+
+
+async def shadow_monitor_loop():
+    """
+    Background task: tick all open shadow paper positions every 5 minutes.
+    Applies ATR trailing stop and take-profit ceiling — mirrors live stop_loss_monitor
+    but operates on the shadow_trades table only (no real orders ever submitted).
+    """
+    await asyncio.sleep(90)   # staggered start so it doesn't compete with startup I/O
+    while True:
+        try:
+            import shadow as _shadow
+            await asyncio.to_thread(_shadow.tick_open_positions)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Shadow monitor error: {e}")
+        await asyncio.sleep(5 * 60)
 
 
 async def _emergency_exit(trade: dict):
