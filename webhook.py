@@ -11,6 +11,7 @@ from signal_validator import validate_signal
 from trade_logger import log_trade_open, log_trade_close, log_learning
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from trading_hours import get_status as hours_status
+from iceberg import get_status as iceberg_status
 
 logger = logging.getLogger(__name__)
 
@@ -128,11 +129,10 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         logger.info(f"BUY blocked by budget: {ticker} - {budget_reason}")
         return {"status": "blocked_by_budget", "reason": budget_reason}
 
-    # Execute buy
+    # Execute buy — iceberg splits large orders automatically
     try:
-        order = await asyncio.wait_for(
-            asyncio.to_thread(broker.submit_buy, ticker, max_qty), timeout=15
-        )
+        from iceberg import iceberg_buy
+        order = await iceberg_buy(ticker, max_qty, payload.price)
     except asyncio.TimeoutError:
         return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
@@ -247,8 +247,9 @@ async def trading_status():
         "budget": status,
         "positions": positions,
         "open_trades": database.get_open_trades(),
-        "circuit_breaker": cb_status(),
-        "trading_hours":   hours_status(),
+        "circuit_breaker":   cb_status(),
+        "trading_hours":     hours_status(),
+        "iceberg_active":    iceberg_status(),
     }
 
 

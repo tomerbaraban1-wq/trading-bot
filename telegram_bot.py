@@ -55,6 +55,25 @@ async def notify_emergency(ticker: str, reason: str):
     )
 
 
+async def notify_iceberg_start(ticker: str, total_qty: int, n_slices: int, interval_sec: float):
+    duration_min = (n_slices - 1) * interval_sec / 60
+    await send_message(
+        f"🧊 <b>ICEBERG START</b> {ticker}\n"
+        f"📦 {total_qty} shares → {n_slices} slices × ~{int(total_qty/n_slices)} shares\n"
+        f"⏱ Interval: {interval_sec:.0f}s | Est. duration: ~{duration_min:.0f}min"
+    )
+
+
+async def notify_iceberg_done(ticker: str, filled_qty: int, avg_price: float,
+                               n_slices: int, is_partial: bool):
+    status = "⚠️ PARTIAL FILL" if is_partial else "✅ COMPLETE"
+    await send_message(
+        f"🧊 <b>ICEBERG {status}</b> {ticker}\n"
+        f"📦 {filled_qty} shares filled across {n_slices} slices\n"
+        f"💵 Avg fill price: ${avg_price:.4f}"
+    )
+
+
 async def notify_weekly_report(report_html: str):
     """Send the weekly performance report (pre-formatted HTML)."""
     await send_message(report_html)

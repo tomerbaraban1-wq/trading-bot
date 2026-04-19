@@ -288,15 +288,13 @@ async def auto_invest_loop():
                             logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
                             continue
 
-                        # ATR-based dynamic limit price (replaces fixed 0.1% offset)
-                        lim_price = await _asyncio.to_thread(limit_buy_price, price, ticker)
+                        # Slippage estimate (for metadata/audit — iceberg manages actual limit internally)
                         slip = await _asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
 
-                        from utils import retry_sync
-                        order = await _asyncio.wait_for(
-                            _asyncio.to_thread(retry_sync, broker.submit_buy, ticker, qty, lim_price, max_retries=2), timeout=30
-                        )
-                        actual_price = float(order.get("price") or lim_price)
+                        # Execute — iceberg splits large orders automatically
+                        from iceberg import iceberg_buy
+                        order = await iceberg_buy(ticker, qty, price)
+                        actual_price = float(order.get("price") or price)
                         spent        = actual_price * qty
                         remaining   -= spent
                         bought      += 1
