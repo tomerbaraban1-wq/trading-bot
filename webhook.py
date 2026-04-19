@@ -12,10 +12,27 @@ from trade_logger import log_trade_open, log_trade_close, log_learning
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from trading_hours import get_status as hours_status
 from iceberg import get_status as iceberg_status
+from telegram_bot import (
+    notify_trade_open, notify_trade_close, notify_error,
+    notify_circuit_breaker_tripped, notify_budget_warning,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _trade_duration_hours(entry_time_str: str | None) -> float:
+    """Parse SQLite entry_time string and return elapsed hours."""
+    if not entry_time_str:
+        return 0.0
+    try:
+        from datetime import datetime, timezone
+        fmt = "%Y-%m-%d %H:%M:%S"
+        entry = datetime.strptime(str(entry_time_str)[:19], fmt).replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - entry).total_seconds() / 3600
+    except Exception:
+        return 0.0
 
 
 @router.post("/webhook")
@@ -65,9 +82,11 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
             asyncio.to_thread(score_sentiment, ticker), timeout=45
         )
     except asyncio.TimeoutError:
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "Sentiment check timed out after 45s"))
         return {"status": "rejected", "reason": "Sentiment check timed out"}
     except Exception as e:
         logger.error(f"Sentiment check failed for {ticker}: {e}")
+        asyncio.ensure_future(notify_error("sentiment_fail", ticker, str(e)))
         return {"status": "rejected", "reason": f"Sentiment check failed: {e}"}
 
     if sentiment.score < settings.SENTIMENT_MIN_SCORE:
@@ -127,6 +146,12 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price)
     if not can_buy:
         logger.info(f"BUY blocked by budget: {ticker} - {budget_reason}")
+        try:
+            acct = await asyncio.to_thread(broker.get_account)
+            cash = float(acct.get("cash", 0))
+        except Exception:
+            cash = 0.0
+        asyncio.ensure_future(notify_budget_warning(budget_reason, cash))
         return {"status": "blocked_by_budget", "reason": budget_reason}
 
     # Execute buy — iceberg splits large orders automatically
@@ -134,14 +159,27 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         from iceberg import iceberg_buy
         order = await iceberg_buy(ticker, max_qty, payload.price)
     except asyncio.TimeoutError:
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "Buy order timed out after 15s"))
         return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
         logger.error(f"BUY order failed for {ticker}: {e}")
+        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Log trade
     actual_price = order.get("price") or payload.price
     trade_id = log_trade_open(payload, sentiment, order, max_qty)
+
+    # Notify Telegram
+    asyncio.ensure_future(notify_trade_open(
+        ticker=ticker, qty=max_qty, price=actual_price,
+        notional=round(actual_price * max_qty, 2),
+        score=result.get("composite_score", 0),
+        sentiment_score=sentiment.score,
+        trade_id=trade_id,
+        is_iceberg=order.get("iceberg", False),
+        n_slices=len(order.get("slices", [])),
+    ))
 
     return {
         "status": "executed",
@@ -151,7 +189,7 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         "price": actual_price,
         "sentiment_score": sentiment.score,
         "trade_id": trade_id,
-        "order_id": order["order_id"],
+        "order_id": order.get("order_id", ""),
     }
 
 
@@ -170,9 +208,11 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
     except asyncio.TimeoutError:
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "Sell order timed out after 15s"))
         return {"status": "error", "reason": "Sell order timed out"}
     except Exception as e:
         logger.error(f"SELL order failed for {ticker}: {e}")
+        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Calculate PnL
@@ -192,7 +232,16 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         trade["id"], exit_price, pnl_gross, pnl_net,
         tax_result["tax_amount"], fees, "closed",
     )
+
+    # Check circuit breaker (may have just tripped)
+    was_ok, _ = check_circuit_breaker()
     record_trade_result(pnl_gross)
+    is_ok, cb_reason = check_circuit_breaker()
+    if not is_ok and was_ok:
+        cb_st = cb_status()
+        asyncio.ensure_future(notify_circuit_breaker_tripped(
+            cb_st["daily_pnl"], cb_st["max_daily_loss"], cb_st["trip_reason"]
+        ))
 
     # Log learning entry
     outcome = "profit" if pnl_gross > 0 else "loss"
@@ -206,6 +255,18 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         f"PnL=${pnl_gross:+.2f} sentiment={trade.get('sentiment_score')}"
     )
     log_learning(trade["id"], description, f"{outcome}_pattern", indicators, outcome, pnl_gross)
+
+    # Notify Telegram — full P&L breakdown
+    duration_hours = _trade_duration_hours(trade.get("entry_time"))
+    asyncio.ensure_future(notify_trade_close(
+        ticker=ticker, qty=qty,
+        entry_price=entry_price, exit_price=exit_price,
+        pnl_gross=pnl_gross, pnl_net=pnl_net,
+        tax_reserved=tax_result["tax_amount"],
+        duration_hours=duration_hours,
+        reason="TradingView signal",
+        trade_id=trade["id"],
+    ))
 
     return {
         "status": "executed",

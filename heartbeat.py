@@ -7,8 +7,12 @@ import budget
 import database
 from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_open, log_trade_close
-from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary, notify_weekly_report
-from circuit_breaker import check_circuit_breaker, record_trade_result
+from telegram_bot import (
+    notify_buy, notify_sell, notify_emergency,
+    notify_daily_summary, notify_weekly_report,
+    notify_error, notify_circuit_breaker_tripped,
+)
+from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate
 
 logger = logging.getLogger(__name__)
@@ -93,6 +97,7 @@ async def sentiment_monitor():
             raise
         except Exception as e:
             logger.error(f"Sentiment monitor error: {e}")
+            asyncio.ensure_future(notify_error("loop_error", "", f"sentiment_monitor: {e}"))
 
 
 async def stop_loss_monitor():
@@ -123,9 +128,13 @@ async def stop_loss_monitor():
                         logger.warning(f"STOP LOSS: selling {ticker} (P&L: {plpc:.2f}%)")
                         cur_price = float(position.get("current_price", trade["entry_price"]))
                         lim_sell = limit_sell_price(cur_price)
-                        order = await asyncio.wait_for(
-                            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
-                        )
+                        try:
+                            order = await asyncio.wait_for(
+                                asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+                            )
+                        except Exception as sell_err:
+                            asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(sell_err)))
+                            raise
                         exit_price = float(order.get("price") or lim_sell)
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
@@ -135,16 +144,27 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "stop_loss",
                         )
+                        was_ok, _ = check_circuit_breaker()
                         record_trade_result(pnl_gross)
+                        is_ok, _ = check_circuit_breaker()
+                        if not is_ok and was_ok:
+                            st = cb_status()
+                            asyncio.ensure_future(notify_circuit_breaker_tripped(
+                                st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
+                            ))
                         await notify_sell(ticker, exit_price, pnl_gross, f"Stop Loss ({plpc:.1f}%)")
 
                     elif plpc >= settings.TAKE_PROFIT_PCT:
                         logger.info(f"TAKE PROFIT: selling {ticker} (P&L: {plpc:.2f}%)")
                         cur_price = float(position.get("current_price", trade["entry_price"]))
                         lim_sell = limit_sell_price(cur_price)
-                        order = await asyncio.wait_for(
-                            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
-                        )
+                        try:
+                            order = await asyncio.wait_for(
+                                asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+                            )
+                        except Exception as sell_err:
+                            asyncio.ensure_future(notify_error("take_profit_fail", ticker, str(sell_err)))
+                            raise
                         exit_price = float(order.get("price") or lim_sell)
                         pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
                         from tax_tracker import process_trade_close
@@ -154,7 +174,14 @@ async def stop_loss_monitor():
                             trade["id"], exit_price, pnl_gross, pnl_net,
                             tax_result["tax_amount"], 0.0, "take_profit",
                         )
+                        was_ok, _ = check_circuit_breaker()
                         record_trade_result(pnl_gross)
+                        is_ok, _ = check_circuit_breaker()
+                        if not is_ok and was_ok:
+                            st = cb_status()
+                            asyncio.ensure_future(notify_circuit_breaker_tripped(
+                                st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
+                            ))
                         await notify_sell(ticker, exit_price, pnl_gross, f"Take Profit ({plpc:.1f}%)")
 
                     else:
@@ -181,18 +208,28 @@ async def stop_loss_monitor():
                                         trade["id"], exit_price, pnl_gross, pnl_net,
                                         tax_result["tax_amount"], 0.0, "smart_sell",
                                     )
+                                    was_ok, _ = check_circuit_breaker()
                                     record_trade_result(pnl_gross)
+                                    is_ok, _ = check_circuit_breaker()
+                                    if not is_ok and was_ok:
+                                        st = cb_status()
+                                        asyncio.ensure_future(notify_circuit_breaker_tripped(
+                                            st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
+                                        ))
                                     await notify_sell(ticker, exit_price, pnl_gross, f"Smart Sell (score={comp}/100)")
                             except Exception as se:
                                 logger.warning(f"Smart sell check error for {ticker}: {se}")
+                                asyncio.ensure_future(notify_error("stop_loss_fail", ticker, f"Smart sell error: {se}"))
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
+                    asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(e)))
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Stop loss monitor error: {e}")
+            asyncio.ensure_future(notify_error("loop_error", "", f"stop_loss_monitor: {e}"))
 
 
 async def auto_invest_loop():
@@ -309,8 +346,10 @@ async def auto_invest_loop():
 
                     except _asyncio.TimeoutError:
                         logger.warning(f"AUTO-INVEST: {ticker} timed out, skipping")
+                        asyncio.ensure_future(notify_error("api_timeout", ticker, "Auto-invest order timed out"))
                     except Exception as e:
                         logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
+                        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
@@ -318,6 +357,7 @@ async def auto_invest_loop():
             raise
         except Exception as e:
             logger.error(f"AUTO-INVEST loop error: {e}")
+            asyncio.ensure_future(notify_error("loop_error", "", f"auto_invest_loop: {e}"))
 
         await asyncio.sleep(5 * 60)  # run every 5 minutes
 
@@ -377,9 +417,11 @@ async def daily_summary_loop():
                 t for t in all_trades
                 if t.get("exit_time") and t["exit_time"][:10] == str(today)
             ]
-            wins = [t for t in today_trades if (t.get("pnl_gross") or 0) > 0]
-            losses = [t for t in today_trades if (t.get("pnl_gross") or 0) <= 0]
+            wins      = [t for t in today_trades if (t.get("pnl_gross") or 0) > 0]
+            losses    = [t for t in today_trades if (t.get("pnl_gross") or 0) <= 0]
             total_pnl = sum(t.get("pnl_gross") or 0 for t in today_trades)
+            total_tax = sum(t.get("tax_reserved") or 0 for t in today_trades)
+            total_net = sum(t.get("pnl_net") or 0 for t in today_trades)
 
             open_trades = database.get_open_trades()
             status = await asyncio.to_thread(budget.get_budget_status)
@@ -392,6 +434,8 @@ async def daily_summary_loop():
                 total_pnl=total_pnl,
                 open_positions=len(open_trades),
                 equity=equity,
+                tax_reserved=total_tax,
+                realized_pnl_net=total_net,
             )
             logger.info(f"Daily summary sent: {len(today_trades)} trades, PnL=${total_pnl:+.2f}")
 
