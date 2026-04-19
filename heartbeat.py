@@ -318,6 +318,21 @@ async def auto_invest_loop():
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
                             continue
 
+                        # Correlation filter — skip if too correlated with open positions
+                        from correlation import check as corr_check
+                        try:
+                            corr_blocked, corr_reason, corr_details = await _asyncio.wait_for(
+                                _asyncio.to_thread(corr_check, ticker), timeout=25
+                            )
+                            if corr_blocked:
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} skipped — {corr_reason} "
+                                    f"(max_corr={corr_details.get('max_correlation', '?')})"
+                                )
+                                continue
+                        except _asyncio.TimeoutError:
+                            logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
+
                         # Risk-based position sizing (replaces naive "available/price")
                         from budget import compute_position_size
                         qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)

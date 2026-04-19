@@ -142,6 +142,23 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     except asyncio.TimeoutError:
         return {"status": "blocked_by_sanity", "reason": "sanity check timed out"}
 
+    # Correlation filter — skip if too correlated with an open position
+    from correlation import check as corr_check
+    try:
+        corr_blocked, corr_reason, corr_details = await asyncio.wait_for(
+            asyncio.to_thread(corr_check, ticker), timeout=25
+        )
+        if corr_blocked:
+            logger.info(f"BUY blocked by correlation: {corr_reason}")
+            return {
+                "status":      "blocked_by_correlation",
+                "ticker":      ticker,
+                "reason":      corr_reason,
+                "correlation": corr_details,
+            }
+    except asyncio.TimeoutError:
+        logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
+
     # Budget check
     can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price)
     if not can_buy:
@@ -312,6 +329,28 @@ async def trading_status():
         "trading_hours":     hours_status(),
         "iceberg_active":    iceberg_status(),
     }
+
+
+@router.get("/correlation")
+async def correlation_matrix():
+    """
+    Full N×N Pearson correlation matrix for all currently open positions.
+    Also checks each open position against the others and flags pairs above threshold.
+    """
+    from correlation import portfolio_matrix
+    return await asyncio.to_thread(portfolio_matrix)
+
+
+@router.get("/correlation/check")
+async def correlation_check(ticker: str):
+    """
+    Check whether a specific ticker would be blocked by the correlation filter
+    given the current open positions.
+    ?ticker=NVDA
+    """
+    from correlation import check as corr_check
+    blocked, reason, details = await asyncio.to_thread(corr_check, ticker.upper())
+    return {"blocked": blocked, "reason": reason, **details}
 
 
 @router.get("/performance")
