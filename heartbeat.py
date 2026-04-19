@@ -367,6 +367,18 @@ async def auto_invest_loop():
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
                             continue
 
+                        # Volume confirmation — skip low-volume signals
+                        from volume_confirm import check as vol_check
+                        try:
+                            vol_passed, vol_reason, _ = await _asyncio.wait_for(
+                                _asyncio.to_thread(vol_check, ticker), timeout=15
+                            )
+                            if not vol_passed:
+                                logger.info(f"AUTO-INVEST: {ticker} volume skip — {vol_reason}")
+                                continue
+                        except _asyncio.TimeoutError:
+                            logger.warning(f"[VOLUME] {ticker} check timed out — proceeding (fail-open)")
+
                         # Correlation filter — skip if too correlated with open positions
                         from correlation import check as corr_check
                         try:

@@ -142,6 +142,23 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     except asyncio.TimeoutError:
         return {"status": "blocked_by_sanity", "reason": "sanity check timed out"}
 
+    # Volume confirmation — reject low-volume signals
+    from volume_confirm import check as vol_check
+    try:
+        vol_passed, vol_reason, vol_details = await asyncio.wait_for(
+            asyncio.to_thread(vol_check, ticker), timeout=15
+        )
+        if not vol_passed:
+            logger.info(f"BUY blocked by volume: {ticker} — {vol_reason}")
+            return {
+                "status": "blocked_by_volume",
+                "ticker": ticker,
+                "reason": vol_reason,
+                "volume": vol_details,
+            }
+    except asyncio.TimeoutError:
+        logger.warning(f"[VOLUME] {ticker} check timed out — proceeding (fail-open)")
+
     # Correlation filter — skip if too correlated with an open position
     from correlation import check as corr_check
     try:
@@ -345,6 +362,18 @@ async def trading_status():
         "trading_hours":     hours_status(),
         "iceberg_active":    iceberg_status(),
     }
+
+
+@router.get("/volume")
+async def volume_check(ticker: str):
+    """
+    Check current vs MA20 volume for a ticker.
+    ?ticker=AAPL
+    Returns ratio, current volume, MA volume, and whether it passes the threshold.
+    """
+    from volume_confirm import check as vol_check
+    passed, reason, details = await asyncio.to_thread(vol_check, ticker.upper())
+    return {"passed": passed, "reason": reason, **details}
 
 
 @router.get("/correlation")
