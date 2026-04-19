@@ -55,6 +55,11 @@ async def notify_emergency(ticker: str, reason: str):
     )
 
 
+async def notify_weekly_report(report_html: str):
+    """Send the weekly performance report (pre-formatted HTML)."""
+    await send_message(report_html)
+
+
 async def notify_daily_summary(total_trades: int, wins: int, losses: int,
                                 total_pnl: float, open_positions: int, equity: float):
     win_rate = (wins / total_trades * 100) if total_trades > 0 else 0

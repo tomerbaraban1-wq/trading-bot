@@ -7,7 +7,7 @@ import budget
 import database
 from sentiment import check_emergency_sentiment
 from trade_logger import log_trade_open, log_trade_close
-from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary
+from telegram_bot import notify_buy, notify_sell, notify_emergency, notify_daily_summary, notify_weekly_report
 from circuit_breaker import check_circuit_breaker, record_trade_result
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate
 
@@ -220,6 +220,14 @@ async def auto_invest_loop():
                 await asyncio.sleep(5 * 60)
                 continue
 
+            # Trading hours / liquidity / FOMC blackout guard
+            from trading_hours import is_ok_to_trade
+            hours_ok, hours_reason = is_ok_to_trade()
+            if not hours_ok:
+                logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
+
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 
             status = await _asyncio.to_thread(get_budget_status)
@@ -394,3 +402,49 @@ async def daily_summary_loop():
         except Exception as e:
             logger.error(f"Daily summary error: {e}")
             await asyncio.sleep(3600)  # retry in 1 hour on error
+
+
+async def weekly_report_loop():
+    """Background task: compute & send weekly performance report every Sunday at 20:10 UTC."""
+    import datetime
+    while True:
+        try:
+            now = datetime.datetime.utcnow()
+
+            # Target: next Sunday at 20:10 UTC
+            days_until_sunday = (6 - now.weekday()) % 7   # weekday(): Mon=0 … Sun=6
+            if days_until_sunday == 0:
+                # Today is Sunday — check if 20:10 has already passed
+                target = now.replace(hour=20, minute=10, second=0, microsecond=0)
+                if now >= target:
+                    days_until_sunday = 7   # next Sunday
+            if days_until_sunday > 0:
+                target = (now + datetime.timedelta(days=days_until_sunday)).replace(
+                    hour=20, minute=10, second=0, microsecond=0
+                )
+
+            wait_seconds = (target - now).total_seconds()
+            logger.info(f"Weekly report scheduled in {wait_seconds/3600:.1f}h (Sunday 20:10 UTC)")
+            await asyncio.sleep(wait_seconds)
+
+            # Compute 4-week report
+            from performance import compute as perf_compute, export_csv, format_telegram
+            report = await asyncio.to_thread(perf_compute, 4)
+            html   = format_telegram(report)
+
+            # Export CSV
+            try:
+                csv_path = await asyncio.to_thread(export_csv, report)
+                logger.info(f"Weekly CSV saved: {csv_path}")
+            except Exception as csv_err:
+                logger.warning(f"Weekly CSV export failed: {csv_err}")
+
+            await notify_weekly_report(html)
+            logger.info(f"Weekly report sent: {report.total_trades} trades | "
+                        f"Sharpe={report.sharpe_ratio} | DD={report.max_drawdown_pct:.2f}%")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Weekly report error: {e}")
+            await asyncio.sleep(3600)

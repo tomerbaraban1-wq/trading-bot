@@ -10,6 +10,7 @@ import scanner
 from signal_validator import validate_signal
 from trade_logger import log_trade_open, log_trade_close, log_learning
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
+from trading_hours import get_status as hours_status
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +248,56 @@ async def trading_status():
         "positions": positions,
         "open_trades": database.get_open_trades(),
         "circuit_breaker": cb_status(),
+        "trading_hours":   hours_status(),
     }
+
+
+@router.get("/performance")
+async def performance_report(weeks: int = 4):
+    """
+    Full performance KPI report for the last `weeks` calendar weeks.
+    Returns Sharpe Ratio, Max Drawdown, win rate per strategy, daily equity curve.
+    """
+    from performance import compute as perf_compute
+    report = await asyncio.to_thread(perf_compute, weeks)
+    return report.to_dict()
+
+
+@router.get("/performance/csv")
+async def performance_csv(weeks: int = 4):
+    """
+    Download a ZIP-style CSV bundle (trades + summary) for the last `weeks`.
+    Returns the summary CSV as a downloadable file.
+    """
+    import io
+    from fastapi.responses import StreamingResponse
+    from performance import compute as perf_compute, export_csv
+    import tempfile, os
+
+    report   = await asyncio.to_thread(perf_compute, weeks)
+    tmp_dir  = tempfile.mkdtemp()
+    csv_path = await asyncio.to_thread(export_csv, report, tmp_dir)
+
+    def _iter_file():
+        with open(csv_path, "rb") as f:
+            while chunk := f.read(8192):
+                yield chunk
+        # cleanup
+        try:
+            os.remove(csv_path)
+            trades_path = csv_path.replace("summary_", "trades_")
+            if os.path.exists(trades_path):
+                os.remove(trades_path)
+            os.rmdir(tmp_dir)
+        except Exception:
+            pass
+
+    filename = f"performance_{report.period_start}_{report.period_end}.csv"
+    return StreamingResponse(
+        _iter_file(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/trades")
