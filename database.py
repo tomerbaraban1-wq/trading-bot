@@ -129,6 +129,25 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shadow_ticker ON shadow_trades(ticker)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_shadow_status ON shadow_trades(status)")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS slippage_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            side TEXT NOT NULL,
+            qty INTEGER NOT NULL,
+            signal_price REAL NOT NULL,
+            fill_price REAL NOT NULL,
+            slip_pct REAL NOT NULL,
+            abs_slip_pct REAL NOT NULL,
+            slip_bps REAL NOT NULL,
+            slip_per_share REAL NOT NULL,
+            total_slip_usd REAL NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_slip_ticker ON slippage_log(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_slip_time   ON slippage_log(created_at DESC)")
+
     # ── Schema migrations (safe to run repeatedly) ────────────────────────────
     # Add ATR trailing stop columns introduced in v2
     for ddl in (
@@ -424,3 +443,60 @@ def update_shadow_stop(shadow_id: int, new_stop: float, new_wm: float) -> None:
         (new_stop, new_wm, shadow_id),
     )
     conn.commit()
+
+
+# ===== Slippage Log =====
+
+def save_slippage(row: dict) -> int:
+    """Persist one slippage observation. Returns the new row id."""
+    conn = get_connection()
+    cur = conn.execute(
+        """INSERT INTO slippage_log
+           (ticker, side, qty, signal_price, fill_price,
+            slip_pct, abs_slip_pct, slip_bps, slip_per_share, total_slip_usd)
+           VALUES (:ticker, :side, :qty, :signal_price, :fill_price,
+                   :slip_pct, :abs_slip_pct, :slip_bps, :slip_per_share, :total_slip_usd)""",
+        row,
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_rolling_slippage(n: int = 20) -> float:
+    """Return the mean abs_slip_pct (%) of the most recent n slippage records."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT AVG(abs_slip_pct) FROM (
+               SELECT abs_slip_pct FROM slippage_log
+               ORDER BY created_at DESC LIMIT ?
+           )""",
+        (n,),
+    ).fetchone()
+    return float(row[0] or 0.0)
+
+
+def get_slippage_history(limit: int = 100) -> list[dict]:
+    """Return the most recent slippage records, newest first."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM slippage_log ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_slippage_summary() -> dict:
+    """Return aggregate slippage statistics across all recorded trades."""
+    conn = get_connection()
+    row = conn.execute(
+        """SELECT
+               COUNT(*)                                      AS total_records,
+               ROUND(AVG(abs_slip_pct), 4)                  AS avg_slip_pct,
+               ROUND(MAX(abs_slip_pct), 4)                  AS max_slip_pct,
+               ROUND(MIN(abs_slip_pct), 4)                  AS min_slip_pct,
+               ROUND(AVG(slip_bps), 2)                      AS avg_bps,
+               ROUND(SUM(total_slip_usd), 4)                AS total_cost_usd,
+               ROUND(AVG(CASE WHEN side='buy'  THEN abs_slip_pct END), 4) AS avg_buy_slip_pct,
+               ROUND(AVG(CASE WHEN side='sell' THEN abs_slip_pct END), 4) AS avg_sell_slip_pct
+           FROM slippage_log"""
+    ).fetchone()
+    return dict(row) if row else {}

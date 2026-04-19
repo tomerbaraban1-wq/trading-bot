@@ -356,6 +356,32 @@ async def notify_sell(
     )
 
 
+async def notify_slippage_alert(
+    avg_slip_pct: float,
+    ticker:       str,
+    rolling_n:    int,
+    threshold:    float,
+) -> None:
+    """
+    Fired when the rolling-average actual slippage exceeds the configured
+    threshold.  Warns the operator to review execution quality.
+    """
+    if not _enabled():
+        return
+    if _is_rate_limited("slippage_alert"):
+        return
+    _mark_sent("slippage_alert")
+
+    await send_message(
+        f"⚠️ <b>High Slippage Alert</b>\n"
+        f"Rolling {rolling_n}-trade avg: <b>{avg_slip_pct:.3f}%</b> "
+        f"(threshold: {threshold}%)\n"
+        f"Last trade: <code>{ticker}</code>\n"
+        f"Review fill quality — limit price offsets may need tuning.\n"
+        f"🕒 {_utcnow()}"
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────

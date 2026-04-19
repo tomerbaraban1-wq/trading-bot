@@ -291,6 +291,12 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     actual_price = order.get("price") or payload.price
     trade_id = log_trade_open(payload, sentiment, order, max_qty)
 
+    # Record actual slippage (signal price vs fill price, fire-and-forget)
+    from slippage import record as _slippage_record
+    asyncio.ensure_future(asyncio.to_thread(
+        _slippage_record, payload.price, actual_price, max_qty, "buy", ticker
+    ))
+
     # Set ATR trailing stop immediately after fill
     try:
         from atr_stop import compute_initial_stop
@@ -364,6 +370,12 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
     qty = trade["qty"]
     pnl_gross = (exit_price - entry_price) * qty
     fees = 0.0  # Alpaca has no commissions for stocks
+
+    # Record actual slippage on sell (fire-and-forget)
+    from slippage import record as _slippage_record
+    asyncio.ensure_future(asyncio.to_thread(
+        _slippage_record, payload.price, exit_price, qty, "sell", ticker
+    ))
 
     # Tax logic
     from tax_tracker import process_trade_close
@@ -825,6 +837,39 @@ async def kelly_status():
             "Positive fraction is used as % of equity per trade (half-Kelly applied)."
         ),
     }
+
+
+@router.get("/slippage/summary")
+async def slippage_summary():
+    """
+    Aggregate slippage statistics across all recorded trades.
+
+    Tracks the difference between the signal price (what TradingView said)
+    and the actual fill price (what the broker executed at).
+    Positive slip_pct = we paid more (buy) or received less (sell) than expected.
+    """
+    from slippage import get_summary as _slip_summary
+    import os as _os
+    summary = await asyncio.to_thread(_slip_summary)
+    return {
+        **summary,
+        "alert_threshold_pct": float(_os.getenv("SLIPPAGE_ALERT_PCT", "0.1")),
+        "rolling_window":      int(_os.getenv("SLIPPAGE_ROLLING_N",   "20")),
+        "note": (
+            "avg_slip_pct < 0.1% is healthy. "
+            "If consistently above, consider tuning SLIPPAGE_ATR_MULTIPLIER."
+        ),
+    }
+
+
+@router.get("/slippage")
+async def slippage_history(limit: int = 100):
+    """
+    Return the most recent slippage observations (newest first).
+    Each row shows signal_price vs fill_price and the resulting cost in bps.
+    """
+    rows = await asyncio.to_thread(database.get_slippage_history, limit)
+    return {"count": len(rows), "records": rows}
 
 
 @router.get("/settings/trading")

@@ -34,9 +34,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-ATR_MULTIPLIER: float = float(os.getenv("SLIPPAGE_ATR_MULTIPLIER", "0.2"))
-MAX_SLIP_PCT:   float = float(os.getenv("SLIPPAGE_MAX_PCT",         "0.5"))   # 0.5%
-MIN_SLIP_PCT:   float = float(os.getenv("SLIPPAGE_MIN_PCT",         "0.05"))  # 0.05%
+ATR_MULTIPLIER:  float = float(os.getenv("SLIPPAGE_ATR_MULTIPLIER", "0.2"))
+MAX_SLIP_PCT:    float = float(os.getenv("SLIPPAGE_MAX_PCT",         "0.5"))   # 0.5%
+MIN_SLIP_PCT:    float = float(os.getenv("SLIPPAGE_MIN_PCT",         "0.05"))  # 0.05%
+ALERT_PCT:       float = float(os.getenv("SLIPPAGE_ALERT_PCT",       "0.1"))   # rolling avg threshold
+ROLLING_N:       int   = int(os.getenv("SLIPPAGE_ROLLING_N",         "20"))    # rolling window
 
 # ── ATR cache (5-minute TTL) ──────────────────────────────────────────────────
 import time as _time
@@ -150,3 +152,131 @@ def estimate(market_price: float, qty: int, side: str, ticker: str = "") -> dict
         f"cost=${total_slip:.4f}"
     )
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Actual slippage tracking (signal price vs fill price)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def record(
+    signal_price: float,
+    fill_price:   float,
+    qty:          int,
+    side:         str,    # "buy" | "sell"
+    ticker:       str,
+) -> dict:
+    """
+    Record the **actual** slippage for an executed order.
+
+    Actual slippage is the difference between what the signal said the price
+    would be and what the broker actually filled at.
+
+    Direction convention (positive = cost to us):
+      buy  → fill > signal is cost  (paid more than expected)
+      sell → signal > fill is cost  (received less than expected)
+
+    The observation is written to slippage_log in SQLite, then the rolling
+    average is checked.  If it exceeds SLIPPAGE_ALERT_PCT a Telegram warning
+    is sent.
+
+    Parameters
+    ----------
+    signal_price : price embedded in the webhook / auto-invest signal
+    fill_price   : actual execution price returned by the broker
+    qty          : number of shares filled
+    side         : "buy" or "sell"
+    ticker       : e.g. "AAPL"
+
+    Returns
+    -------
+    dict with full breakdown (same shape as estimate())
+    """
+    ticker = ticker.upper()
+
+    if signal_price <= 0:
+        logger.warning(f"[SLIPPAGE RECORD] {ticker}: invalid signal_price={signal_price} — skipping")
+        return {}
+
+    # Direction-aware signed slippage
+    if side == "buy":
+        raw_slip = fill_price - signal_price          # + = paid more (cost)
+    else:
+        raw_slip = signal_price - fill_price          # + = received less (cost)
+
+    slip_pct      = raw_slip / signal_price * 100     # signed %
+    abs_slip_pct  = abs(slip_pct)
+    slip_per_share = abs(fill_price - signal_price)
+    total_slip_usd = round(slip_per_share * qty, 4)
+    slip_bps       = round(abs_slip_pct * 100, 2)
+
+    row = {
+        "ticker":         ticker,
+        "side":           side,
+        "qty":            qty,
+        "signal_price":   round(signal_price, 4),
+        "fill_price":     round(fill_price, 4),
+        "slip_pct":       round(slip_pct, 4),
+        "abs_slip_pct":   round(abs_slip_pct, 4),
+        "slip_bps":       slip_bps,
+        "slip_per_share": round(slip_per_share, 4),
+        "total_slip_usd": total_slip_usd,
+    }
+
+    logger.info(
+        f"[SLIPPAGE RECORD] {side.upper()} {qty}× {ticker} | "
+        f"signal=${signal_price:.4f} → fill=${fill_price:.4f} | "
+        f"slip={slip_pct:+.3f}% ({slip_bps:.1f}bps) | "
+        f"cost=${total_slip_usd:.4f}"
+    )
+
+    try:
+        import database as _db
+        slip_id = _db.save_slippage(row)
+        row["id"] = slip_id
+    except Exception as exc:
+        logger.warning(f"[SLIPPAGE RECORD] {ticker}: DB write failed: {exc}")
+
+    # Rolling average alert (non-blocking, best-effort)
+    _check_rolling_alert(ticker)
+
+    return row
+
+
+def _check_rolling_alert(ticker: str) -> None:
+    """
+    Compute the rolling {ROLLING_N}-trade average of abs_slip_pct.
+    If it exceeds ALERT_PCT, send a Telegram warning.
+    """
+    try:
+        import database as _db
+        avg = _db.get_rolling_slippage(ROLLING_N)
+        if avg > ALERT_PCT:
+            msg = (
+                f"⚠️ *High Slippage Alert*\n"
+                f"Rolling {ROLLING_N}-trade average: *{avg:.3f}%* "
+                f"(threshold: {ALERT_PCT}%)\n"
+                f"Last trade: `{ticker}`\n"
+                f"Review fill quality — consider adjusting limit price offsets."
+            )
+            logger.warning(f"[SLIPPAGE ALERT] rolling avg={avg:.3f}% > {ALERT_PCT}% — notifying")
+            try:
+                from telegram_bot import notify_slippage_alert
+                import asyncio
+                asyncio.ensure_future(notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT))
+            except RuntimeError:
+                # No running event loop (e.g. called from a thread during testing)
+                logger.warning(f"[SLIPPAGE ALERT] No event loop — Telegram alert skipped: {msg}")
+            except Exception as te:
+                logger.warning(f"[SLIPPAGE ALERT] Telegram failed: {te}")
+    except Exception as exc:
+        logger.warning(f"[SLIPPAGE] Rolling alert check failed: {exc}")
+
+
+def get_summary() -> dict:
+    """Return aggregate slippage statistics from the database."""
+    try:
+        import database as _db
+        return _db.get_slippage_summary()
+    except Exception as exc:
+        logger.warning(f"[SLIPPAGE] get_summary failed: {exc}")
+        return {}

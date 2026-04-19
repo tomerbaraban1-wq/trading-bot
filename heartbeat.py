@@ -13,7 +13,7 @@ from telegram_bot import (
     notify_error, notify_circuit_breaker_tripped,
 )
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
-from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate
+from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate, record as slippage_record
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +491,11 @@ async def auto_invest_loop():
                         spent        = actual_price * qty
                         remaining   -= spent
                         bought      += 1
+
+                        # Record actual slippage (signal price vs fill price)
+                        _asyncio.ensure_future(_asyncio.to_thread(
+                            slippage_record, price, actual_price, qty, "buy", ticker
+                        ))
 
                         from models import WebhookPayload, TradeAction
                         fake_payload = WebhookPayload(
