@@ -599,6 +599,116 @@ async def auto_invest_loop():
         await asyncio.sleep(5 * 60)  # run every 5 minutes
 
 
+async def morning_briefing_loop():
+    """
+    Every trading day at 13:00 UTC (16:00 Israel) — 30 min before market open —
+    send a Telegram briefing with top news headlines and the 3 highest-scoring
+    watchlist candidates so the user knows what to expect.
+    """
+    import datetime as _dt
+    await asyncio.sleep(60)
+    while True:
+        try:
+            now = _dt.datetime.utcnow()
+            target = now.replace(hour=13, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += _dt.timedelta(days=1)
+            # Skip weekends
+            while target.weekday() >= 5:
+                target += _dt.timedelta(days=1)
+
+            while _dt.datetime.utcnow() < target:
+                await asyncio.sleep(60)
+
+            from news_service import get_general_headlines
+            from scanner import WATCHLIST
+            from sentiment import score_sentiment
+            from scoring import get_composite_score
+
+            headlines = await asyncio.to_thread(get_general_headlines, 5)
+            news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות"
+
+            # Score top 3 candidates quickly
+            top = []
+            for ticker in WATCHLIST[:8]:
+                try:
+                    sent = await asyncio.wait_for(
+                        asyncio.to_thread(score_sentiment, ticker), timeout=20
+                    )
+                    comp = await asyncio.wait_for(
+                        asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=20
+                    )
+                    top.append((ticker, comp["composite_score"], sent.score))
+                except Exception:
+                    continue
+            top.sort(key=lambda x: x[1], reverse=True)
+
+            candidates = ""
+            for ticker, score, sent in top[:3]:
+                candidates += f"\n📊 <b>{ticker}</b> — ציון {score:.0f}/100 | סנטימנט {sent}/10"
+
+            await send_message(
+                f"☀️ <b>תדרוך בוקר — שוק נפתח בעוד 30 דקות</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📰 <b>חדשות מובילות:</b>\n{news_text}\n\n"
+                f"🎯 <b>מועמדים מובילים היום:</b>{candidates if candidates else chr(10) + 'טרם חושב'}"
+            )
+            logger.info("Morning briefing sent")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Morning briefing error: {e}")
+            await asyncio.sleep(3600)
+
+
+_position_alert_sent: dict[str, float] = {}   # ticker → last alert pct
+
+
+async def position_alert_loop():
+    """
+    Check open positions every 2 minutes. If any position moves ±5% from entry,
+    send an immediate Telegram alert. Rate-limited to once per position per 2%.
+    """
+    await asyncio.sleep(180)
+    while True:
+        try:
+            open_trades = database.get_open_trades()
+            for trade in open_trades:
+                if trade["action"] != "buy":
+                    continue
+                ticker = trade["ticker"]
+                entry  = trade["entry_price"]
+                try:
+                    pos = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_position, ticker), timeout=10
+                    )
+                    if not pos:
+                        continue
+                    cur   = float(pos.get("current_price", entry))
+                    pct   = (cur - entry) / entry * 100
+                    unreal = float(pos.get("unrealized_pl", (cur - entry) * trade["qty"]))
+
+                    last = _position_alert_sent.get(ticker, 0.0)
+                    # Alert if moved ±5% and hasn't been alerted within 2% of this level
+                    if abs(pct) >= 5.0 and abs(pct - last) >= 2.0:
+                        _position_alert_sent[ticker] = pct
+                        emoji = "🚀" if pct > 0 else "⚠️"
+                        await send_message(
+                            f"{emoji} <b>התראת תנועה — {ticker}</b>\n"
+                            f"📊 שינוי: <b>{pct:+.2f}%</b> מכניסה\n"
+                            f"💵 מחיר: ${cur:.2f}  (כניסה: ${entry:.2f})\n"
+                            f"💰 רווח/הפסד לא ממומש: <b>${unreal:+.2f}</b>"
+                        )
+                except Exception:
+                    continue
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Position alert error: {e}")
+        await asyncio.sleep(2 * 60)
+
+
 async def news_refresh_loop():
     """
     Pre-fetch news for all watchlist stocks every 60 seconds during market hours.
