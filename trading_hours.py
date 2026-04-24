@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ENABLED:               bool = os.getenv("TRADING_HOURS_ENABLED",       "true").lower() == "true"
-HIGH_LIQUIDITY_ONLY:   bool = os.getenv("TRADING_HIGH_LIQUIDITY_ONLY", "true").lower() == "true"
+HIGH_LIQUIDITY_ONLY:   bool = os.getenv("TRADING_HIGH_LIQUIDITY_ONLY", "false").lower() == "true"
 FOMC_BLACKOUT_MIN:     int  = int(os.getenv("TRADING_FOMC_BLACKOUT_MIN",     "30"))
 FOMC_POST_MIN:         int  = int(os.getenv("TRADING_FOMC_POSTBLACKOUT_MIN", "60"))
 
