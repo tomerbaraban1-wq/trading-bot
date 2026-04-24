@@ -708,25 +708,21 @@ async def portfolio_update_loop():
     Send a live portfolio snapshot to Telegram every hour during market hours.
     Shows every open position with current price, unrealized P&L and % change.
     """
-    import datetime as _dt
     await asyncio.sleep(120)   # wait 2 min after startup before first send
     while True:
         try:
-            # Only send during market hours (14:30–21:00 UTC = 16:30–23:00 Israel summer)
-            now_utc = _dt.datetime.utcnow()
-            market_open  = now_utc.replace(hour=14, minute=30, second=0, microsecond=0)
-            market_close = now_utc.replace(hour=21, minute=0,  second=0, microsecond=0)
-            is_weekday   = now_utc.weekday() < 5   # Mon–Fri
-
-            if not (is_weekday and market_open <= now_utc <= market_close):
+            # Use broker API for market hours — handles DST + holidays automatically
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if not market_open:
                 await asyncio.sleep(15 * 60)   # check again in 15 min
                 continue
 
             open_trades = database.get_open_trades()
 
             if not open_trades:
-                await asyncio.to_thread(telegram_bot.send_message,
-                    "📂 <b>תיק עכשיו</b>\nאין פוזיציות פתוחות כרגע.")
+                await send_message("📂 <b>תיק עכשיו</b>\nאין פוזיציות פתוחות כרגע.")
                 # Still send so user knows bot is alive
             else:
                 lines = ["📂 <b>תיק עכשיו</b>\n━━━━━━━━━━━━━━━━"]
