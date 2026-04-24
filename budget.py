@@ -199,7 +199,7 @@ def compute_position_size(entry_price: float) -> tuple[float, dict]:
     kelly_note = "disabled"
     if kelly_f > 0:
         kelly_notional = equity * kelly_f
-        kelly_qty      = int(kelly_notional / entry_price) if entry_price > 0 else qty
+        kelly_qty      = round(kelly_notional / entry_price, 6) if entry_price > 0 else qty
         kelly_note     = f"f={kelly_f:.4f} notional=${kelly_notional:.2f}"
         if kelly_qty < qty:
             qty = kelly_qty   # Kelly tightens the size

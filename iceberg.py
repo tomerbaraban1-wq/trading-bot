@@ -92,7 +92,7 @@ _active_lock = threading.Lock()
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def should_use_iceberg(qty: int, price: float) -> bool:
+def should_use_iceberg(qty: float, price: float) -> bool:
     """
     Return True if this order is large enough to warrant iceberg splitting.
 
@@ -108,7 +108,7 @@ def should_use_iceberg(qty: int, price: float) -> bool:
 
 async def iceberg_buy(
     ticker:        str,
-    total_qty:     int,
+    total_qty:     float,
     initial_price: float,
 ) -> dict[str, Any]:
     """
@@ -140,7 +140,8 @@ async def iceberg_buy(
             f"[ICEBERG] {ticker}: {total_qty} shares @ ~${initial_price:.2f} "
             f"— below threshold, single order"
         )
-        lim = limit_buy_price(initial_price, ticker)
+        # Wrap sync function in thread to prevent blocking event loop
+        lim = await asyncio.to_thread(limit_buy_price, initial_price, ticker)
         from utils import retry_sync
         order = await asyncio.wait_for(
             asyncio.to_thread(retry_sync, broker.submit_buy, ticker, total_qty, lim, max_retries=2),
@@ -320,7 +321,7 @@ def get_status() -> dict:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _plan_slices(total_qty: int) -> list[int]:
+def _plan_slices(total_qty: float) -> list[float]:
     """
     Divide total_qty into equal child orders of SLICE_SHARES each.
     The last slice absorbs any remainder.

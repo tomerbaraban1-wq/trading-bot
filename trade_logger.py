@@ -43,7 +43,7 @@ def log_trade_open(
     payload:      WebhookPayload,
     sentiment:    SentimentResult | None,
     order_result: dict,
-    qty:          int,
+    qty:          float,
     sizing_meta:  dict | None = None,
     slippage_meta: dict | None = None,
 ) -> int:

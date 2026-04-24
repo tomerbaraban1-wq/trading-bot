@@ -89,7 +89,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             action TEXT NOT NULL,
-            qty INTEGER NOT NULL,
+            qty REAL NOT NULL,
             entry_price REAL NOT NULL,
             entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
             exit_price REAL,
@@ -157,7 +157,7 @@ def init_db():
             ticker TEXT NOT NULL,
             signal_source TEXT,
             entry_price REAL NOT NULL,
-            qty INTEGER NOT NULL,
+            qty REAL NOT NULL,
             entry_time DATETIME DEFAULT CURRENT_TIMESTAMP,
             exit_price REAL,
             exit_time DATETIME,
@@ -183,7 +183,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             side TEXT NOT NULL,
-            qty INTEGER NOT NULL,
+            qty REAL NOT NULL,
             signal_price REAL NOT NULL,
             fill_price REAL NOT NULL,
             slip_pct REAL NOT NULL,
@@ -215,6 +215,15 @@ def init_db():
         conn.execute("UPDATE trade_log SET bb_position = CAST(bb_position AS REAL) WHERE bb_position IS NOT NULL")
     except Exception:
         pass
+
+    # Migrate qty columns to REAL (fractional share support)
+    # SQLite stores INTEGER as REAL transparently — just cast existing values
+    for tbl_col in ("trade_log.qty", "shadow_trades.qty", "slippage_log.qty"):
+        tbl, col = tbl_col.split(".")
+        try:
+            conn.execute(f"UPDATE {tbl} SET {col} = CAST({col} AS REAL) WHERE {col} IS NOT NULL")
+        except Exception:
+            pass
 
     conn.commit()
     logger.info("Database initialized")
