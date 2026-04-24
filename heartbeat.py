@@ -231,6 +231,18 @@ async def stop_loss_monitor():
                         asyncio.to_thread(broker.get_position, ticker), timeout=15
                     )
                     if not position:
+                        # Broker has no position but DB says "open" — stale record
+                        # (happens after restart if state file was lost/corrupted)
+                        logger.warning(
+                            f"[STOP LOSS] {ticker}: DB has open trade #{trade['id']} "
+                            f"but broker shows no position — auto-closing stale record"
+                        )
+                        log_trade_close(
+                            trade["id"],
+                            trade["entry_price"],  # exit at entry = no P&L
+                            0.0, 0.0, 0.0, 0.0,
+                            "stale_restart",
+                        )
                         continue
 
                     cur_price = float(position.get("current_price", trade["entry_price"]))

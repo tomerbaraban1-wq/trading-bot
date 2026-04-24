@@ -33,17 +33,19 @@ class TVPaperBroker(BrokerBase):
     # Class-level state — shared across all instances
     _positions: dict = {}   # ticker -> {"qty": float, "avg_cost": float}
     _cash: float = None     # initialised lazily from settings.MAX_BUDGET
-    _lock = threading.Lock()  # guards buy/sell mutations against race conditions
-    _state_loaded: bool = False  # ensure we only load from disk once
+    _lock = threading.Lock()      # guards buy/sell mutations against race conditions
+    _init_lock = threading.Lock() # guards one-time state load
+    _state_loaded: bool = False   # ensure we only load from disk once
 
     # ------------------------------------------------------------------ #
     #  Construction                                                        #
     # ------------------------------------------------------------------ #
 
     def __init__(self):
-        if not TVPaperBroker._state_loaded:
-            TVPaperBroker._load_state()
-            TVPaperBroker._state_loaded = True
+        with TVPaperBroker._init_lock:
+            if not TVPaperBroker._state_loaded:
+                TVPaperBroker._load_state()
+                TVPaperBroker._state_loaded = True
         logger.info(
             "TradingView Paper Broker ready | "
             f"Cash: ${TVPaperBroker._cash:,.2f} | "

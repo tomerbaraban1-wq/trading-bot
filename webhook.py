@@ -1075,11 +1075,13 @@ async def update_settings(data: dict):
         if val < 100:
             raise HTTPException(status_code=400, detail="Budget must be at least $100")
         settings.MAX_BUDGET = val
-        # גם עדכן את הכסף הווירטואלי של tv_paper
+        import os as _os
+        _os.environ["MAX_BUDGET"] = str(val)
+        # Sync paper broker cash and persist to disk
         try:
             from broker_tv_paper import TVPaperBroker
-            if TVPaperBroker._cash is None or TVPaperBroker._cash > val:
-                TVPaperBroker._cash = val
+            TVPaperBroker._cash = val
+            TVPaperBroker._save_state()
         except Exception:
             pass
         logger.info(f"Budget updated to ${val:,.2f}")

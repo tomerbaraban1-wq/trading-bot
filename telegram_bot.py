@@ -40,6 +40,14 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_TOKEN: str = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID:   str = getattr(settings, "TELEGRAM_CHAT_ID",   "")
 
+# Warn at startup if Telegram is misconfigured
+if TELEGRAM_BOT_TOKEN and not TELEGRAM_CHAT_ID:
+    logger.warning("⚠️  TELEGRAM_BOT_TOKEN set but TELEGRAM_CHAT_ID missing — notifications disabled")
+elif TELEGRAM_CHAT_ID and not TELEGRAM_BOT_TOKEN:
+    logger.warning("⚠️  TELEGRAM_CHAT_ID set but TELEGRAM_BOT_TOKEN missing — notifications disabled")
+elif not TELEGRAM_BOT_TOKEN:
+    logger.info("ℹ️  Telegram not configured (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID to enable)")
+
 _SEND_TIMEOUT_SEC    = 10
 _MAX_RETRIES         = 3
 _RETRY_BASE_DELAY    = 2.0   # seconds (doubles each retry)
