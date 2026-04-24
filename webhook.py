@@ -488,6 +488,43 @@ async def health_check():
     )
 
 
+@router.get("/scan/preview")
+async def scan_preview():
+    """
+    Score 5 random large-cap stocks right now and show why bot buys/skips.
+    Call this to understand what scores look like in current market conditions.
+    """
+    import random
+    from scanner import get_watchlist
+    from scoring import get_composite_score
+    from sentiment import score_sentiment
+
+    tickers = random.sample(get_watchlist(), min(5, len(get_watchlist())))
+    results = []
+    for ticker in tickers:
+        try:
+            sent = await asyncio.to_thread(score_sentiment, ticker)
+            comp = await asyncio.to_thread(get_composite_score, ticker, sent.score)
+            results.append({
+                "ticker":    ticker,
+                "score":     comp["composite_score"],
+                "decision":  comp["decision"],
+                "tech":      comp["scores"]["technicals"],
+                "market":    comp["scores"]["market"],
+                "sentiment": comp["scores"]["sentiment"],
+                "vix":       comp.get("vix"),
+            })
+        except Exception as e:
+            results.append({"ticker": ticker, "error": str(e)})
+
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return {
+        "min_score_to_buy": 50,
+        "results": results,
+        "tip": "אם כל הציונים מתחת ל-50 — השוק לא בכיוון טוב כרגע",
+    }
+
+
 @router.get("/status")
 async def trading_status():
     status = await asyncio.to_thread(budget.get_budget_status)

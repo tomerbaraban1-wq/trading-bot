@@ -424,8 +424,10 @@ async def auto_invest_loop():
                     await _asyncio.sleep(5 * 60)
                     continue
 
+                # Take 20 per cycle — rotates through full list over ~30 min
+                SCAN_PER_CYCLE = 20
                 candidates = [
-                    t for t in shuffled  # scan ALL watchlist stocks
+                    t for t in shuffled[:SCAN_PER_CYCLE]
                     if not database.get_open_trade_by_ticker(t)
                 ]
 
