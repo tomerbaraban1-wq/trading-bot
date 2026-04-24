@@ -132,9 +132,13 @@ async def notify_trade_open(
     )
     id_line = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
     await send_message(
-        f"🟢 <b>קנייה — {ticker}</b>\n"
-        f"📦 {qty} מניות במחיר ${price:.2f}  (סה״כ ${notional:,.2f})\n"
-        f"🎯 ציון: {score:.0f}/100  |  סנטימנט: {sentiment_score}/10"
+        f"🟢 <b>קנייה</b>\n"
+        f"📈 מניה: <b>{ticker}</b>\n"
+        f"📦 כמות: {qty} מניות\n"
+        f"💵 מחיר: ${price:.2f}\n"
+        f"💰 סה״כ: ${notional:,.2f}\n"
+        f"🎯 ציון: {score:.0f}/100\n"
+        f"🧠 סנטימנט: {sentiment_score}/10"
         f"{iceberg_line}"
         f"{id_line}"
     )
@@ -161,11 +165,16 @@ async def notify_trade_close(
     id_line     = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
 
     await send_message(
-        f"{emoji} <b>מכירה — {ticker}</b>\n"
-        f"📦 {qty} מניות  |  ⏱ {dur_str}\n"
-        f"💵 כניסה ${entry_price:.2f} → יציאה ${exit_price:.2f}  ({pct:+.2f}%)\n"
-        f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>  |  "
-        f"נטו: ${pnl_net:+.2f}  |  מס: ${tax_reserved:.2f}"
+        f"{emoji} <b>מכירה</b>\n"
+        f"📈 מניה: <b>{ticker}</b>\n"
+        f"📦 כמות: {qty} מניות\n"
+        f"💵 מחיר כניסה: ${entry_price:.2f}\n"
+        f"💵 מחיר יציאה: ${exit_price:.2f}\n"
+        f"📊 שינוי: {pct:+.2f}%\n"
+        f"⏱ זמן החזקה: {dur_str}\n"
+        f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
+        f"💳 נטו: ${pnl_net:+.2f}\n"
+        f"🧾 מס: ${tax_reserved:.2f}"
         f"{reason_line}"
         f"{id_line}"
     )
@@ -350,9 +359,11 @@ async def notify_sell(
     win   = pnl_gross >= 0
     emoji = "💰" if win else "🔴"
     await send_message(
-        f"{emoji} <b>מכירה — {ticker}</b>\n"
-        f"💵 יציאה @ ${price:.2f}  |  רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
-        f"📌 {reason}"
+        f"{emoji} <b>מכירה</b>\n"
+        f"📈 מניה: <b>{ticker}</b>\n"
+        f"💵 מחיר יציאה: ${price:.2f}\n"
+        f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
+        f"📌 סיבה: {reason}"
     )
 
 
