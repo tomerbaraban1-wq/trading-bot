@@ -104,6 +104,8 @@ class Settings:
 
     # Database
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", str(_PROJECT_DIR / "data" / "trading.db"))
+    HARDENED_DURABILITY: bool = os.getenv("HARDENED_DURABILITY", "true").lower() in ("true", "1", "yes")
+    ENABLE_WAL_CHECKPOINT: bool = os.getenv("ENABLE_WAL_CHECKPOINT", "true").lower() in ("true", "1", "yes")
 
     # Sentiment
     SENTIMENT_MIN_SCORE: int = int(os.getenv("SENTIMENT_MIN_SCORE", "4"))
