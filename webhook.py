@@ -602,6 +602,100 @@ async def diagnose():
     return report
 
 
+@router.get("/scan/now")
+async def scan_now(secret: str = ""):
+    """
+    Force an immediate scan + buy cycle — skips the 5-minute wait.
+    Requires secret param: /scan/now?secret=YOUR_SECRET
+    Ignores market hours (useful for testing outside trading hours).
+    """
+    if secret != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from scanner import get_watchlist
+    from scoring import get_composite_score, MIN_BUY_SCORE
+    from sentiment import score_sentiment
+    from budget import compute_position_size, get_budget_status
+    from market_regime import get_regime as get_regime_fn
+    from volume_confirm import check as vol_check
+    from sanity_check import run_all as sanity_run
+    from iceberg import iceberg_buy
+    from slippage import estimate as slippage_estimate, record as slippage_record
+    import random
+
+    status_data = await asyncio.to_thread(get_budget_status)
+    remaining = float(status_data.get("cash_available", 0))
+    if remaining < 10:
+        return {"status": "skip", "reason": f"Not enough cash: ${remaining:.2f}"}
+
+    open_count = len(database.get_open_trades())
+    if open_count >= 6:
+        return {"status": "skip", "reason": f"Max positions reached ({open_count}/6)"}
+
+    watchlist = get_watchlist()
+    shuffled = watchlist.copy()
+    random.shuffle(shuffled)
+    # Filter already-held
+    candidates = [t for t in shuffled[:30] if not database.get_open_trade_by_ticker(t)]
+
+    bought = []
+    skipped = []
+
+    for ticker in candidates[:10]:
+        if remaining < 10:
+            break
+        try:
+            sent = await asyncio.wait_for(asyncio.to_thread(score_sentiment, ticker), timeout=25)
+            comp = await asyncio.wait_for(asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=25)
+            score = comp["composite_score"]
+
+            if not comp["should_buy"]:
+                skipped.append({"ticker": ticker, "score": score, "reason": "score_too_low"})
+                continue
+
+            price = await asyncio.wait_for(asyncio.to_thread(broker.get_price, ticker), timeout=10)
+            if not price or price <= 0:
+                skipped.append({"ticker": ticker, "score": score, "reason": "no_price"})
+                continue
+
+            sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, None), timeout=15)
+            if not sane:
+                skipped.append({"ticker": ticker, "score": score, "reason": f"sanity: {sane_reason}"})
+                continue
+
+            qty, sizing_meta = await asyncio.to_thread(compute_position_size, price)
+            if qty <= 0:
+                skipped.append({"ticker": ticker, "score": score, "reason": f"qty=0 at ${price:.2f}"})
+                continue
+
+            slip = await asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
+            order = await iceberg_buy(ticker, qty, price)
+            actual_price = float(order.get("price") or price)
+            remaining -= actual_price * qty
+
+            from models import WebhookPayload, TradeAction
+            fake_payload = WebhookPayload(
+                secret=settings.WEBHOOK_SECRET,
+                ticker=ticker, action=TradeAction.BUY, price=actual_price,
+            )
+            from trade_logger import log_trade_open
+            log_trade_open(fake_payload, sent, order, qty, sizing_meta, slip)
+            asyncio.ensure_future(notify_buy(ticker, qty, actual_price, score, sent.score))
+            _create_background_task(asyncio.to_thread(slippage_record, price, actual_price, qty, "buy", ticker))
+
+            bought.append({"ticker": ticker, "qty": round(qty, 4), "price": actual_price, "score": score})
+
+        except Exception as e:
+            skipped.append({"ticker": ticker, "reason": str(e)})
+
+    return {
+        "status": "done",
+        "bought": bought,
+        "skipped": skipped[:5],
+        "cash_remaining": round(remaining, 2),
+    }
+
+
 @router.get("/scan/preview")
 async def scan_preview():
     """
