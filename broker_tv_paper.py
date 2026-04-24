@@ -1,6 +1,9 @@
-﻿import time
+﻿import json
+import os
+import time
 import threading
 import logging
+from pathlib import Path
 try:
     import yfinance as yf
 except ImportError:
@@ -11,34 +14,93 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Persistence file ──────────────────────────────────────────────────────────
+def _state_path() -> Path:
+    """Path to the JSON file that persists paper broker state across restarts."""
+    db_path = Path(settings.DATABASE_PATH)
+    return db_path.parent / "paper_broker_state.json"
+
 
 class TVPaperBroker(BrokerBase):
     """
     Built-in paper trading simulation — no API keys needed.
 
     Mimics TradingView's own paper trading feature. Prices are fetched
-    in real time via yfinance. All state (positions, cash) is kept in
-    class-level variables so it survives broker hot-swaps within the
-    same Python process.
+    in real time via yfinance. All state (positions, cash) is persisted to
+    paper_broker_state.json so it survives Render restarts.
     """
 
     # Class-level state — shared across all instances
-    _positions: dict = {}   # ticker -> {"qty": int, "avg_cost": float}
+    _positions: dict = {}   # ticker -> {"qty": float, "avg_cost": float}
     _cash: float = None     # initialised lazily from settings.MAX_BUDGET
     _lock = threading.Lock()  # guards buy/sell mutations against race conditions
+    _state_loaded: bool = False  # ensure we only load from disk once
 
     # ------------------------------------------------------------------ #
     #  Construction                                                        #
     # ------------------------------------------------------------------ #
 
     def __init__(self):
-        if TVPaperBroker._cash is None:
-            TVPaperBroker._cash = float(settings.MAX_BUDGET)
+        if not TVPaperBroker._state_loaded:
+            TVPaperBroker._load_state()
+            TVPaperBroker._state_loaded = True
         logger.info(
             "TradingView Paper Broker ready | "
             f"Cash: ${TVPaperBroker._cash:,.2f} | "
             f"Positions: {list(TVPaperBroker._positions.keys()) or 'none'}"
         )
+
+    # ------------------------------------------------------------------ #
+    #  State persistence                                                   #
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def _load_state(cls) -> None:
+        """Load positions and cash from disk. Falls back to MAX_BUDGET if no file."""
+        path = _state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                with open(path, "r") as f:
+                    data = json.load(f)
+                cls._cash = float(data.get("cash", settings.MAX_BUDGET))
+                raw_pos = data.get("positions", {})
+                # Ensure qty is always float
+                cls._positions = {
+                    t: {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
+                    for t, p in raw_pos.items()
+                }
+                logger.info(
+                    f"[TVPaper] State loaded from {path} | "
+                    f"cash=${cls._cash:,.2f} | positions={list(cls._positions.keys())}"
+                )
+            else:
+                cls._cash = float(settings.MAX_BUDGET)
+                cls._positions = {}
+                logger.info(f"[TVPaper] No state file found — starting fresh with ${cls._cash:,.2f}")
+        except Exception as e:
+            logger.warning(f"[TVPaper] Failed to load state ({e}) — starting fresh")
+            cls._cash = float(settings.MAX_BUDGET)
+            cls._positions = {}
+
+    @classmethod
+    def _save_state(cls) -> None:
+        """Persist current positions and cash to disk (called after every trade)."""
+        path = _state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                "cash": cls._cash,
+                "positions": cls._positions,
+                "saved_at": time.time(),
+            }
+            # Write to temp file then rename for atomicity
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            logger.warning(f"[TVPaper] Failed to save state: {e}")
 
     # ------------------------------------------------------------------ #
     #  Internal helpers                                                    #
@@ -202,6 +264,7 @@ class TVPaperBroker(BrokerBase):
                 TVPaperBroker._positions[ticker] = {"qty": qty, "avg_cost": current_price}
 
             TVPaperBroker._cash -= cost
+            TVPaperBroker._save_state()
 
         order_id = self._order_id(ticker)
         logger.info(
@@ -246,6 +309,7 @@ class TVPaperBroker(BrokerBase):
                 TVPaperBroker._positions[ticker]["qty"] = held_qty - sell_qty
 
             TVPaperBroker._cash += proceeds
+            TVPaperBroker._save_state()
 
         order_id = self._order_id(ticker)
         logger.info(
