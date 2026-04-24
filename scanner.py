@@ -1,15 +1,103 @@
 """
 Stock Scanner — finds the best buy opportunity right now.
 Scans top US stocks using: technical indicators + AI news sentiment.
+Dynamic watchlist: fetches S&P500 + Nasdaq100 + Russell1000 from Wikipedia
+daily and filters to only companies with market cap > MIN_MARKET_CAP.
 """
 
 import time
+import threading
 import logging
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 from indicators import get_current_indicators
 from sentiment import score_sentiment
 
 logger = logging.getLogger(__name__)
+
+# ── Dynamic watchlist state ────────────────────────────────────────────────────
+_dynamic_list: list[str] = []
+_dynamic_list_lock = threading.Lock()
+_dynamic_list_date: str = ""
+
+
+def _fetch_index_tickers() -> list[str]:
+    """Fetch tickers from S&P 500 + Nasdaq 100 via Wikipedia."""
+    import pandas as pd
+    tickers = set()
+    sources = [
+        ("S&P 500",    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 0, "Symbol"),
+        ("Nasdaq 100", "https://en.wikipedia.org/wiki/Nasdaq-100",                  4, "Ticker"),
+    ]
+    for name, url, table_idx, col in sources:
+        try:
+            df = pd.read_html(url, timeout=15)[table_idx]
+            raw = df[col].dropna().tolist()
+            cleaned = [str(t).replace(".", "-").strip() for t in raw]
+            tickers.update(cleaned)
+            logger.info(f"Dynamic watchlist: fetched {len(cleaned)} tickers from {name}")
+        except Exception as e:
+            logger.warning(f"Dynamic watchlist: failed to fetch {name}: {e}")
+    return list(tickers)
+
+
+def refresh_large_cap_list() -> None:
+    """
+    Background: fetch all S&P500+Nasdaq100 tickers, filter by MIN_MARKET_CAP,
+    update the global dynamic watchlist. Skips if already done today.
+    """
+    global _dynamic_list_date
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    with _dynamic_list_lock:
+        if _dynamic_list_date == today and _dynamic_list:
+            return  # already fresh today
+
+    logger.info("Dynamic watchlist: starting refresh...")
+    index_tickers = _fetch_index_tickers()
+
+    # Merge with static WATCHLIST so we never lose known large caps
+    all_tickers = list(set(WATCHLIST + index_tickers))
+    logger.info(f"Dynamic watchlist: checking market cap for {len(all_tickers)} tickers...")
+
+    result: list[str] = []
+    lock = threading.Lock()
+
+    def _check(ticker: str):
+        try:
+            mc = _get_market_cap(ticker)
+            if mc >= MIN_MARKET_CAP:
+                with lock:
+                    result.append(ticker)
+        except Exception:
+            pass
+
+    # Parallel market-cap checks — 30 workers, should finish in ~60s
+    with ThreadPoolExecutor(max_workers=30) as ex:
+        list(ex.map(_check, all_tickers))
+
+    with _dynamic_list_lock:
+        _dynamic_list.clear()
+        _dynamic_list.extend(result)
+        _dynamic_list_date = today
+
+    logger.info(f"Dynamic watchlist: {len(result)} stocks above ${MIN_MARKET_CAP/1e9:.0f}B market cap")
+
+
+def get_watchlist() -> list[str]:
+    """
+    Returns the dynamic large-cap watchlist if ready, else static WATCHLIST.
+    Call refresh_large_cap_list() once at startup (in a background thread).
+    """
+    with _dynamic_list_lock:
+        if _dynamic_list:
+            return list(_dynamic_list)
+    return list(WATCHLIST)
+
+
+# Start background refresh immediately on import (non-blocking)
+threading.Thread(target=refresh_large_cap_list, daemon=True, name="watchlist-refresh").start()
 
 WATCHLIST = [
     # ══════════════════════════════════════════════════

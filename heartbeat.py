@@ -377,7 +377,8 @@ async def auto_invest_loop():
         try:
             import random
             import shadow as _shadow
-            from scanner import WATCHLIST
+            from scanner import get_watchlist as _get_watchlist
+            WATCHLIST = _get_watchlist()
             from sentiment import score_sentiment
             from scoring import get_composite_score
             from budget import get_budget_status, check_can_buy
@@ -654,7 +655,8 @@ async def morning_briefing_loop():
                 continue
 
             from news_service import get_general_headlines
-            from scanner import WATCHLIST
+            from scanner import get_watchlist as _get_wl
+            WATCHLIST = _get_wl()
             from sentiment import score_sentiment
             from scoring import get_composite_score
 
@@ -755,7 +757,8 @@ async def news_refresh_loop():
                 asyncio.to_thread(broker.is_market_open), timeout=10
             )
             if market_open:
-                from scanner import WATCHLIST
+                from scanner import get_watchlist as _gwl
+                WATCHLIST = _gwl()
                 from news_service import get_headlines, get_general_headlines
                 # Refresh general market headlines
                 await asyncio.to_thread(get_general_headlines, 10)
