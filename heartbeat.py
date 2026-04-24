@@ -599,6 +599,38 @@ async def auto_invest_loop():
         await asyncio.sleep(5 * 60)  # run every 5 minutes
 
 
+async def news_refresh_loop():
+    """
+    Pre-fetch news for all watchlist stocks every 60 seconds during market hours.
+    Keeps the news cache warm so sentiment checks are instant with fresh data.
+    """
+    await asyncio.sleep(90)   # staggered start
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from scanner import WATCHLIST
+                from news_service import get_headlines, get_general_headlines
+                # Refresh general market headlines
+                await asyncio.to_thread(get_general_headlines, 10)
+                # Refresh per-ticker headlines for open positions + watchlist
+                open_trades = database.get_open_trades()
+                tickers = list({t["ticker"] for t in open_trades}) + WATCHLIST[:10]
+                for ticker in tickers:
+                    try:
+                        await asyncio.to_thread(get_headlines, ticker, 5)
+                    except Exception:
+                        pass
+                logger.debug(f"News cache refreshed for {len(tickers)} tickers")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"News refresh error (non-critical): {e}")
+        await asyncio.sleep(60)   # refresh every 60 seconds
+
+
 async def shadow_monitor_loop():
     """
     Background task: tick all open shadow paper positions every 5 minutes.

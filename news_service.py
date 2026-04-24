@@ -10,9 +10,14 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 RSS_FEEDS = [
-    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
-    ("CNBC", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
+    ("MarketWatch",   "https://feeds.marketwatch.com/marketwatch/topstories/"),
+    ("CNBC",          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
     ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+    ("Reuters",       "https://feeds.reuters.com/reuters/businessNews"),
+    ("AP Business",   "https://rsshub.app/apnews/topics/business-news"),
+    ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
+    ("Investopedia",  "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"),
+    ("Google News",   "https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US&ceid=US:en"),
 ]
 
 _news_cache: dict = {}
