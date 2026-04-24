@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException
+import time
+from fastapi import APIRouter, HTTPException, Request
 from config import settings
 from models import WebhookPayload, TradeAction, HealthResponse, BudgetStatus, BrokerSwitch
 import broker
@@ -20,6 +21,33 @@ from telegram_bot import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Rate limiting: track requests by IP/timestamp to prevent spam
+_request_history = {}  # ip -> list of timestamps
+_RATE_LIMIT_WINDOW = 60  # seconds
+_RATE_LIMIT_MAX_REQUESTS = 100  # max requests per window
+
+def _check_rate_limit(request: Request) -> bool:
+    """Check if request exceeds rate limit. Returns True if allowed."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    if client_ip not in _request_history:
+        _request_history[client_ip] = []
+
+    # Remove old entries outside the window
+    _request_history[client_ip] = [
+        ts for ts in _request_history[client_ip]
+        if now - ts < _RATE_LIMIT_WINDOW
+    ]
+
+    # Check if over limit
+    if len(_request_history[client_ip]) >= _RATE_LIMIT_MAX_REQUESTS:
+        return False
+
+    # Add current timestamp
+    _request_history[client_ip].append(now)
+    return True
 
 
 async def _shadow_eval(
@@ -58,11 +86,16 @@ def _trade_duration_hours(entry_time_str: str | None) -> float:
 
 
 @router.post("/webhook")
-async def receive_webhook(payload: WebhookPayload):
+async def receive_webhook(payload: WebhookPayload, request: Request):
     """
     TradingView webhook receiver.
     Pipeline: authenticate -> validate -> sentiment -> budget -> execute -> log
     """
+    # 0. Rate limiting check
+    if not _check_rate_limit(request):
+        logger.warning(f"Webhook rate limit exceeded from {request.client.host if request.client else 'unknown'}")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per 60 seconds")
+
     # 1. Authenticate
     if payload.secret != settings.WEBHOOK_SECRET:
         logger.warning(f"Webhook auth failed for {payload.ticker}")
@@ -466,6 +499,9 @@ async def trading_status():
         "circuit_breaker":   cb_status(),
         "trading_hours":     hours_status(),
         "iceberg_active":    iceberg_status(),
+        "max_budget":        settings.MAX_BUDGET,
+        "max_position_pct":  getattr(settings, "MAX_POSITION_PCT", 20),
+        "broker":            getattr(settings, "ACTIVE_BROKER", "alpaca_paper"),
     }
 
 
@@ -897,12 +933,18 @@ async def update_settings(data: dict):
             pass
         logger.info(f"Budget updated to ${val:,.2f}")
 
+    if "max_position_pct" in data:
+        val = float(data["max_position_pct"])
+        if 1 <= val <= 100:
+            settings.MAX_POSITION_PCT = val
+            logger.info(f"Position size updated to {val}%")
+
     if "broker" in data:
         broker_name = data["broker"]
-        if broker_name == "alpaca_live":
-            settings.ALPACA_BASE_URL = "https://api.alpaca.markets"
-        else:
-            settings.ALPACA_BASE_URL = "https://paper-api.alpaca.markets"
+        try:
+            broker.switch_broker(broker_name)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid broker: {e}")
         logger.info(f"Broker switched to: {broker_name}")
 
     if "stop_loss_pct" in data:
@@ -913,4 +955,11 @@ async def update_settings(data: dict):
         settings.TAKE_PROFIT_PCT = float(data["take_profit_pct"])
         logger.info(f"Take profit updated to {settings.TAKE_PROFIT_PCT}%")
 
-    return {"status": "ok", "max_budget": settings.MAX_BUDGET, "broker": settings.ALPACA_BASE_URL}
+    return {
+        "status": "ok",
+        "max_budget": settings.MAX_BUDGET,
+        "max_position_pct": getattr(settings, "MAX_POSITION_PCT", 20),
+        "stop_loss_pct": settings.STOP_LOSS_PCT,
+        "take_profit_pct": settings.TAKE_PROFIT_PCT,
+        "broker": getattr(settings, "ACTIVE_BROKER", "alpaca_paper"),
+    }
