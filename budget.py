@@ -50,7 +50,7 @@ import broker
 logger = logging.getLogger(__name__)
 
 # ── Risk parameters ────────────────────────────────────────────────────────────
-RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "1.0"))
+RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "10.0"))
 MAX_OPEN_POSITIONS:  int   = int(os.getenv("MAX_OPEN_POSITIONS",     "5"))
 KELLY_ENABLED:       bool  = os.getenv("KELLY_ENABLED", "true").lower() == "true"
 KELLY_MIN_TRADES:    int   = int(os.getenv("KELLY_MIN_TRADES",       "10"))
@@ -185,6 +185,13 @@ def compute_position_size(entry_price: float) -> tuple[int, dict]:
 
     # ── Step 6: Take the most conservative (risk / notional cap / cash) ─────────
     qty = min(risk_qty, notional_qty, cash_qty)
+
+    # ── Step 6b: Minimum 1 share fallback ────────────────────────────────────────
+    # If all sizing math results in 0 but we have cash for at least 1 share, buy 1.
+    # Prevents $1,000 accounts from being blocked by strict risk ratios on $100B+ stocks.
+    if qty <= 0 and cash_qty >= 1:
+        qty = 1
+        logger.info(f"[SIZING] qty was 0 — using minimum 1 share fallback (cash={cash:.2f}, price={entry_price:.2f})")
 
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
     kelly_qty  = qty      # start with unconstrained qty
