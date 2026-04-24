@@ -83,6 +83,34 @@ WATCHLIST = [
     # ── רכב ──
     "TSLA", "TM", "GM", "F",
 
+    # ── ניהול נכסים / השקעות אלטרנטיביות ──
+    "BX",   # Blackstone
+    "KKR",  # KKR
+    "APO",  # Apollo Global
+    "CG",   # Carlyle
+    "BAM",  # Brookfield
+
+    # ── ייעוץ / IT שירותים ──
+    "ACN",  # Accenture
+    "FI",   # Fiserv
+    "FIS",  # Fidelity National
+
+    # ── מניות בינלאומיות הנסחרות בארה"ב ──
+    "TSM",  # Taiwan Semiconductor (~$800B)
+    "NVO",  # Novo Nordisk (~$350B) — תרופות סוכרת
+    "AZN",  # AstraZeneca (~$250B)
+    "SHEL", # Shell (~$200B)
+    "ACN",  # Accenture (~$200B)
+    "SNY",  # Sanofi (~$130B)
+    "UL",   # Unilever (~$120B)
+    "BHP",  # BHP Group (~$130B)
+    "RY",   # Royal Bank of Canada (~$170B)
+    "TD",   # Toronto-Dominion Bank (~$100B)
+    "HSBC", # HSBC (~$160B)
+    "NVS",  # Novartis (~$200B)
+    "RHHBY",# Roche (~$200B)
+    "TTE",  # TotalEnergies (~$140B)
+
     # ── קרנות סל (ETFs) — שוק רחב ──
     "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO",
     # ממונפים
