@@ -117,7 +117,7 @@ def limit_sell_price(market_price: float, ticker: str = "") -> float:
     return round(market_price * (1 - offset_pct / 100), 4)
 
 
-def estimate(market_price: float, qty: int, side: str, ticker: str = "") -> dict:
+def estimate(market_price: float, qty: float, side: str, ticker: str = "") -> dict:
     """
     Full slippage estimate for a trade.
     Logs the breakdown and returns a metadata dict.
@@ -161,7 +161,7 @@ def estimate(market_price: float, qty: int, side: str, ticker: str = "") -> dict
 def record(
     signal_price: float,
     fill_price:   float,
-    qty:          int,
+    qty:          float,
     side:         str,    # "buy" | "sell"
     ticker:       str,
 ) -> dict:

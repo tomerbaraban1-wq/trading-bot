@@ -75,10 +75,10 @@ TIMEOUT_SEC:      float = float(os.getenv("ICEBERG_TIMEOUT_SEC",     "20"))
 @dataclass
 class _ActiveIceberg:
     ticker:        str
-    total_qty:     int
+    total_qty:     float
     slices_total:  int
     slices_done:   int   = 0
-    filled_qty:    int   = 0
+    filled_qty:    float = 0.0
     avg_price:     float = 0.0
     started_at:    float = field(default_factory=time.time)
     last_slice_at: float = 0.0

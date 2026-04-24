@@ -116,7 +116,7 @@ async def send_message(text: str) -> bool:
 
 async def notify_trade_open(
     ticker:          str,
-    qty:             int,
+    qty:             float,
     price:           float,
     notional:        float,
     score:           float       = 0,
@@ -126,6 +126,7 @@ async def notify_trade_open(
     n_slices:        int         = 0,
 ) -> None:
     """Rich BUY notification with position sizing and scoring context."""
+    qty_str = f"{qty:.4f}" if qty != int(qty) else str(int(qty))
     iceberg_line = (
         f"\n🧊 פיצול הזמנה: {n_slices} חלקים"
         if is_iceberg else ""
@@ -134,7 +135,7 @@ async def notify_trade_open(
     await send_message(
         f"🟢 <b>קנייה</b>\n"
         f"📈 מניה: <b>{ticker}</b>\n"
-        f"📦 כמות: {qty} מניות\n"
+        f"📦 כמות: {qty_str} מניות\n"
         f"💵 מחיר: ${price:.2f}\n"
         f"💰 סה״כ: ${notional:,.2f}\n"
         f"🎯 ציון: {score:.0f}/100\n"
@@ -333,7 +334,7 @@ async def notify_weekly_report(report_html: str) -> None:
 
 async def notify_buy(
     ticker:          str,
-    qty:             int,
+    qty:             float,
     price:           float,
     score:           float,
     sentiment:       int,
