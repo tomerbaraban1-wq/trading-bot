@@ -56,7 +56,18 @@ def score_sentiment(ticker: str) -> SentimentResult:
     # Score with LLM
     client = _get_client()
     if not client:
-        raise RuntimeError("Groq API not configured (missing GROQ_API_KEY)")
+        # No API key configured — return neutral score so bot can still trade on technicals
+        logger.warning(f"[SENTIMENT] GROQ_API_KEY not configured — returning neutral score for {ticker}")
+        result = SentimentResult(
+            ticker=ticker,
+            score=5,
+            headlines=headlines,
+            reasoning="GROQ_API_KEY not configured — defaulting to neutral",
+            timestamp=now,
+        )
+        with _cache_lock:
+            _sentiment_cache[ticker] = result
+        return result
 
     headlines_text = "\n".join(f"- {h}" for h in headlines)
 
