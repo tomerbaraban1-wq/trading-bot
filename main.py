@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
         else:
             logger.info("RESTORED: no open positions — clean slate")
 
-        acct = _broker.get_account_info()
+        acct = _broker.get_account()
         cash = float(acct.get("cash", 0))
         equity = float(acct.get("equity", 0))
         logger.info(f"BROKER: cash=${cash:,.2f} | equity=${equity:,.2f}")

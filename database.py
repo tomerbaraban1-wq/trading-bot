@@ -17,14 +17,63 @@ def get_connection() -> sqlite3.Connection:
         conn = sqlite3.connect(settings.DATABASE_PATH)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
+
+        # Apply durability setting based on configuration
+        if settings.HARDENED_DURABILITY:
+            conn.execute("PRAGMA synchronous=FULL")  # Hardened durability for critical data
+        else:
+            conn.execute("PRAGMA synchronous=NORMAL")  # Balanced performance/safety
+
         conn.row_factory = sqlite3.Row
         _local.conn = conn
     return _local.conn
 
 
+def flush_database():
+    """Flush WAL checkpoint to consolidate all pending writes before shutdown."""
+    if hasattr(_local, "conn") and _local.conn is not None:
+        try:
+            _local.conn.execute("PRAGMA wal_checkpoint(RESTART)")
+            logger.info("Database WAL checkpoint completed")
+        except Exception as e:
+            logger.warning(f"WAL checkpoint failed (non-critical): {e}")
+
+
+def check_database_integrity():
+    """Verify database integrity and log status on startup."""
+    conn = get_connection()
+    try:
+        # Check for database corruption
+        result = conn.execute("PRAGMA integrity_check").fetchone()
+        if result[0] != "ok":
+            logger.warning(f"Database integrity check failed: {result[0]}")
+            return False
+
+        # Verify critical tables exist
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('trade_log','heartbeat_log','tax_events')"
+        ).fetchall()
+        if len(tables) < 3:
+            logger.warning("Missing critical database tables")
+            return False
+
+        # Check for recent data
+        last_hb = conn.execute("SELECT MAX(timestamp) FROM heartbeat_log").fetchone()[0]
+        if last_hb:
+            logger.info(f"✓ Database OK | Last heartbeat: {last_hb}")
+        else:
+            logger.info("✓ Database OK | No heartbeat history yet")
+
+        return True
+    except Exception as e:
+        logger.error(f"Database integrity check failed: {e}")
+        return False
+
+
 def close_connections():
     if hasattr(_local, "conn") and _local.conn is not None:
         try:
+            flush_database()  # Ensure all writes are flushed before closing
             _local.conn.close()
         except Exception:
             pass
@@ -49,7 +98,7 @@ def init_db():
             rsi REAL,
             macd REAL,
             macd_signal REAL,
-            bb_position TEXT,
+            bb_position REAL,
             volume_ratio REAL,
             sentiment_score INTEGER,
             sentiment_reasoning TEXT,
@@ -158,6 +207,14 @@ def init_db():
             conn.execute(ddl)
         except Exception:
             pass  # column already exists — sqlite3.OperationalError is expected
+
+    # Fix bb_position: SQLite stored it as TEXT but it should be REAL.
+    # SQLite cannot ALTER COLUMN type, so we CAST all existing values in-place.
+    # This is a no-op if the column is already numeric.
+    try:
+        conn.execute("UPDATE trade_log SET bb_position = CAST(bb_position AS REAL) WHERE bb_position IS NOT NULL")
+    except Exception:
+        pass
 
     conn.commit()
     logger.info("Database initialized")

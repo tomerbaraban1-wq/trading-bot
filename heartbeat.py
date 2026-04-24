@@ -360,13 +360,13 @@ async def stop_loss_monitor():
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
-                    asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(e)))
+                    _create_background_task(notify_error("stop_loss_fail", ticker, str(e)))
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Stop loss monitor error: {e}")
-            asyncio.ensure_future(notify_error("loop_error", "", f"stop_loss_monitor: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"stop_loss_monitor: {e}"))
 
 
 async def auto_invest_loop():
@@ -440,8 +440,9 @@ async def auto_invest_loop():
                             f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
                         )
                         if not composite["should_buy"]:
+                            # price not yet fetched at this point — pass 0.0 as placeholder
                             _create_background_task(_asyncio.to_thread(
-                                _shadow.evaluate, ticker, price, score, sentiment.score,
+                                _shadow.evaluate, ticker, 0.0, score, sentiment.score,
                                 None, "score",
                                 f"composite_score={score:.0f} below threshold", "auto_invest",
                             ))
@@ -545,7 +546,7 @@ async def auto_invest_loop():
                         bought      += 1
 
                         # Record actual slippage (signal price vs fill price)
-                        _asyncio.ensure_future(_asyncio.to_thread(
+                        _create_background_task(_asyncio.to_thread(
                             slippage_record, price, actual_price, qty, "buy", ticker
                         ))
 

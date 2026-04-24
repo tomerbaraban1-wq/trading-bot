@@ -41,7 +41,7 @@ def _load_daily_pnl_from_db() -> float:
             t.get("pnl_gross") or 0
             for t in trades
             if t.get("exit_time") and str(t["exit_time"])[:10] == today
-            and t.get("status") in ("closed", "emergency_exit", "stop_loss", "take_profit", "smart_sell")
+            and t.get("status") in ("closed", "emergency_exit", "stop_loss", "take_profit", "smart_sell", "time_exit")
         )
     except Exception:
         return 0.0
