@@ -963,3 +963,38 @@ async def update_settings(data: dict):
         "take_profit_pct": settings.TAKE_PROFIT_PCT,
         "broker": getattr(settings, "ACTIVE_BROKER", "alpaca_paper"),
     }
+
+
+@router.get("/telegram/test")
+async def test_telegram():
+    """
+    Sends a test message to Telegram and returns diagnostic info.
+    Visit this URL in your browser to check if Telegram is connected.
+    """
+    from telegram_bot import send_message, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    token_set   = bool(TELEGRAM_BOT_TOKEN)
+    chat_set    = bool(TELEGRAM_CHAT_ID)
+    token_hint  = (TELEGRAM_BOT_TOKEN[:8] + "...") if token_set else "❌ לא מוגדר"
+    chat_hint   = (TELEGRAM_CHAT_ID[:4]   + "...") if chat_set  else "❌ לא מוגדר"
+
+    if not token_set or not chat_set:
+        return {
+            "status": "error",
+            "message": "חסרים פרטי טלגרם ב-Render",
+            "TELEGRAM_BOT_TOKEN": token_hint,
+            "TELEGRAM_CHAT_ID":   chat_hint,
+            "fix": "הוסף את המשתנים ב-Render → Environment",
+        }
+
+    ok = await send_message(
+        "🤖 <b>בדיקת חיבור טלגרם</b>\n"
+        "✅ הבוט מחובר ועובד!\n"
+        "📡 מוכן לשלוח התראות."
+    )
+    return {
+        "status": "ok" if ok else "failed",
+        "sent": ok,
+        "TELEGRAM_BOT_TOKEN": token_hint,
+        "TELEGRAM_CHAT_ID":   chat_hint,
+        "message": "הודעת בדיקה נשלחה בהצלחה ✅" if ok else "❌ שליחה נכשלה — בדוק לוגים",
+    }
