@@ -147,7 +147,7 @@ async def notify_trade_open(
 
 async def notify_trade_close(
     ticker:         str,
-    qty:            int,
+    qty:            float,
     entry_price:    float,
     exit_price:     float,
     pnl_gross:      float,
@@ -263,29 +263,32 @@ async def notify_budget_warning(reason: str, cash_available: float) -> None:
 
 async def notify_iceberg_start(
     ticker:       str,
-    total_qty:    int,
+    total_qty:    float,
     n_slices:     int,
     interval_sec: float,
 ) -> None:
+    qty_str = f"{total_qty:.4f}" if total_qty != int(total_qty) else str(int(total_qty))
+    slice_qty = round(total_qty / n_slices, 4) if n_slices else total_qty
     duration_min = (n_slices - 1) * interval_sec / 60
     await send_message(
         f"🧊 <b>פיצול הזמנה — {ticker}</b>\n"
-        f"📦 {total_qty} מניות → {n_slices} חלקים × ~{max(1, total_qty // n_slices)} מניות\n"
+        f"📦 {qty_str} מניות → {n_slices} חלקים × ~{slice_qty} מניות\n"
         f"⏱ מרווח: {interval_sec:.0f} שניות  |  משך משוער: ~{duration_min:.0f} דקות"
     )
 
 
 async def notify_iceberg_done(
     ticker:     str,
-    filled_qty: int,
+    filled_qty: float,
     avg_price:  float,
     n_slices:   int,
     is_partial: bool,
 ) -> None:
+    qty_str = f"{filled_qty:.4f}" if filled_qty != int(filled_qty) else str(int(filled_qty))
     status = "⚠️ בוצע חלקית" if is_partial else "✅ הושלם"
     await send_message(
         f"🧊 <b>פיצול הזמנה {status} — {ticker}</b>\n"
-        f"📦 {filled_qty} מניות בוצעו ב-{n_slices} חלקים\n"
+        f"📦 {qty_str} מניות בוצעו ב-{n_slices} חלקים\n"
         f"💵 מחיר ממוצע: ${avg_price:.4f}"
     )
 

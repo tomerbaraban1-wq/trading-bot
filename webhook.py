@@ -768,8 +768,8 @@ async def auto_invest(data: dict):
         # Max 20% of total budget per position
         max_per_stock = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
         available_for_this = min(remaining, max_per_stock)
-        qty = int(available_for_this / price)
-        if qty < 1:
+        qty = round(available_for_this / price, 6)
+        if qty < 0.001:
             results.append({"ticker": ticker, "status": "skipped", "reason": f"תקציב נמוך (${available_for_this:.0f} < ${price:.0f})"})
             continue
 
