@@ -149,18 +149,16 @@ def _get_account_equity() -> tuple[float, float]:
     return equity, cash
 
 
-def compute_position_size(entry_price: float) -> tuple[int, dict]:
+def compute_position_size(entry_price: float) -> tuple[float, dict]:
     """
-    Compute the correct number of shares to buy using risk-per-trade sizing.
+    Compute fractional shares to buy using risk-per-trade sizing.
+    Supports fractional quantities (e.g. 0.5, 2.37) for high-priced stocks.
 
     Returns:
-        (qty, metadata_dict)
-        qty = 0 means "do not trade"
-
-    metadata_dict contains the full sizing breakdown for logging/audit.
+        (qty, metadata_dict)   — qty is float, 0.0 means "do not trade"
     """
     if entry_price <= 0:
-        return 0, {"rejected": "invalid_price"}
+        return 0.0, {"rejected": "invalid_price"}
 
     equity, cash = _get_account_equity()
     stop_loss_pct = settings.STOP_LOSS_PCT  # e.g. 5.0
@@ -171,27 +169,29 @@ def compute_position_size(entry_price: float) -> tuple[int, dict]:
     # ── Step 2: Risk per share (distance to stop loss) ────────────────────────
     risk_per_share = entry_price * (stop_loss_pct / 100)
     if risk_per_share <= 0:
-        return 0, {"rejected": "zero_risk_per_share"}
+        return 0.0, {"rejected": "zero_risk_per_share"}
 
-    # ── Step 3: Risk-derived qty ───────────────────────────────────────────────
-    risk_qty = int(dollar_risk / risk_per_share)
+    # ── Step 3: Risk-derived qty (fractional) ─────────────────────────────────
+    risk_qty = dollar_risk / risk_per_share
 
     # ── Step 4: Hard cap — max notional per position ──────────────────────────
     max_notional   = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
-    notional_qty   = int(max_notional / entry_price)
+    notional_qty   = max_notional / entry_price
 
     # ── Step 5: Cash constraint ────────────────────────────────────────────────
-    cash_qty = int(cash / entry_price)
+    cash_qty = cash / entry_price
 
     # ── Step 6: Take the most conservative (risk / notional cap / cash) ─────────
     qty = min(risk_qty, notional_qty, cash_qty)
 
-    # ── Step 6b: Minimum 1 share fallback ────────────────────────────────────────
-    # If all sizing math results in 0 but we have cash for at least 1 share, buy 1.
-    # Prevents $1,000 accounts from being blocked by strict risk ratios on $100B+ stocks.
-    if qty <= 0 and cash_qty >= 1:
-        qty = 1
-        logger.info(f"[SIZING] qty was 0 — using minimum 1 share fallback (cash={cash:.2f}, price={entry_price:.2f})")
+    # ── Step 6b: Minimum 0.01 share fallback ─────────────────────────────────
+    # Ensure we always invest something meaningful if we have cash
+    MIN_NOTIONAL = 10.0  # minimum $10 investment
+    if qty * entry_price < MIN_NOTIONAL and cash >= MIN_NOTIONAL:
+        qty = MIN_NOTIONAL / entry_price
+        logger.info(f"[SIZING] using minimum notional ${MIN_NOTIONAL} → qty={qty:.4f} @ ${entry_price:.2f}")
+
+    qty = round(qty, 6)
 
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
     kelly_qty  = qty      # start with unconstrained qty

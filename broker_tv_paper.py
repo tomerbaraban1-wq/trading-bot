@@ -165,7 +165,8 @@ class TVPaperBroker(BrokerBase):
             "unrealized_plpc": round(unrealized_plpc, 6),
         }
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
+        """Supports fractional shares — qty can be e.g. 0.5 or 2.37."""
         ticker = ticker.upper()
 
         if qty <= 0:
@@ -177,6 +178,8 @@ class TVPaperBroker(BrokerBase):
         else:
             current_price = self._get_price(ticker)  # raises if price = 0
 
+        # Round fractional qty to 6 decimal places
+        qty = round(float(qty), 6)
         cost = current_price * qty
 
         # Atomic cash check + mutation under lock to prevent over-spending race
@@ -202,7 +205,7 @@ class TVPaperBroker(BrokerBase):
 
         order_id = self._order_id(ticker)
         logger.info(
-            f"[TVPaper] BUY {ticker} x{qty} @ ${current_price:.4f} "
+            f"[TVPaper] BUY {ticker} x{qty:.4f} @ ${current_price:.4f} "
             f"| cost=${cost:,.2f} | cash_remaining=${TVPaperBroker._cash:,.2f}"
         )
         return {
