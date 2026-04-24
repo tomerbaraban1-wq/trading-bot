@@ -11,6 +11,7 @@ from telegram_bot import (
     notify_buy, notify_sell, notify_emergency,
     notify_daily_summary, notify_weekly_report,
     notify_error, notify_circuit_breaker_tripped,
+    send_message,
 )
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate, record as slippage_record
@@ -700,6 +701,72 @@ async def daily_summary_loop():
         except Exception as e:
             logger.error(f"Daily summary error: {e}")
             await asyncio.sleep(3600)  # retry in 1 hour on error
+
+
+async def portfolio_update_loop():
+    """
+    Send a live portfolio snapshot to Telegram every hour during market hours.
+    Shows every open position with current price, unrealized P&L and % change.
+    """
+    import datetime as _dt
+    await asyncio.sleep(120)   # wait 2 min after startup before first send
+    while True:
+        try:
+            # Only send during market hours (14:30–21:00 UTC = 16:30–23:00 Israel summer)
+            now_utc = _dt.datetime.utcnow()
+            market_open  = now_utc.replace(hour=14, minute=30, second=0, microsecond=0)
+            market_close = now_utc.replace(hour=21, minute=0,  second=0, microsecond=0)
+            is_weekday   = now_utc.weekday() < 5   # Mon–Fri
+
+            if not (is_weekday and market_open <= now_utc <= market_close):
+                await asyncio.sleep(15 * 60)   # check again in 15 min
+                continue
+
+            open_trades = database.get_open_trades()
+
+            if not open_trades:
+                await asyncio.to_thread(telegram_bot.send_message,
+                    "📂 <b>תיק עכשיו</b>\nאין פוזיציות פתוחות כרגע.")
+                # Still send so user knows bot is alive
+            else:
+                lines = ["📂 <b>תיק עכשיו</b>\n━━━━━━━━━━━━━━━━"]
+                total_unrealized = 0.0
+
+                for trade in open_trades:
+                    ticker = trade["ticker"]
+                    qty    = trade["qty"]
+                    entry  = trade["entry_price"]
+                    try:
+                        pos = await asyncio.wait_for(
+                            asyncio.to_thread(broker.get_position, ticker), timeout=10
+                        )
+                        cur_price    = float(pos.get("current_price", entry))
+                        unrealized   = float(pos.get("unrealized_pl", (cur_price - entry) * qty))
+                        unrealized_pct = float(pos.get("unrealized_plpc", 0)) * 100
+                    except Exception:
+                        cur_price      = entry
+                        unrealized     = 0.0
+                        unrealized_pct = 0.0
+
+                    total_unrealized += unrealized
+                    emoji = "📈" if unrealized >= 0 else "📉"
+                    lines.append(
+                        f"\n{emoji} <b>{ticker}</b>\n"
+                        f"   כמות: {qty} מניות\n"
+                        f"   כניסה: ${entry:.2f}  →  עכשיו: ${cur_price:.2f}\n"
+                        f"   רווח/הפסד: <b>${unrealized:+.2f}</b> ({unrealized_pct:+.2f}%)"
+                    )
+
+                total_emoji = "📈" if total_unrealized >= 0 else "📉"
+                lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ לא ממומש: <b>${total_unrealized:+.2f}</b>")
+                await send_message("\n".join(lines))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Portfolio update error: {e}")
+
+        await asyncio.sleep(60 * 60)   # שלח כל שעה
 
 
 async def weekly_report_loop():

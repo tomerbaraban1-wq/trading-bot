@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
 
     from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
-                           weekly_report_loop, shadow_monitor_loop)
+                           weekly_report_loop, shadow_monitor_loop, portfolio_update_loop)
     heartbeat_task      = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
     sentiment_task      = asyncio.create_task(sentiment_monitor())
@@ -91,14 +91,15 @@ async def lifespan(app: FastAPI):
     keep_alive_task     = asyncio.create_task(keep_alive_loop())
     daily_summary_task  = asyncio.create_task(daily_summary_loop())
     weekly_report_task  = asyncio.create_task(weekly_report_loop())
-    shadow_monitor_task = asyncio.create_task(shadow_monitor_loop())
+    shadow_monitor_task   = asyncio.create_task(shadow_monitor_loop())
+    portfolio_update_task = asyncio.create_task(portfolio_update_loop())
 
     yield
 
     # Shutdown — Gracefully cancel and await all background tasks with timeout
     logger.info("Initiating graceful shutdown...")
     all_tasks = [heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
-                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task]
+                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task, portfolio_update_task]
 
     # Cancel all background tasks
     for task in all_tasks:
