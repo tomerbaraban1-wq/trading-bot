@@ -488,6 +488,120 @@ async def health_check():
     )
 
 
+@router.get("/diagnose")
+async def diagnose():
+    """
+    Full step-by-step diagnostic — shows EXACTLY why the bot is or isn't buying right now.
+    Hit this URL in your browser to debug.
+    """
+    import random
+    from scanner import get_watchlist
+    from scoring import get_composite_score, MIN_BUY_SCORE
+    from sentiment import score_sentiment
+    from trading_hours import is_ok_to_trade, get_status as hours_status_fn
+    from market_regime import get_regime as get_regime_fn
+    from volume_confirm import check as vol_check
+    from sanity_check import run_all as sanity_run
+    from budget import compute_position_size, get_budget_status
+
+    report = {}
+
+    # ── 1. Market hours ────────────────────────────────────────────────────────
+    hours_ok, hours_reason = is_ok_to_trade()
+    mkt_open = await asyncio.to_thread(broker.is_market_open)
+    report["step1_market_hours"] = {
+        "broker_says_open": mkt_open,
+        "hours_filter_ok": hours_ok,
+        "reason": hours_reason,
+        "verdict": "✅ PASS" if (mkt_open and hours_ok) else "❌ BLOCKED — market closed or outside session",
+    }
+
+    # ── 2. Budget ──────────────────────────────────────────────────────────────
+    status = await asyncio.to_thread(get_budget_status)
+    cash = float(status.get("cash_available", 0))
+    open_trades = database.get_open_trades()
+    report["step2_budget"] = {
+        "cash_available": round(cash, 2),
+        "open_positions": len(open_trades),
+        "max_positions": 6,
+        "verdict": "✅ PASS" if cash >= 10 and len(open_trades) < 6 else f"❌ BLOCKED — cash=${cash:.2f}, positions={len(open_trades)}/6",
+    }
+
+    # ── 3. Circuit breaker ──────────────────────────────────────────────────────
+    from circuit_breaker import check_circuit_breaker
+    cb_ok, cb_reason = check_circuit_breaker()
+    report["step3_circuit_breaker"] = {
+        "ok": cb_ok,
+        "reason": cb_reason,
+        "verdict": "✅ PASS" if cb_ok else f"❌ BLOCKED — {cb_reason}",
+    }
+
+    # ── 4. Score 3 stocks through every filter ─────────────────────────────────
+    watchlist = get_watchlist()
+    sample = random.sample(watchlist, min(3, len(watchlist)))
+    stock_results = []
+
+    for ticker in sample:
+        result = {"ticker": ticker, "filters": {}}
+        try:
+            # Score
+            sent = await asyncio.to_thread(score_sentiment, ticker)
+            comp = await asyncio.to_thread(get_composite_score, ticker, sent.score)
+            score = comp["composite_score"]
+            result["score"] = round(score, 1)
+            result["min_score"] = MIN_BUY_SCORE
+            result["filters"]["scoring"] = "✅ PASS" if comp["should_buy"] else f"❌ BLOCKED — score={score:.0f} < {MIN_BUY_SCORE}"
+
+            if comp["should_buy"]:
+                # Price
+                price = await asyncio.to_thread(broker.get_price, ticker)
+                result["price"] = price
+
+                # Regime
+                try:
+                    regime, adx, _ = await asyncio.wait_for(asyncio.to_thread(get_regime_fn, ticker), timeout=20)
+                    result["filters"]["market_regime"] = "✅ PASS" if regime != "ranging" else f"❌ BLOCKED — ranging (ADX={adx:.1f})"
+                except Exception as e:
+                    result["filters"]["market_regime"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
+
+                # Sanity
+                sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, None), timeout=20)
+                result["filters"]["sanity_check"] = "✅ PASS" if sane else f"❌ BLOCKED — {sane_reason}"
+
+                # Volume
+                try:
+                    vol_ok, vol_reason, vol_details = await asyncio.wait_for(asyncio.to_thread(vol_check, ticker), timeout=15)
+                    result["filters"]["volume"] = "✅ PASS" if vol_ok else f"❌ BLOCKED — {vol_reason} (ratio={vol_details.get('ratio', '?')})"
+                except Exception as e:
+                    result["filters"]["volume"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
+
+                # Position sizing
+                qty, sizing_meta = await asyncio.to_thread(compute_position_size, price)
+                result["filters"]["position_size"] = f"✅ qty={qty:.4f}" if qty > 0 else f"❌ BLOCKED — qty=0 at ${price:.2f} ({sizing_meta})"
+
+        except Exception as e:
+            result["error"] = str(e)
+
+        stock_results.append(result)
+
+    report["step4_stock_samples"] = stock_results
+
+    # ── Summary ────────────────────────────────────────────────────────────────
+    blockers = []
+    if not mkt_open:   blockers.append("Market is closed (broker check)")
+    if not hours_ok:   blockers.append(f"Trading hours blocked: {hours_reason}")
+    if cash < 10:      blockers.append(f"Not enough cash: ${cash:.2f}")
+    if len(open_trades) >= 6: blockers.append(f"Max positions reached: {len(open_trades)}/6")
+    if not cb_ok:      blockers.append(f"Circuit breaker: {cb_reason}")
+
+    report["summary"] = {
+        "verdict": "✅ Bot SHOULD be buying (check stock scores above)" if not blockers else "❌ Bot BLOCKED",
+        "blockers": blockers if blockers else ["None — if still not buying, check stock scores above"],
+    }
+
+    return report
+
+
 @router.get("/scan/preview")
 async def scan_preview():
     """
