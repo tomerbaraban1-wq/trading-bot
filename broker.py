@@ -179,6 +179,30 @@ def is_market_open() -> bool:
     return _get_broker().is_market_open()
 
 
+def get_clock() -> dict | None:
+    """
+    Return Alpaca market clock: {is_open, next_open, next_close, timestamp}.
+    next_open / next_close are ISO-8601 strings in UTC.
+    Falls back to None if broker doesn't support it.
+    """
+    try:
+        b = _get_broker()
+        if hasattr(b, "get_clock"):
+            return b.get_clock()
+        # Fallback: call Alpaca REST directly if broker exposes _api
+        if hasattr(b, "_api"):
+            clock = b._api.get_clock()
+            return {
+                "is_open":    clock.is_open,
+                "next_open":  str(clock.next_open),
+                "next_close": str(clock.next_close),
+                "timestamp":  str(clock.timestamp),
+            }
+    except Exception as e:
+        logger.debug(f"get_clock failed: {e}")
+    return None
+
+
 def get_asset(ticker: str) -> dict | None:
     return _get_broker().get_asset(ticker)
 

@@ -601,24 +601,49 @@ async def auto_invest_loop():
 
 async def morning_briefing_loop():
     """
-    Every trading day at 13:00 UTC (16:00 Israel) — 30 min before market open —
-    send a Telegram briefing with top news headlines and the 3 highest-scoring
-    watchlist candidates so the user knows what to expect.
+    Every trading day, send a briefing 30 minutes before market open.
+    Uses Alpaca's clock API to get the exact next open time — handles
+    NYSE DST transitions, early closes, and holidays automatically.
     """
     import datetime as _dt
     await asyncio.sleep(60)
+    _briefing_sent_date = None   # track so we only send once per day
     while True:
         try:
-            now = _dt.datetime.utcnow()
-            target = now.replace(hour=13, minute=0, second=0, microsecond=0)
-            if now >= target:
-                target += _dt.timedelta(days=1)
-            # Skip weekends
-            while target.weekday() >= 5:
-                target += _dt.timedelta(days=1)
+            # Ask Alpaca when the market next opens
+            clock = await asyncio.wait_for(
+                asyncio.to_thread(broker.get_clock), timeout=10
+            )
+            if not clock:
+                await asyncio.sleep(5 * 60)
+                continue
 
-            while _dt.datetime.utcnow() < target:
-                await asyncio.sleep(60)
+            next_open = clock.get("next_open")   # ISO datetime string
+            is_open   = clock.get("is_open", False)
+
+            if not next_open:
+                await asyncio.sleep(5 * 60)
+                continue
+
+            # Parse next open time
+            if isinstance(next_open, str):
+                next_open_dt = _dt.datetime.fromisoformat(next_open.replace("Z", "+00:00"))
+            else:
+                next_open_dt = next_open
+
+            now_utc = _dt.datetime.now(_dt.timezone.utc)
+            briefing_time = next_open_dt - _dt.timedelta(minutes=30)
+            today_str = now_utc.strftime("%Y-%m-%d")
+
+            # Already sent today or market already open
+            if _briefing_sent_date == today_str or is_open:
+                await asyncio.sleep(5 * 60)
+                continue
+
+            if now_utc < briefing_time:
+                wait_sec = (briefing_time - now_utc).total_seconds()
+                await asyncio.sleep(min(wait_sec, 5 * 60))
+                continue
 
             from news_service import get_general_headlines
             from scanner import WATCHLIST
@@ -653,6 +678,7 @@ async def morning_briefing_loop():
                 f"📰 <b>חדשות מובילות:</b>\n{news_text}\n\n"
                 f"🎯 <b>מועמדים מובילים היום:</b>{candidates if candidates else chr(10) + 'טרם חושב'}"
             )
+            _briefing_sent_date = today_str
             logger.info("Morning briefing sent")
 
         except asyncio.CancelledError:
