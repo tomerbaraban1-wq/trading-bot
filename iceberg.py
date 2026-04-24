@@ -324,22 +324,22 @@ def get_status() -> dict:
 def _plan_slices(total_qty: float) -> list[float]:
     """
     Divide total_qty into equal child orders of SLICE_SHARES each.
-    The last slice absorbs any remainder.
-    Capped at MAX_SLICES; forced to at least MIN_SLICES.
+    Uses true division (not //) to correctly handle fractional quantities.
     """
-    raw_n  = math.ceil(total_qty / SLICE_SHARES)
+    raw_n  = math.ceil(total_qty / SLICE_SHARES) if SLICE_SHARES > 0 else 1
     n      = max(MIN_SLICES, min(MAX_SLICES, raw_n))
 
-    # Evenly distribute, last slice gets the remainder
-    base   = total_qty // n
-    rem    = total_qty % n
-    slices = [base] * n
-    if rem:
-        slices[-1] += rem   # last slice absorbs remainder
+    # Use true division — safe for fractional shares
+    base   = round(total_qty / n, 6)
+    slices = [base] * (n - 1)
+    # Last slice absorbs rounding remainder
+    last   = round(total_qty - base * (n - 1), 6)
+    if last > 0:
+        slices.append(last)
 
-    # Drop any zero-qty slices (edge case: total_qty < n)
+    # Drop zero-qty slices (edge case: total_qty extremely small)
     slices = [s for s in slices if s > 0]
-    return slices
+    return slices if slices else [total_qty]
 
 
 async def _cleanup_tracker(ticker: str, delay: float = 300):

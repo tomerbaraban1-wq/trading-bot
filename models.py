@@ -31,7 +31,7 @@ class TradeRecord(BaseModel):
     id: int | None = None
     ticker: str
     action: TradeAction
-    qty: int
+    qty: float
     entry_price: float
     entry_time: str
     sentiment_score: int | None = None
