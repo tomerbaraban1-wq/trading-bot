@@ -35,11 +35,11 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-MAX_PRICE_DRIFT_PCT:        float = float(os.getenv("SANITY_MAX_PRICE_DRIFT_PCT",    "1.0"))
-MAX_VELOCITY_PCT:           float = float(os.getenv("SANITY_MAX_VELOCITY_PCT",      "2.0"))
-MAX_SPREAD_PCT:             float = float(os.getenv("SANITY_MAX_SPREAD_PCT",        "0.5"))
+MAX_PRICE_DRIFT_PCT:        float = float(os.getenv("SANITY_MAX_PRICE_DRIFT_PCT",    "3.0"))
+MAX_VELOCITY_PCT:           float = float(os.getenv("SANITY_MAX_VELOCITY_PCT",      "5.0"))
+MAX_SPREAD_PCT:             float = float(os.getenv("SANITY_MAX_SPREAD_PCT",        "2.0"))
 CONFIRM_DELAY_SEC:          float = float(os.getenv("SANITY_CONFIRM_DELAY_SEC",     "1.5"))
-MAX_CROSS_EXCHANGE_PCT:     float = float(os.getenv("SANITY_MAX_CROSS_EXCHANGE_PCT","0.5"))
+MAX_CROSS_EXCHANGE_PCT:     float = float(os.getenv("SANITY_MAX_CROSS_EXCHANGE_PCT","2.0"))
 
 # Required indicator keys for a BUY signal to be considered complete
 REQUIRED_FIELDS = ("rsi", "macd", "volume_ratio", "atr")

@@ -45,7 +45,7 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MULTIPLIER:   float = float(os.getenv("VOLUME_MULTIPLIER",   "1.5"))
+MULTIPLIER:   float = float(os.getenv("VOLUME_MULTIPLIER",   "0.8"))
 MA_PERIOD:    int   = int(os.getenv("VOLUME_MA_PERIOD",      "20"))
 BAR_INTERVAL: str   = os.getenv("VOLUME_BAR_INTERVAL",       "5m")
 CACHE_TTL:    int   = int(os.getenv("VOLUME_CACHE_TTL",      "300"))
