@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from broker_base import BrokerBase
 from config import settings
 
@@ -96,7 +96,7 @@ class WebullBroker(BrokerBase):
             logger.error(f"Webull get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         wb = self._get_client()
         try:
             order = wb.place_order(
@@ -120,7 +120,7 @@ class WebullBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         wb = self._get_client()
         if qty is None:
             position = self.get_position(ticker)

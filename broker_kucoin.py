@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from broker_base import BrokerBase
 from config import settings
 
@@ -133,7 +133,7 @@ class KuCoinBroker(BrokerBase):
             logger.error(f"KuCoin get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         trade = self._get_trade()
         asset = ticker.upper().replace("-USDT", "").replace("USDT", "")
         symbol = asset + "-USDT"
@@ -154,7 +154,7 @@ class KuCoinBroker(BrokerBase):
             "status": "submitted",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         trade = self._get_trade()
         asset = ticker.upper().replace("-USDT", "").replace("USDT", "")
         symbol = asset + "-USDT"

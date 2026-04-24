@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import uuid
 from broker_base import BrokerBase
 from config import settings
@@ -134,7 +134,7 @@ class CoinbaseBroker(BrokerBase):
             logger.error(f"Coinbase get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         client = self._get_client()
         product_id = _to_coinbase_product(ticker)
         client_order_id = str(uuid.uuid4())
@@ -154,7 +154,7 @@ class CoinbaseBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         client = self._get_client()
         product_id = _to_coinbase_product(ticker)
 

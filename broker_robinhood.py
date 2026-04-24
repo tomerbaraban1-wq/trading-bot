@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from datetime import date
 from broker_base import BrokerBase
 from config import settings
@@ -101,7 +101,7 @@ class RobinhoodBroker(BrokerBase):
             logger.error(f"Robinhood get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         self._ensure_login()
         try:
             order = r.order_buy_market(ticker.upper(), qty)
@@ -118,7 +118,7 @@ class RobinhoodBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         self._ensure_login()
         if qty is None:
             position = self.get_position(ticker)

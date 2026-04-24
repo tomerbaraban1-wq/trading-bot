@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import requests
 from broker_base import BrokerBase
 from config import settings
@@ -141,7 +141,7 @@ class TradeStationBroker(BrokerBase):
             logger.error(f"TradeStation get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         body = {
             "AccountID": self._account,
             "Symbol": ticker.upper(),
@@ -166,7 +166,7 @@ class TradeStationBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         if qty is None:
             position = self.get_position(ticker)
             if not position:

@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from datetime import datetime, time as dtime
 from broker_base import BrokerBase
 from config import settings
@@ -94,9 +94,9 @@ class SchwabBroker(BrokerBase):
             for p in positions_raw:
                 instrument = p.get("instrument", {})
                 symbol = instrument.get("symbol", "")
-                qty = int(p.get("longQuantity", 0) or p.get("shortQuantity", 0))
+                qty = float(p.get("longQuantity", 0) or p.get("shortQuantity", 0))
                 avg_cost = float(p.get("averagePrice", 0))
-                current_price = float(p.get("marketValue", 0)) / qty if qty else avg_cost
+                current_price = float(p.get("marketValue", 0)) / qty if qty > 0 else avg_cost
                 market_value = float(p.get("marketValue", 0))
                 unrealized_pl = float(p.get("unrealizedPnL", 0))
                 result.append({
@@ -123,7 +123,7 @@ class SchwabBroker(BrokerBase):
             logger.error(f"Schwab get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         client = self._get_client()
         symbol = ticker.upper()
         order = equity_buy_market(symbol, qty).set_duration(Duration.DAY).set_session(OrderSession.NORMAL).build()
@@ -138,7 +138,7 @@ class SchwabBroker(BrokerBase):
             "status": "submitted",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         client = self._get_client()
         symbol = ticker.upper()
 

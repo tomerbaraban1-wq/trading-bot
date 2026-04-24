@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from broker_base import BrokerBase
 from config import settings
 
@@ -105,7 +105,7 @@ class GeminiBroker(BrokerBase):
             logger.error(f"Gemini get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         symbol = self._to_symbol(ticker)
         try:
             order = gemini.NewOrder(
@@ -130,7 +130,7 @@ class GeminiBroker(BrokerBase):
             "status": "submitted",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         if qty is None:
             asset = ticker.upper().replace("USD", "").replace("USDT", "")
             position = self.get_position(asset)

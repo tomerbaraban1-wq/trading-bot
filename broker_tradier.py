@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import requests
 from datetime import datetime, time as dtime
 from config import settings
@@ -99,7 +99,7 @@ class TradierBroker(BrokerBase):
             logger.error(f"Tradier get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         data = self._post(
             f"accounts/{self._account}/orders",
             {
@@ -123,7 +123,7 @@ class TradierBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         if qty is None:
             position = self.get_position(ticker)
             if not position:

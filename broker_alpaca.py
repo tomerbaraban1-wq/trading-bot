@@ -49,7 +49,7 @@ class AlpacaBroker(BrokerBase):
             return [
                 {
                     "ticker": p.symbol,
-                    "qty": int(p.qty),
+                    "qty": float(p.qty),
                     "avg_entry_price": float(p.avg_entry_price),
                     "current_price": float(p.current_price),
                     "market_value": float(p.market_value),
@@ -68,7 +68,7 @@ class AlpacaBroker(BrokerBase):
             p = client.get_open_position(ticker.upper())
             return {
                 "ticker": p.symbol,
-                "qty": int(p.qty),
+                "qty": float(p.qty),
                 "avg_entry_price": float(p.avg_entry_price),
                 "current_price": float(p.current_price),
                 "market_value": float(p.market_value),
@@ -80,7 +80,7 @@ class AlpacaBroker(BrokerBase):
             logger.error(f"Alpaca get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         client = self._get_client()
         stop_pct = settings.TRAILING_STOP_PCT
 
@@ -98,12 +98,12 @@ class AlpacaBroker(BrokerBase):
         return {
             "order_id": str(order.id),
             "symbol": order.symbol,
-            "qty": int(order.qty),
+            "qty": float(order.qty),
             "status": str(order.status),
             "type": str(order.type),
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         client = self._get_client()
 
         if qty is None:
@@ -124,7 +124,7 @@ class AlpacaBroker(BrokerBase):
         return {
             "order_id": str(order.id),
             "symbol": order.symbol,
-            "qty": int(order.qty),
+            "qty": float(order.qty),
             "status": str(order.status),
         }
 

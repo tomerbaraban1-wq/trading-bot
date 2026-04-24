@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from broker_base import BrokerBase
 from config import settings
 
@@ -102,7 +102,7 @@ class TastytradeBroker(BrokerBase):
             logger.error(f"Tastytrade get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         session = self._get_session()
         account = self._get_account()
         symbol = ticker.upper()
@@ -125,7 +125,7 @@ class TastytradeBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         session = self._get_session()
         account = self._get_account()
         symbol = ticker.upper()

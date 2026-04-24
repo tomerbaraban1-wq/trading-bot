@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from broker_base import BrokerBase
 from config import settings
 
@@ -123,7 +123,7 @@ class BinanceBroker(BrokerBase):
             logger.error(f"Binance get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         client = self._get_client()
         symbol = _to_binance_symbol(ticker)
         try:
@@ -141,7 +141,7 @@ class BinanceBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         client = self._get_client()
         symbol = _to_binance_symbol(ticker)
 

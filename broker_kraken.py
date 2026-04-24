@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import uuid
 from broker_base import BrokerBase
 from config import settings
@@ -150,7 +150,7 @@ class KrakenBroker(BrokerBase):
             logger.error(f"Kraken get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         pair = _to_kraken_pair(ticker)
         data = {
             "pair": pair,
@@ -169,7 +169,7 @@ class KrakenBroker(BrokerBase):
             "status": "submitted",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         pair = _to_kraken_pair(ticker)
 
         if qty is None:

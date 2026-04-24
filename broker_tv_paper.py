@@ -1,4 +1,4 @@
-import time
+﻿import time
 import threading
 import logging
 try:
@@ -218,7 +218,7 @@ class TVPaperBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         ticker = ticker.upper()
 
         pos = TVPaperBroker._positions.get(ticker)

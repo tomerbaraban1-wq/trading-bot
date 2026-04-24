@@ -17,11 +17,11 @@ class BrokerBase(ABC):
         """Return a single open position or None if not held."""
 
     @abstractmethod
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         """Submit a market buy order. Returns order confirmation dict."""
 
     @abstractmethod
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         """Submit a market sell order for qty shares (all if qty is None)."""
 
     @abstractmethod

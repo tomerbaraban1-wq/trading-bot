@@ -64,7 +64,7 @@ class IBKRBroker(BrokerBase):
                 unrealized_plpc = ((current_price - avg_cost) / avg_cost) if avg_cost else 0.0
                 result.append({
                     "ticker": contract.symbol,
-                    "qty": int(qty),
+                    "qty": float(qty),
                     "avg_entry_price": float(avg_cost),
                     "current_price": float(current_price),
                     "market_value": float(market_value),
@@ -87,7 +87,7 @@ class IBKRBroker(BrokerBase):
             logger.error(f"IBKR get_position({ticker}) failed: {e}")
             return None
 
-    def submit_buy(self, ticker: str, qty: int, price: float | None = None) -> dict:
+    def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
         from ib_insync import Stock, MarketOrder
         ib = self._get_ib()
         contract = Stock(ticker.upper(), "SMART", "USD")
@@ -104,7 +104,7 @@ class IBKRBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: int | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
         from ib_insync import Stock, MarketOrder
         ib = self._get_ib()
 
