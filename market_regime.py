@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 ADX_PERIOD:        int   = int(os.getenv("ADX_PERIOD",        "14"))
-ADX_THRESHOLD:     float = float(os.getenv("ADX_THRESHOLD",   "25.0"))
+ADX_THRESHOLD:     float = float(os.getenv("ADX_THRESHOLD",   "18.0"))
 ADX_LOOKBACK_DAYS: int   = int(os.getenv("ADX_LOOKBACK_DAYS", "60"))
 ADX_CACHE_TTL:     int   = int(os.getenv("ADX_CACHE_TTL",     "1800"))  # 30 min
 

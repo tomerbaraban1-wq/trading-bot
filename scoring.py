@@ -11,7 +11,7 @@ from indicators import get_current_indicators, get_market_conditions, get_stock_
 
 logger = logging.getLogger(__name__)
 
-MIN_BUY_SCORE = 50  # minimum composite score to allow a buy
+MIN_BUY_SCORE = 45  # minimum composite score to allow a buy
 
 
 def _safe(val, default=None):
