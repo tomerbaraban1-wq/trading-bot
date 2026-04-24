@@ -189,7 +189,7 @@ def _get_price_change(ticker: str) -> tuple[float, float]:
 
 
 # פילטר שווי שוק מינימלי (ניתן לשינוי)
-MIN_MARKET_CAP = 100_000_000  # $100 מיליון
+MIN_MARKET_CAP = 100_000_000_000  # $100 מיליארד
 
 
 def _get_market_cap(ticker: str) -> float:
