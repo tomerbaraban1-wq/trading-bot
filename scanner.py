@@ -12,90 +12,113 @@ from sentiment import score_sentiment
 logger = logging.getLogger(__name__)
 
 WATCHLIST = [
-    # ── מניות ──
-    # טכנולוגיה — גדולות
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO",
-    "AMD", "INTC", "QCOM", "MU", "NFLX", "CRM", "ORCL", "UBER", "PLTR",
-    # טכנולוגיה — בינוניות וצמיחה
-    "SNOW", "NET", "DDOG", "ZS", "CRWD", "PANW", "FTNT", "NOW",
-    "SHOP", "SQ", "PYPL", "AFRM", "HOOD", "SOFI", "BILL",
-    "ARM", "SMCI", "DELL", "HPQ", "IBM", "CSCO", "TXN",
-    "MRVL", "KLAC", "AMAT", "LRCX", "ASML", "TSM",
+    # ══════════════════════════════════════════════════
+    # מניות — כל החברות מעל $100 מיליארד שווי שוק
+    # (הפילטר MIN_MARKET_CAP מסנן אוטומטית אם ירדו)
+    # ══════════════════════════════════════════════════
+
+    # טכנולוגיה ענקים
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA",
+    "AVGO", "ORCL", "AMD", "INTC", "CSCO", "TXN", "QCOM", "IBM",
+    "AMAT", "LRCX", "KLAC", "MU", "ADI", "MCHP", "NXPI",
+
+    # תוכנה / ענן / SaaS
+    "NOW", "CRM", "ADBE", "INTU", "PANW", "CRWD", "FTNT", "SNPS",
+    "CDNS", "ANSS", "PTC", "PLTR", "SAP", "ASML",
+
+    # אינטרנט / מדיה / מסחר
+    "NFLX", "UBER", "BKNG", "ABNB", "EBAY", "PYPL", "SHOP", "MELI",
+
+    # שבבים / חומרה
+    "ARM", "SMCI", "DELL", "HPQ", "HPE", "STX", "WDC",
+
     # AI / ענן
-    "AI", "BBAI", "SOUN", "IONQ", "RKLB", "LUNR",
-    # פיננסים
-    "JPM", "BAC", "GS", "V", "MA", "AXP", "C", "WFC", "MS", "BLK",
-    "SCHW", "COF", "ALLY", "NU",
-    # בריאות / ביוטק
-    "UNH", "LLY", "PFE", "MRNA", "BNTX", "ABBV", "JNJ", "MRK",
-    "AMGN", "GILD", "BIIB", "REGN", "VRTX", "ISRG",
-    # אנרגיה
-    "XOM", "CVX", "COP", "SLB", "OXY", "BP",
-    # צרכנות / קמעונאות
-    "WMT", "COST", "HD", "MCD", "SBUX", "TGT", "AMZN", "BABA",
-    "NKE", "LULu", "DIS", "CMCSA",
-    # רכב / EV
-    "TSLA", "RIVN", "LCID", "GM", "F", "NIO", "LI",
-    # קריפטו סטוקים
-    "COIN", "MSTR", "MARA", "RIOT", "CLSK", "BITF", "HUT",
+    "MSFT", "GOOGL", "AMZN", "META", "NVDA",  # כבר למעלה — הדגשה
 
-    # ── קרנות סל (ETFs) ──
-    # שוק רחב
+    # קריפטו / פינטק גדולים
+    "COIN", "MSTR", "SQ", "PYPL",
+
+    # ── פיננסים ──
+    "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "V", "MA",
+    "BLK", "SCHW", "CB", "PGR", "MMC", "AON", "SPGI", "MCO",
+    "ICE", "CME", "COF", "USB", "TFC", "PNC", "BK", "STT",
+    "BRK-B",  # Berkshire Hathaway
+
+    # ── בריאות / תרופות / ביוטק ──
+    "UNH", "LLY", "JNJ", "ABBV", "MRK", "PFE", "TMO", "ABT",
+    "DHR", "AMGN", "ISRG", "VRTX", "REGN", "BSX", "ELV", "CVS",
+    "SYK", "ZTS", "GILD", "MDT", "CI", "HUM", "BIIB", "ILMN",
+    "IDXX", "MTD", "WAT", "A",
+
+    # ── צרכנות / קמעונאות ──
+    "WMT", "COST", "HD", "MCD", "SBUX", "NKE", "TGT", "LOW",
+    "TJX", "ROST", "DG", "DLTR", "YUM", "CMG", "DPZ",
+    "BABA", "JD", "PDD",
+
+    # ── מוצרי צריכה / מזון ──
+    "PG", "KO", "PEP", "PM", "MO", "MDLZ", "CL", "KMB",
+    "GIS", "K", "SJM", "HRL", "MKC",
+
+    # ── מדיה ובידור ──
+    "DIS", "CMCSA", "WBD", "PARA", "NFLX",
+
+    # ── תקשורת ──
+    "T", "VZ", "TMUS",
+
+    # ── אנרגיה ──
+    "XOM", "CVX", "COP", "EOG", "SLB", "OXY", "PSX", "VLO",
+    "MPC", "HES", "DVN", "FANG",
+
+    # ── תעשייה / ביטחון ──
+    "BA", "CAT", "HON", "RTX", "LMT", "GE", "MMM", "DE",
+    "UPS", "FDX", "ETN", "EMR", "ROK", "PH", "ITW",
+    "NOC", "GD", "L3H", "HII", "TDG",
+
+    # ── נדל"ן / תשתיות ──
+    "AMT", "PLD", "CCI", "EQIX", "PSA", "O", "WELL", "DLR",
+
+    # ── חומרים ──
+    "LIN", "APD", "ECL", "SHW", "FCX", "NEM", "NUE",
+
+    # ── רכב ──
+    "TSLA", "TM", "GM", "F",
+
+    # ── קרנות סל (ETFs) — שוק רחב ──
     "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO",
+    # ממונפים
+    "TQQQ", "SOXL", "UPRO", "QLD", "SSO",
     # סקטוריאליים
-    "XLK", "XLF", "XLE", "XLV", "XLI", "XLRE", "XLY", "XLP", "XLB",
-    # ממונפים (x2/x3) — תנועות חזקות
-    "TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "LABU", "WEBL",
-    "QLD", "SSO", "UDOW",
-    # הפוכים — לירידות
-    "SQQQ", "SDOW", "SPXU", "SOXS",
-    # תנודתיות
-    "UVXY", "VXX",
-
-    # ── סחורות (Commodities ETFs) ──
-    "GLD",   # זהב
-    "SLV",   # כסף
-    "GDX",   # מניות זהב
-    "GDXJ",  # מניות זהב קטנות
-    "USO",   # נפט גולמי
-    "UNG",   # גז טבעי
-    "CORN",  # תירס
-    "WEAT",  # חיטה
-    "PDBC",  # סחורות מגוונות
-    "DBO",   # נפט
-
-    # ── נגזרים ושווקים אלטרנטיביים ──
-    "BITO",  # ביטקוין ETF
-    "ETHE",  # אית'ריום ETF
-    "IBIT",  # ביטקוין ETF של BlackRock
+    "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP",
+    # סחורות
+    "GLD", "SLV", "USO", "GDX",
+    # קריפטו ETF
+    "IBIT", "BITO",
 ]
 
-# קטגוריות לכל סימבול
+# קטגוריות לכל סימבול — הגדרת ברירת מחדל: "מניה"
+# רק ETFs וסחורות צריכים הגדרה מפורשת (הפילטר חל עליהם אחרת)
 ASSET_CATEGORY = {
-    # מניות טק
-    "AAPL":"מניה","MSFT":"מניה","NVDA":"מניה","GOOGL":"מניה","AMZN":"מניה",
-    "META":"מניה","TSLA":"מניה","AVGO":"מניה","AMD":"מניה","INTC":"מניה",
-    "QCOM":"מניה","MU":"מניה","NFLX":"מניה","CRM":"מניה","ORCL":"מניה",
-    "UBER":"מניה","PLTR":"מניה","COIN":"מניה","MSTR":"מניה","MARA":"מניה","RIOT":"מניה",
-    # מניות אחרות
-    "JPM":"מניה","BAC":"מניה","GS":"מניה","V":"מניה","MA":"מניה",
-    "UNH":"מניה","LLY":"מניה","PFE":"מניה","XOM":"מניה","CVX":"מניה",
-    "WMT":"מניה","COST":"מניה","HD":"מניה","MCD":"מניה",
-    # ETFs שוק רחב
-    "SPY":"קרן סל","QQQ":"קרן סל","IWM":"קרן סל","DIA":"קרן סל","VTI":"קרן סל","VOO":"קרן סל",
-    # ETFs סקטוריאליים
-    "XLK":"קרן סל","XLF":"קרן סל","XLE":"קרן סל","XLV":"קרן סל","XLI":"קרן סל","XLRE":"קרן סל",
-    # ממונפים
+    # ── ETFs שוק רחב ──
+    "SPY":"קרן סל","QQQ":"קרן סל","IWM":"קרן סל","DIA":"קרן סל",
+    "VTI":"קרן סל","VOO":"קרן סל",
+    # ── ETFs סקטוריאליים ──
+    "XLK":"קרן סל","XLF":"קרן סל","XLE":"קרן סל","XLV":"קרן סל",
+    "XLI":"קרן סל","XLRE":"קרן סל","XLY":"קרן סל","XLP":"קרן סל","XLB":"קרן סל",
+    # ── ממונפים ──
     "TQQQ":"ממונף x3","SOXL":"ממונף x3","UPRO":"ממונף x3","TECL":"ממונף x3",
-    "SQQQ":"הפוך x3","SDOW":"הפוך x3",
-    # תנודתיות
+    "QLD":"ממונף x2","SSO":"ממונף x2","FNGU":"ממונף x3","LABU":"ממונף x3","WEBL":"ממונף x3",
+    "UDOW":"ממונף x3",
+    # ── הפוכים ──
+    "SQQQ":"הפוך x3","SDOW":"הפוך x3","SPXU":"הפוך x3","SOXS":"הפוך x3",
+    # ── תנודתיות ──
     "UVXY":"נגזר VIX","VXX":"נגזר VIX",
-    # סחורות
-    "GLD":"סחורה - זהב","SLV":"סחורה - כסף","GDX":"סחורה - זהב",
+    # ── סחורות ──
+    "GLD":"סחורה - זהב","SLV":"סחורה - כסף","GDX":"סחורה - זהב","GDXJ":"סחורה - זהב",
     "USO":"סחורה - נפט","UNG":"סחורה - גז","DBO":"סחורה - נפט",
     "CORN":"סחורה - חקלאות","WEAT":"סחורה - חקלאות","PDBC":"סחורות",
-    # קריפטו ETF
-    "BITO":"קריפטו ETF","ETHE":"קריפטו ETF",
+    # ── קריפטו ETF ──
+    "BITO":"קריפטו ETF","ETHE":"קריפטו ETF","IBIT":"קריפטו ETF",
+    # כל שאר הסימבולים = "מניה" (ברירת מחדל ב-ASSET_CATEGORY.get(ticker, "מניה"))
 }
 
 _cache: dict = {"result": None, "time": 0}
