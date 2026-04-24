@@ -135,6 +135,33 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     else:
         breakdown["volume"] = "⚪ N/A"
 
+    # ── OBV trend (0-10 points) ────────────────────────────────────────
+    # OBV rising with price = confirmed move. OBV falling with price = fakeout warning.
+    max_score += 10
+    try:
+        import yfinance as _yf
+        import numpy as _np
+        _hist = _yf.Ticker(ticker).history(period="20d", interval="1d")
+        if len(_hist) >= 10:
+            from indicators import _obv as _calc_obv
+            _obv_series = _calc_obv(_hist)
+            _price_chg = float(_hist["Close"].iloc[-1]) - float(_hist["Close"].iloc[-5])
+            _obv_chg   = float(_obv_series.iloc[-1])   - float(_obv_series.iloc[-5])
+            _obv_trend_up = _obv_chg > 0
+            _price_trend_up = _price_chg > 0
+            if _obv_trend_up and _price_trend_up:
+                score += 10; breakdown["obv"] = "✅ OBV מאשר מגמה עולה"
+            elif _obv_trend_up and not _price_trend_up:
+                score += 7;  breakdown["obv"] = "✅ OBV חיובי (צבירה)"
+            elif not _obv_trend_up and not _price_trend_up:
+                score += 3;  breakdown["obv"] = "⚠️ OBV יורד עם מחיר"
+            else:
+                score += 0;  breakdown["obv"] = "❌ divergence: מחיר עולה, OBV יורד — אזהרה"
+        else:
+            breakdown["obv"] = "⚪ N/A"
+    except Exception:
+        breakdown["obv"] = "⚪ N/A"
+
     # ── Momentum (0-5 points) ───────────────────────────────────────────
     max_score += 5
     momentum = _safe(indicators.get("momentum_10"))
