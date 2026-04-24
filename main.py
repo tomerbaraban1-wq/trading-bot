@@ -1,6 +1,6 @@
 import os
-# Fix SSL certificate path for Hebrew Windows username (local dev only)
-_cert = 'C:/certs/cacert.pem'
+# Fix SSL certificate path - support env var for deployment (Render, Docker, etc)
+_cert = os.getenv('CERT_PATH', 'C:/certs/cacert.pem')
 if os.path.exists(_cert):
     os.environ['REQUESTS_CA_BUNDLE'] = _cert
     os.environ['SSL_CERT_FILE'] = _cert
@@ -17,6 +17,8 @@ if os.path.exists(_cert):
 import asyncio
 import logging
 import time
+import threading
+import signal
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -25,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from config import settings
-from database import init_db, close_connections
+from database import init_db, close_connections, flush_database, check_database_integrity
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,13 +47,44 @@ async def lifespan(app: FastAPI):
     # Startup
     settings.validate()
     init_db()
-    logger.info("=== Trading Bot Started ===")
-    logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {settings.ALPACA_BASE_URL}")
 
-    from heartbeat import (heartbeat_loop, sentiment_monitor, stop_loss_monitor,
+    # Check database integrity
+    db_ok = check_database_integrity()
+    if not db_ok:
+        logger.warning("Database integrity check failed but continuing...")
+
+    # Log durability mode
+    durability_mode = "HARDENED" if settings.HARDENED_DURABILITY else "NORMAL"
+    logger.info("=== Trading Bot Started ===")
+    logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {settings.ALPACA_BASE_URL} | DB Mode: {durability_mode}")
+
+    # ── Startup state restore log ─────────────────────────────────────────────
+    # Show what we're resuming from (SQLite persists across restarts; broker API
+    # provides live cash/equity).  This is purely informational — no state is
+    # lost because every trade is already in the DB and budget comes from Alpaca.
+    try:
+        from database import get_open_trades
+        import broker as _broker
+        open_trades = get_open_trades()
+        if open_trades:
+            tickers = [t["ticker"] for t in open_trades]
+            logger.info(f"RESTORED {len(open_trades)} open position(s): {tickers}")
+        else:
+            logger.info("RESTORED: no open positions — clean slate")
+
+        acct = _broker.get_account_info()
+        cash = float(acct.get("cash", 0))
+        equity = float(acct.get("equity", 0))
+        logger.info(f"BROKER: cash=${cash:,.2f} | equity=${equity:,.2f}")
+    except Exception as _e:
+        logger.warning(f"Startup state log failed (non-critical): {_e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
                            weekly_report_loop, shadow_monitor_loop)
     heartbeat_task      = asyncio.create_task(heartbeat_loop())
+    heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
     sentiment_task      = asyncio.create_task(sentiment_monitor())
     stop_loss_task      = asyncio.create_task(stop_loss_monitor())
     auto_invest_task    = asyncio.create_task(auto_invest_loop())
@@ -62,26 +95,43 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown
-    heartbeat_task.cancel()
-    sentiment_task.cancel()
-    stop_loss_task.cancel()
-    auto_invest_task.cancel()
-    keep_alive_task.cancel()
-    daily_summary_task.cancel()
-    weekly_report_task.cancel()
-    shadow_monitor_task.cancel()
-    for task in [heartbeat_task, sentiment_task, stop_loss_task, auto_invest_task,
-                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task]:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    # Shutdown — Gracefully cancel and await all background tasks with timeout
+    logger.info("Initiating graceful shutdown...")
+    all_tasks = [heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
+                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task]
+
+    # Cancel all background tasks
+    for task in all_tasks:
+        if not task.done():
+            task.cancel()
+
+    # Wait for tasks to complete with 10-second timeout
+    try:
+        await asyncio.wait_for(asyncio.gather(*all_tasks, return_exceptions=True), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Background tasks did not complete within 10s timeout, forcing shutdown...")
+    except Exception as e:
+        logger.warning(f"Exception during task shutdown: {e}")
+
+    # Ensure database is flushed and properly closed
+    flush_database()
     close_connections()
     logger.info("=== Trading Bot Stopped ===")
 
 
 app = FastAPI(title="TradeBot", version="1.0.0", lifespan=lifespan)
+
+# Setup graceful shutdown handlers for SIGTERM and SIGINT
+def handle_shutdown(signum, frame):
+    """Handle SIGTERM and SIGINT signals for graceful shutdown."""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    # FastAPI's lifespan context manager will handle cleanup
+
+# Only register signal handlers if not in Windows (Windows handles these differently)
+if hasattr(signal, "SIGTERM"):
+    signal.signal(signal.SIGTERM, handle_shutdown)
+if hasattr(signal, "SIGINT"):
+    signal.signal(signal.SIGINT, handle_shutdown)
 
 # Allow TradingView (and any site) to call the bot API
 app.add_middleware(
@@ -106,20 +156,34 @@ async def dashboard():
 async def inject_js():
     from fastapi.responses import Response
     js_path = Path(__file__).parent.parent / "tradebot-extension" / "content.js"
+
+    # Check if file exists before reading
+    if not js_path.exists():
+        logger.warning(f"JavaScript inject file not found: {js_path}")
+        return Response(
+            content="// Inject file not found",
+            status_code=404,
+            media_type="application/javascript"
+        )
+
     code = js_path.read_text(encoding="utf-8")
     return Response(content=code, media_type="application/javascript")
 
 
 @app.get("/tunnel")
 async def tunnel_info():
-    # Read from file (written by node tunnel.js in parent process)
-    url = TUNNEL_URL
-    url_file = Path(__file__).parent / "tunnel_url.txt"
-    if not url and url_file.exists():
-        try:
-            url = url_file.read_text().strip() or None
-        except Exception:
-            pass
+    global TUNNEL_URL
+    # Read from file (written by node tunnel.js in parent process) with lock protection
+    with TUNNEL_URL_LOCK:
+        url = TUNNEL_URL
+        url_file = Path(__file__).parent / "tunnel_url.txt"
+        if not url and url_file.exists():
+            try:
+                url = url_file.read_text().strip() or None
+                if url:
+                    TUNNEL_URL = url  # Cache it
+            except Exception:
+                pass
     return {"url": url, "webhook": f"{url}/webhook" if url else None}
 
 
@@ -128,6 +192,7 @@ def get_uptime() -> float:
 
 
 TUNNEL_URL = None
+TUNNEL_URL_LOCK = threading.Lock()  # Protect race condition on read/write
 
 
 def start_tunnel():

@@ -19,20 +19,58 @@ logger = logging.getLogger(__name__)
 
 # Smart sell throttle: ticker -> last_check_timestamp (check max every 5 minutes)
 _smart_sell_last_check: dict = {}
+_smart_sell_lock = asyncio.Lock()  # Protect race condition on dict access
+
+# Track background tasks to prevent fire-and-forget errors
+_background_tasks = set()
+
+def _create_background_task(coro):
+    """Create a background task and track it to prevent garbage collection."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 
 
 async def keep_alive_loop():
-    """Ping ourselves every 10 minutes so Render free tier never sleeps."""
-    await asyncio.sleep(30)
+    """
+    Ping our own /health endpoint every 10 minutes to prevent Render free-tier spin-down.
+
+    Priority:
+      1. RENDER_EXTERNAL_URL  — set automatically by Render for every web service
+      2. SELF_PING_URL        — manual override in .env (useful for custom domains)
+      3. localhost fallback   — last resort (won't prevent Render spin-down, but keeps
+                                local/Docker deployments healthy)
+    """
+    import os as _os
+    render_external = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    self_ping       = _os.getenv("SELF_PING_URL", "").rstrip("/")
+
+    if render_external:
+        base_url = render_external
+        logger.info(f"Keep-alive: will ping {base_url}/health (Render external URL)")
+    elif self_ping:
+        base_url = self_ping
+        logger.info(f"Keep-alive: will ping {base_url}/health (SELF_PING_URL override)")
+    else:
+        port     = getattr(settings, "PORT", 8000)
+        base_url = f"http://localhost:{port}"
+        logger.info(f"Keep-alive: will ping {base_url}/health (localhost fallback — "
+                    "set RENDER_EXTERNAL_URL to prevent Render spin-down)")
+
+    await asyncio.sleep(60)   # wait 60 s after startup before first ping
+
     while True:
         try:
-            port = getattr(settings, "PORT", 8000)
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://localhost:{port}/health", timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                    logger.debug(f"Keep-alive ping: {resp.status}")
-        except Exception:
-            pass
-        await asyncio.sleep(10 * 60)  # every 10 minutes
+                async with session.get(
+                    f"{base_url}/health",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    logger.debug(f"Keep-alive ping → {base_url}/health: {resp.status}")
+        except Exception as exc:
+            logger.debug(f"Keep-alive ping failed (harmless): {exc}")
+        await asyncio.sleep(10 * 60)   # every 10 minutes
 
 
 async def heartbeat_loop():
@@ -56,13 +94,24 @@ async def heartbeat_loop():
                 f"Equity: ${status.get('positions_value', 0) + status.get('cash_available', 0):,.2f}"
             )
 
-            # Cleanup old heartbeats
-            database.cleanup_old_heartbeats(days=7)
-
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Heartbeat error: {e}")
+
+
+async def heartbeat_cleanup_loop():
+    """Background task: cleanup old heartbeats every 1 hour (prevents blocking main heartbeat loop)."""
+    await asyncio.sleep(60)  # Initial delay
+    while True:
+        try:
+            await asyncio.sleep(60 * 60)  # Run every 1 hour
+            await asyncio.to_thread(database.cleanup_old_heartbeats, days=7)
+            logger.debug("Cleaned up old heartbeat records")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Heartbeat cleanup error: {e}")
 
 
 async def sentiment_monitor():
@@ -97,7 +146,7 @@ async def sentiment_monitor():
             raise
         except Exception as e:
             logger.error(f"Sentiment monitor error: {e}")
-            asyncio.ensure_future(notify_error("loop_error", "", f"sentiment_monitor: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"sentiment_monitor: {e}"))
 
 
 async def _close_position(
@@ -118,7 +167,7 @@ async def _close_position(
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
     except Exception as sell_err:
-        asyncio.ensure_future(notify_error("stop_loss_fail", ticker, str(sell_err)))
+        _create_background_task(notify_error("stop_loss_fail", ticker, str(sell_err)))
         return False
 
     exit_price = float(order.get("price") or lim_sell)
@@ -138,7 +187,7 @@ async def _close_position(
     is_ok, _  = check_circuit_breaker()
     if not is_ok and was_ok:
         st = cb_status()
-        asyncio.ensure_future(notify_circuit_breaker_tripped(
+        _create_background_task(notify_circuit_breaker_tripped(
             st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
         ))
 
@@ -283,8 +332,11 @@ async def stop_loss_monitor():
 
                     # ── 3. Smart Sell (score collapse, max once per 5 min) ────
                     import time as _time
-                    last = _smart_sell_last_check.get(ticker, 0)
-                    if _time.time() - last >= 300:
+                    # Use lock to prevent race condition on dict access
+                    async with _smart_sell_lock:
+                        last = _smart_sell_last_check.get(ticker, 0)
+                        if _time.time() - last < 300:
+                            continue  # Skip check if run too recently
                         _smart_sell_last_check[ticker] = _time.time()
                         try:
                             from scoring import get_composite_score
@@ -302,7 +354,7 @@ async def stop_loss_monitor():
                                 )
                         except Exception as se:
                             logger.warning(f"Smart sell check error for {ticker}: {se}")
-                            asyncio.ensure_future(
+                            _create_background_task(
                                 notify_error("stop_loss_fail", ticker, f"Smart sell: {se}")
                             )
 
@@ -388,7 +440,7 @@ async def auto_invest_loop():
                             f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
                         )
                         if not composite["should_buy"]:
-                            asyncio.ensure_future(_asyncio.to_thread(
+                            _create_background_task(_asyncio.to_thread(
                                 _shadow.evaluate, ticker, price, score, sentiment.score,
                                 None, "score",
                                 f"composite_score={score:.0f} below threshold", "auto_invest",
@@ -412,7 +464,7 @@ async def auto_invest_loop():
                                     f"AUTO-INVEST: {ticker} skipped — ranging market "
                                     f"(ADX={_adx:.1f} < {_regime_details.get('threshold', 25)})"
                                 )
-                                asyncio.ensure_future(_asyncio.to_thread(
+                                _create_background_task(_asyncio.to_thread(
                                     _shadow.evaluate, ticker, price, score, sentiment.score,
                                     _vol_ratio, "market_regime",
                                     f"ranging market ADX={_adx:.1f}", "auto_invest",
@@ -428,7 +480,7 @@ async def auto_invest_loop():
                         )
                         if not sane:
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
-                            asyncio.ensure_future(_asyncio.to_thread(
+                            _create_background_task(_asyncio.to_thread(
                                 _shadow.evaluate, ticker, price, score, sentiment.score,
                                 None, "sanity", sane_reason, "auto_invest",
                             ))
@@ -443,7 +495,7 @@ async def auto_invest_loop():
                             _vol_ratio = vol_details.get("ratio")
                             if not vol_passed:
                                 logger.info(f"AUTO-INVEST: {ticker} volume skip — {vol_reason}")
-                                asyncio.ensure_future(_asyncio.to_thread(
+                                _create_background_task(_asyncio.to_thread(
                                     _shadow.evaluate, ticker, price, score, sentiment.score,
                                     _vol_ratio, "volume", vol_reason, "auto_invest",
                                 ))
@@ -462,7 +514,7 @@ async def auto_invest_loop():
                                     f"AUTO-INVEST: {ticker} skipped — {corr_reason} "
                                     f"(max_corr={corr_details.get('max_correlation', '?')})"
                                 )
-                                asyncio.ensure_future(_asyncio.to_thread(
+                                _create_background_task(_asyncio.to_thread(
                                     _shadow.evaluate, ticker, price, score, sentiment.score,
                                     _vol_ratio, "correlation", corr_reason, "auto_invest",
                                 ))
@@ -475,7 +527,7 @@ async def auto_invest_loop():
                         qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)
                         if qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
-                            asyncio.ensure_future(_asyncio.to_thread(
+                            _create_background_task(_asyncio.to_thread(
                                 _shadow.evaluate, ticker, price, score, sentiment.score,
                                 _vol_ratio, "budget", f"sizing=0 at ${price:.2f}", "auto_invest",
                             ))
@@ -521,7 +573,7 @@ async def auto_invest_loop():
                             logger.warning(f"[ATR STOP] {ticker}: failed to set stop: {stop_err}")
 
                         # Shadow: live also traded — record agreement
-                        asyncio.ensure_future(_asyncio.to_thread(
+                        _create_background_task(_asyncio.to_thread(
                             _shadow.evaluate, ticker, actual_price, score, sentiment.score,
                             _vol_ratio, None, "", "auto_invest",
                         ))
@@ -529,10 +581,10 @@ async def auto_invest_loop():
 
                     except _asyncio.TimeoutError:
                         logger.warning(f"AUTO-INVEST: {ticker} timed out, skipping")
-                        asyncio.ensure_future(notify_error("api_timeout", ticker, "Auto-invest order timed out"))
+                        _create_background_task(notify_error("api_timeout", ticker, "Auto-invest order timed out"))
                     except Exception as e:
                         logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
-                        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
+                        _create_background_task(notify_error("order_failed", ticker, str(e)))
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
@@ -540,7 +592,7 @@ async def auto_invest_loop():
             raise
         except Exception as e:
             logger.error(f"AUTO-INVEST loop error: {e}")
-            asyncio.ensure_future(notify_error("loop_error", "", f"auto_invest_loop: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"auto_invest_loop: {e}"))
 
         await asyncio.sleep(5 * 60)  # run every 5 minutes
 
@@ -608,8 +660,10 @@ async def daily_summary_loop():
             target = now.replace(hour=20, minute=5, second=0, microsecond=0)
             if now >= target:
                 target += datetime.timedelta(days=1)
-            wait_seconds = (target - now).total_seconds()
-            await asyncio.sleep(wait_seconds)
+
+            # Check every minute instead of sleeping for hours
+            while datetime.datetime.utcnow() < target:
+                await asyncio.sleep(60)
 
             # Build summary from today's closed trades
             today = datetime.datetime.utcnow().date()
@@ -668,7 +722,10 @@ async def weekly_report_loop():
 
             wait_seconds = (target - now).total_seconds()
             logger.info(f"Weekly report scheduled in {wait_seconds/3600:.1f}h (Sunday 20:10 UTC)")
-            await asyncio.sleep(wait_seconds)
+
+            # Check every minute instead of sleeping for days
+            while datetime.datetime.utcnow() < target:
+                await asyncio.sleep(60)
 
             # Compute 4-week report
             from performance import compute as perf_compute, export_csv, format_telegram
