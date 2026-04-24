@@ -13,29 +13,42 @@ logger = logging.getLogger(__name__)
 
 WATCHLIST = [
     # ── מניות ──
-    # טכנולוגיה
+    # טכנולוגיה — גדולות
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO",
     "AMD", "INTC", "QCOM", "MU", "NFLX", "CRM", "ORCL", "UBER", "PLTR",
+    # טכנולוגיה — בינוניות וצמיחה
+    "SNOW", "NET", "DDOG", "ZS", "CRWD", "PANW", "FTNT", "NOW",
+    "SHOP", "SQ", "PYPL", "AFRM", "HOOD", "SOFI", "BILL",
+    "ARM", "SMCI", "DELL", "HPQ", "IBM", "CSCO", "TXN",
+    "MRVL", "KLAC", "AMAT", "LRCX", "ASML", "TSM",
+    # AI / ענן
+    "AI", "BBAI", "SOUN", "IONQ", "RKLB", "LUNR",
     # פיננסים
-    "JPM", "BAC", "GS", "V", "MA",
-    # בריאות
-    "UNH", "LLY", "PFE",
+    "JPM", "BAC", "GS", "V", "MA", "AXP", "C", "WFC", "MS", "BLK",
+    "SCHW", "COF", "ALLY", "NU",
+    # בריאות / ביוטק
+    "UNH", "LLY", "PFE", "MRNA", "BNTX", "ABBV", "JNJ", "MRK",
+    "AMGN", "GILD", "BIIB", "REGN", "VRTX", "ISRG",
     # אנרגיה
-    "XOM", "CVX",
-    # צרכנות
-    "WMT", "COST", "HD", "MCD",
+    "XOM", "CVX", "COP", "SLB", "OXY", "BP",
+    # צרכנות / קמעונאות
+    "WMT", "COST", "HD", "MCD", "SBUX", "TGT", "AMZN", "BABA",
+    "NKE", "LULu", "DIS", "CMCSA",
+    # רכב / EV
+    "TSLA", "RIVN", "LCID", "GM", "F", "NIO", "LI",
     # קריפטו סטוקים
-    "COIN", "MSTR", "MARA", "RIOT",
+    "COIN", "MSTR", "MARA", "RIOT", "CLSK", "BITF", "HUT",
 
     # ── קרנות סל (ETFs) ──
     # שוק רחב
     "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO",
     # סקטוריאליים
-    "XLK", "XLF", "XLE", "XLV", "XLI", "XLRE",
-    # ממונפים (x3) - תנועות חזקות
-    "TQQQ", "SOXL", "UPRO", "TECL",
-    # הפוכים - לירידות
-    "SQQQ", "SDOW",
+    "XLK", "XLF", "XLE", "XLV", "XLI", "XLRE", "XLY", "XLP", "XLB",
+    # ממונפים (x2/x3) — תנועות חזקות
+    "TQQQ", "SOXL", "UPRO", "TECL", "FNGU", "LABU", "WEBL",
+    "QLD", "SSO", "UDOW",
+    # הפוכים — לירידות
+    "SQQQ", "SDOW", "SPXU", "SOXS",
     # תנודתיות
     "UVXY", "VXX",
 
@@ -43,6 +56,7 @@ WATCHLIST = [
     "GLD",   # זהב
     "SLV",   # כסף
     "GDX",   # מניות זהב
+    "GDXJ",  # מניות זהב קטנות
     "USO",   # נפט גולמי
     "UNG",   # גז טבעי
     "CORN",  # תירס
@@ -53,6 +67,7 @@ WATCHLIST = [
     # ── נגזרים ושווקים אלטרנטיביים ──
     "BITO",  # ביטקוין ETF
     "ETHE",  # אית'ריום ETF
+    "IBIT",  # ביטקוין ETF של BlackRock
 ]
 
 # קטגוריות לכל סימבול

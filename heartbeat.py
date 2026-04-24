@@ -415,8 +415,16 @@ async def auto_invest_loop():
                 # Step 1: Shuffle watchlist for diversification — different stocks each scan
                 shuffled = WATCHLIST.copy()
                 random.shuffle(shuffled)
+                # Max 6 open positions at any time
+                MAX_OPEN_POSITIONS = 6
+                open_count = len(database.get_open_trades())
+                if open_count >= MAX_OPEN_POSITIONS:
+                    logger.info(f"AUTO-INVEST: max positions reached ({open_count}/{MAX_OPEN_POSITIONS}), skipping scan")
+                    await _asyncio.sleep(5 * 60)
+                    continue
+
                 candidates = [
-                    t for t in shuffled[:6]
+                    t for t in shuffled  # scan ALL watchlist stocks
                     if not database.get_open_trade_by_ticker(t)
                 ]
 
