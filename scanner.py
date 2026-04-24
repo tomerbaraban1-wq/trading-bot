@@ -96,20 +96,35 @@ WATCHLIST = [
     "FIS",  # Fidelity National
 
     # ── מניות בינלאומיות הנסחרות בארה"ב ──
-    "TSM",  # Taiwan Semiconductor (~$800B)
-    "NVO",  # Novo Nordisk (~$350B) — תרופות סוכרת
-    "AZN",  # AstraZeneca (~$250B)
-    "SHEL", # Shell (~$200B)
-    "ACN",  # Accenture (~$200B)
-    "SNY",  # Sanofi (~$130B)
-    "UL",   # Unilever (~$120B)
-    "BHP",  # BHP Group (~$130B)
-    "RY",   # Royal Bank of Canada (~$170B)
-    "TD",   # Toronto-Dominion Bank (~$100B)
-    "HSBC", # HSBC (~$160B)
-    "NVS",  # Novartis (~$200B)
-    "RHHBY",# Roche (~$200B)
-    "TTE",  # TotalEnergies (~$140B)
+    "TSM",   # Taiwan Semiconductor (~$800B)
+    "NVO",   # Novo Nordisk (~$350B) — תרופות סוכרת
+    "AZN",   # AstraZeneca (~$250B)
+    "SHEL",  # Shell (~$200B)
+    "ACN",   # Accenture (~$200B)
+    "SNY",   # Sanofi (~$130B)
+    "UL",    # Unilever (~$120B)
+    "BHP",   # BHP Group (~$130B)
+    "RY",    # Royal Bank of Canada (~$170B)
+    "TD",    # Toronto-Dominion Bank (~$100B)
+    "HSBC",  # HSBC (~$160B)
+    "NVS",   # Novartis (~$200B)
+    "RHHBY", # Roche (~$200B)
+    "TTE",   # TotalEnergies (~$140B)
+    "RIO",   # Rio Tinto (~$100B)
+    "SONY",  # Sony (~$100B)
+    "MUFG",  # Mitsubishi UFJ Financial (~$150B)
+    "HDB",   # HDFC Bank India (~$150B)
+    "SIEGY", # Siemens (~$150B)
+    "LVMUY", # LVMH — יוקרה (~$350B)
+    "LRLCY", # L'Oreal (~$200B)
+    "TCEHY", # Tencent (~$400B)
+    "SAP",   # SAP (~$250B)
+
+    # ── שירותים / תשתיות ──
+    "NEE",   # NextEra Energy (~$120B) — אנרגיה ירוקה
+    "ADP",   # Automatic Data Processing (~$100B)
+    "EQIX",  # Equinix (~$80B — data centers)
+    "WM",    # Waste Management (~$80B)
 
     # ── קרנות סל (ETFs) — שוק רחב ──
     "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO",
