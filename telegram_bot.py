@@ -326,12 +326,14 @@ async def notify_daily_summary(
     await send_message(
         f"📊 <b>סיכום יומי</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🛒 קניות היום: {buys_today}\n"
-        f"💰 מכירות היום: {total_trades}  (רווח: {wins}  /  הפסד: {losses})\n"
-        f"🎯 אחוז הצלחה במכירות: {win_rate:.1f}%\n"
-        f"{pnl_emoji} רווח/הפסד ממכירות: <b>${total_pnl:+.2f}</b>"
+        f"🛒 <b>קניות היום:</b> {buys_today} עסקאות\n"
+        f"💰 <b>מכירות היום:</b> {total_trades} עסקאות\n"
+        f"   ✅ רווח: {wins}  |  ❌ הפסד: {losses}\n"
+        f"🎯 אחוז הצלחה: {win_rate:.1f}%\n"
+        f"{pnl_emoji} רווח/הפסד: <b>${total_pnl:+.2f}</b>"
         f"{net_line}"
         f"{tax_line}\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"📂 פוזיציות פתוחות: {open_positions}\n"
         f"💼 שווי תיק: ${equity:,.2f}"
     )
