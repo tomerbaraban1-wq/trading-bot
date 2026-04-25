@@ -212,6 +212,11 @@ async def stop_loss_monitor():
     from atr_stop import compute_initial_stop, update_trailing_stop, should_exit_confirmed
     import os as _os
     MAX_HOLD_HOURS: float = float(_os.getenv("MAX_HOLD_HOURS", "48.0"))
+    # Stale-trade detection: a trade must be reported as missing this many
+    # consecutive times before we auto-close it (defends against transient
+    # broker API hiccups returning None spuriously).
+    STALE_THRESHOLD: int = int(_os.getenv("STALE_TRADE_THRESHOLD", "3"))
+    _stale_counter: dict[int, int] = {}
 
     while True:
         try:
@@ -231,11 +236,21 @@ async def stop_loss_monitor():
                         asyncio.to_thread(broker.get_position, ticker), timeout=15
                     )
                     if not position:
-                        # Broker has no position but DB says "open" — stale record
-                        # (happens after restart if state file was lost/corrupted)
+                        # Broker has no position but DB says "open" — possibly
+                        # a stale record after a restart, or possibly a transient
+                        # API glitch. Require N consecutive misses before closing.
+                        miss = _stale_counter.get(trade["id"], 0) + 1
+                        _stale_counter[trade["id"]] = miss
+                        if miss < STALE_THRESHOLD:
+                            logger.warning(
+                                f"[STOP LOSS] {ticker}: broker returned no position "
+                                f"({miss}/{STALE_THRESHOLD}) — will auto-close if it persists"
+                            )
+                            continue
                         logger.warning(
                             f"[STOP LOSS] {ticker}: DB has open trade #{trade['id']} "
-                            f"but broker shows no position — auto-closing stale record"
+                            f"but broker shows no position for {STALE_THRESHOLD} checks "
+                            f"— auto-closing stale record"
                         )
                         log_trade_close(
                             trade["id"],
@@ -243,7 +258,10 @@ async def stop_loss_monitor():
                             0.0, 0.0, 0.0, 0.0,
                             "stale_restart",
                         )
+                        _stale_counter.pop(trade["id"], None)
                         continue
+                    # Position found — reset stale counter
+                    _stale_counter.pop(trade["id"], None)
 
                     cur_price = float(position.get("current_price", trade["entry_price"]))
                     plpc      = float(position.get("unrealized_plpc", 0)) * 100
@@ -896,7 +914,10 @@ async def daily_summary_loop():
                 realized_pnl_net=total_net,
                 buys_today=len(opened_today),
             )
-            logger.info(f"Daily summary sent: {len(today_trades)} trades, PnL=${total_pnl:+.2f}")
+            logger.info(
+                f"Daily summary sent: buys={len(opened_today)}, "
+                f"sells={len(closed_today)}, PnL=${total_pnl:+.2f}"
+            )
 
         except asyncio.CancelledError:
             raise

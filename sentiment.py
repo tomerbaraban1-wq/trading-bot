@@ -15,6 +15,50 @@ _cache_lock = threading.Lock()  # guards _sentiment_cache across threads
 CACHE_TTL = 300  # 5 minutes
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Keyword-based sentiment fallback (used when Groq is unavailable)
+# ──────────────────────────────────────────────────────────────────────────────
+_BULLISH_KEYWORDS = {
+    "beat", "beats", "surge", "surges", "soar", "soars", "rally", "rallies",
+    "upgrade", "upgraded", "outperform", "buy rating", "record high",
+    "strong earnings", "exceed", "exceeds", "exceeded", "growth", "profit",
+    "profits", "bullish", "breakthrough", "win", "wins", "won", "approval",
+    "approved", "expand", "expansion", "raise guidance", "raised guidance",
+    "boost", "boosts", "all-time high", "milestone", "partnership", "deal",
+}
+_BEARISH_KEYWORDS = {
+    "miss", "misses", "missed", "plunge", "plunges", "crash", "crashes",
+    "downgrade", "downgraded", "underperform", "sell rating", "lawsuit",
+    "fraud", "investigation", "probe", "fine", "fined", "penalty",
+    "bankruptcy", "loss", "losses", "decline", "declines", "drop", "drops",
+    "fall", "falls", "tumble", "tumbles", "bearish", "warning", "warns",
+    "cut guidance", "lowered guidance", "layoff", "layoffs", "scandal",
+    "recall", "recalled", "sec", "doj", "antitrust", "weak",
+}
+
+
+def _keyword_sentiment(headlines: list[str]) -> tuple[int, str]:
+    """Naive keyword-based sentiment scorer (1-10).
+
+    Used when the Groq API is unavailable so the bot still uses the news
+    instead of defaulting to a fully neutral 5.
+    """
+    if not headlines:
+        return 5, "no headlines"
+
+    text = " ".join(headlines).lower()
+    bull = sum(1 for kw in _BULLISH_KEYWORDS if kw in text)
+    bear = sum(1 for kw in _BEARISH_KEYWORDS if kw in text)
+
+    if bull == 0 and bear == 0:
+        return 5, "no sentiment keywords matched"
+
+    # Net = bull - bear, scaled into 1..10 around neutral 5
+    net = bull - bear
+    score = 5 + max(-4, min(4, net))
+    return int(score), f"bull_kw={bull}, bear_kw={bear}, net={net:+d}"
+
+
 def _get_client() -> OpenAI:
     global _client
     if _client is None and settings.GROQ_API_KEY:
@@ -56,13 +100,17 @@ def score_sentiment(ticker: str) -> SentimentResult:
     # Score with LLM
     client = _get_client()
     if not client:
-        # No API key configured — return neutral score so bot can still trade on technicals
-        logger.warning(f"[SENTIMENT] GROQ_API_KEY not configured — returning neutral score for {ticker}")
+        # No API key configured — fall back to keyword-based sentiment so the
+        # bot still ANALYSES the news (not just defaults to neutral).
+        score, reasoning = _keyword_sentiment(headlines)
+        logger.info(
+            f"[SENTIMENT] {ticker}: GROQ unavailable — keyword fallback score={score}/10 ({reasoning})"
+        )
         result = SentimentResult(
             ticker=ticker,
-            score=5,
+            score=score,
             headlines=headlines,
-            reasoning="GROQ_API_KEY not configured — defaulting to neutral",
+            reasoning=f"[keyword fallback] {reasoning}",
             timestamp=now,
         )
         with _cache_lock:
@@ -110,8 +158,11 @@ def score_sentiment(ticker: str) -> SentimentResult:
         score = 5
         reasoning = "Failed to parse LLM response - defaulting to neutral"
     except Exception as e:
-        logger.error(f"Sentiment scoring failed for {ticker}: {e}")
-        raise
+        # Don't let a transient LLM/network error block trading — fall back
+        # to keyword-based sentiment so the bot still uses the actual news.
+        logger.error(f"Sentiment scoring failed for {ticker}: {e} — using keyword fallback")
+        score, reasoning = _keyword_sentiment(headlines)
+        reasoning = f"[keyword fallback after LLM error] {reasoning}"
 
     result = SentimentResult(
         ticker=ticker,

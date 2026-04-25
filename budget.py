@@ -239,7 +239,7 @@ def compute_position_size(entry_price: float) -> tuple[float, dict]:
     return qty, metadata
 
 
-def check_can_buy(price: float) -> tuple[bool, int, str]:
+def check_can_buy(price: float) -> tuple[bool, float, str]:
     """
     Public API — drop-in replacement for the old check_can_buy.
     Returns (can_buy, qty, reason).

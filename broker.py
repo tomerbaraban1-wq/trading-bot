@@ -167,11 +167,11 @@ def get_position(ticker: str) -> dict | None:
     return _get_broker().get_position(ticker)
 
 
-def submit_buy(ticker: str, qty: int, price: float | None = None) -> dict:
+def submit_buy(ticker: str, qty: float, price: float | None = None) -> dict:
     return _get_broker().submit_buy(ticker, qty, price)
 
 
-def submit_sell(ticker: str, qty: int | None = None) -> dict:
+def submit_sell(ticker: str, qty: float | None = None) -> dict:
     return _get_broker().submit_sell(ticker, qty)
 
 

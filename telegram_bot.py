@@ -321,7 +321,6 @@ async def notify_daily_summary(
     pnl_emoji  = "📈" if total_pnl >= 0 else "📉"
     tax_line   = f"\n🧾 מס שהופרש היום: ${tax_reserved:.2f}" if tax_reserved > 0 else ""
     net_line   = f"\n💳 רווח נטו (אחרי מס): ${realized_pnl_net:+.2f}" if realized_pnl_net else ""
-    buys_line  = f"\n🛒 קניות היום: {buys_today} מניות חדשות" if buys_today > 0 else ""
 
     await send_message(
         f"📊 <b>סיכום יומי</b>\n"

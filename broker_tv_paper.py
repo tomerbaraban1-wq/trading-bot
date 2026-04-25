@@ -230,17 +230,32 @@ class TVPaperBroker(BrokerBase):
         }
 
     def submit_buy(self, ticker: str, qty: float, price: float | None = None) -> dict:
-        """Supports fractional shares — qty can be e.g. 0.5 or 2.37."""
+        """Supports fractional shares — qty can be e.g. 0.5 or 2.37.
+
+        Note: For paper trading, we ALWAYS fill at the actual market price
+        from yfinance, ignoring any inflated limit price. Using the limit
+        price (which is +0.5% above market for slippage protection) would
+        make every position appear at an immediate ~0.5% loss, since
+        get_positions reads the real market price. The `price` argument is
+        accepted for compatibility with real brokers but only used as a
+        last-resort fallback if yfinance is unavailable.
+        """
         ticker = ticker.upper()
 
         if qty <= 0:
             raise ValueError(f"qty must be positive, got {qty}")
 
-        # Use provided price or fetch from yfinance (outside lock - I/O)
-        if price and price > 0:
-            current_price = float(price)
-        else:
-            current_price = self._get_price(ticker)  # raises if price = 0
+        # Always use the live market price for paper fills.
+        try:
+            current_price = self._get_price(ticker)
+        except Exception:
+            if price and price > 0:
+                logger.warning(
+                    f"[TVPaper] yfinance unavailable for {ticker} — falling back to passed price ${price:.4f}"
+                )
+                current_price = float(price)
+            else:
+                raise
 
         # Round fractional qty to 6 decimal places
         qty = round(float(qty), 6)

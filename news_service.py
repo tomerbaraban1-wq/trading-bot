@@ -32,7 +32,9 @@ def get_headlines(ticker: str, limit: int = 5) -> list[str]:
         return _news_cache[cache_key][:limit]
 
     all_headlines = []
-    search_terms = [ticker.upper(), ticker.lower()]
+    # Use word-boundary regex so ticker "ON" doesn't match every headline
+    # containing the word "on", "F" doesn't match "of", etc.
+    pattern = re.compile(rf"\b{re.escape(ticker)}\b", re.IGNORECASE)
 
     for source_name, feed_url in RSS_FEEDS:
         try:
@@ -45,8 +47,8 @@ def get_headlines(ticker: str, limit: int = 5) -> list[str]:
                 continue
             items = _parse_rss(resp.content, source_name)
             for item in items:
-                text = (item["headline"] + " " + item.get("summary", "")).lower()
-                if any(term.lower() in text for term in search_terms):
+                text = item["headline"] + " " + item.get("summary", "")
+                if pattern.search(text):
                     all_headlines.append(item["headline"])
         except requests.exceptions.RequestException:
             continue
