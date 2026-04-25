@@ -225,11 +225,22 @@ async def notify_error(
 
     _mark_sent(key)
 
+    # Hebrew labels for known error types
+    error_labels_he = {
+        "api_timeout":        "פג זמן תגובה מ-API",
+        "order_failed":       "ביצוע הזמנה נכשל",
+        "insufficient_funds": "אין מספיק מזומן",
+        "sentiment_fail":     "ניתוח סנטימנט נכשל",
+        "loop_error":         "שגיאה כללית ברקע",
+        "stop_loss_fail":     "סטופ לוס נכשל",
+    }
+    error_label = error_labels_he.get(error_type, error_type.replace('_', ' ').upper())
+
     ticker_line = f"  •  מניה: <b>{ticker}</b>" if ticker else ""
     detail_line = f"\n💬 {detail[:300]}"          if detail  else ""
 
     await send_message(
-        f"⚠️ <b>שגיאה — {error_type.replace('_', ' ').upper()}</b>"
+        f"⚠️ <b>שגיאה — {error_label}</b>"
         f"{ticker_line}"
         f"{detail_line}\n"
         f"<i>⏰ {_utcnow()}</i>"

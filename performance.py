@@ -271,28 +271,28 @@ def format_telegram(report: PerformanceReport) -> str:
     pnl_emoji = "📈" if report.total_pnl_gross >= 0 else "📉"
 
     lines = [
-        f"📊 <b>Weekly Performance Report</b>",
+        f"📊 <b>דו״ח ביצועים שבועי</b>",
         f"📅 {report.period_start} → {report.period_end}",
         "",
-        f"<b>── Key Metrics ──</b>",
-        f"🔄 Trades: <b>{report.total_trades}</b>  (W: {report.total_wins} / L: {report.total_losses})",
-        f"🎯 Win Rate: <b>{report.overall_win_rate:.1f}%</b>",
-        f"{pnl_emoji} Total PnL: <b>${report.total_pnl_gross:+.2f}</b>  (net ${report.total_pnl_net:+.2f})",
-        f"⚡ Avg / Trade: ${report.avg_pnl_per_trade:+.2f}",
-        f"🏆 Best: ${report.best_trade:+.2f}   💀 Worst: ${report.worst_trade:+.2f}",
+        f"<b>── מדדים עיקריים ──</b>",
+        f"🔄 עסקאות: <b>{report.total_trades}</b>  (רווח: {report.total_wins} / הפסד: {report.total_losses})",
+        f"🎯 אחוז הצלחה: <b>{report.overall_win_rate:.1f}%</b>",
+        f"{pnl_emoji} סה״כ רווח/הפסד: <b>${report.total_pnl_gross:+.2f}</b>  (נטו ${report.total_pnl_net:+.2f})",
+        f"⚡ ממוצע לעסקה: ${report.avg_pnl_per_trade:+.2f}",
+        f"🏆 הטובה ביותר: ${report.best_trade:+.2f}   💀 הגרועה ביותר: ${report.worst_trade:+.2f}",
         "",
-        f"<b>── Risk ──</b>",
-        f"{sharpe_grade} Sharpe: <b>{sharpe_str}</b>",
-        f"{dd_grade} Max Drawdown: <b>{report.max_drawdown_pct:.2f}%</b>",
+        f"<b>── סיכון ──</b>",
+        f"{sharpe_grade} יחס שארפ: <b>{sharpe_str}</b>",
+        f"{dd_grade} ירידה מקסימלית: <b>{report.max_drawdown_pct:.2f}%</b>",
         "",
-        f"<b>── Strategy Breakdown ──</b>",
+        f"<b>── פילוח לפי אסטרטגיה ──</b>",
     ]
 
     for s in report.by_strategy:
         pnl_icon = "🟢" if s.total_pnl >= 0 else "🔴"
         lines.append(
-            f"{pnl_icon} <b>{s.strategy}</b>: {s.total} trades | "
-            f"WR {s.win_rate:.0f}% | PnL ${s.total_pnl:+.2f}"
+            f"{pnl_icon} <b>{s.strategy}</b>: {s.total} עסקאות | "
+            f"הצלחה {s.win_rate:.0f}% | רווח/הפסד ${s.total_pnl:+.2f}"
         )
 
     return "\n".join(lines)
