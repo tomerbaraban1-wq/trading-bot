@@ -314,19 +314,22 @@ async def notify_daily_summary(
     equity:             float,
     tax_reserved:       float = 0.0,
     realized_pnl_net:   float = 0.0,
+    buys_today:         int   = 0,
 ) -> None:
     """Enhanced daily summary including equity, tax, and net P&L."""
     win_rate   = (wins / total_trades * 100) if total_trades > 0 else 0
     pnl_emoji  = "📈" if total_pnl >= 0 else "📉"
     tax_line   = f"\n🧾 מס שהופרש היום: ${tax_reserved:.2f}" if tax_reserved > 0 else ""
     net_line   = f"\n💳 רווח נטו (אחרי מס): ${realized_pnl_net:+.2f}" if realized_pnl_net else ""
+    buys_line  = f"\n🛒 קניות היום: {buys_today} מניות חדשות" if buys_today > 0 else ""
 
     await send_message(
         f"📊 <b>סיכום יומי</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🔄 עסקאות: {total_trades}  (רווח: {wins}  /  הפסד: {losses})\n"
-        f"🎯 אחוז הצלחה: {win_rate:.1f}%\n"
-        f"{pnl_emoji} רווח/הפסד: <b>${total_pnl:+.2f}</b>"
+        f"🛒 קניות היום: {buys_today}\n"
+        f"💰 מכירות היום: {total_trades}  (רווח: {wins}  /  הפסד: {losses})\n"
+        f"🎯 אחוז הצלחה במכירות: {win_rate:.1f}%\n"
+        f"{pnl_emoji} רווח/הפסד ממכירות: <b>${total_pnl:+.2f}</b>"
         f"{net_line}"
         f"{tax_line}\n"
         f"📂 פוזיציות פתוחות: {open_positions}\n"

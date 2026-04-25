@@ -860,25 +860,33 @@ async def daily_summary_loop():
             while datetime.datetime.utcnow() < target:
                 await asyncio.sleep(60)
 
-            # Build summary from today's closed trades
+            # Build summary from today's trades
             today = datetime.datetime.utcnow().date()
             all_trades = database.get_trade_history(limit=200)
-            today_trades = [
+
+            # Closed today (sells)
+            closed_today = [
                 t for t in all_trades
                 if t.get("exit_time") and t["exit_time"][:10] == str(today)
             ]
-            wins      = [t for t in today_trades if (t.get("pnl_gross") or 0) > 0]
-            losses    = [t for t in today_trades if (t.get("pnl_gross") or 0) <= 0]
-            total_pnl = sum(t.get("pnl_gross") or 0 for t in today_trades)
-            total_tax = sum(t.get("tax_reserved") or 0 for t in today_trades)
-            total_net = sum(t.get("pnl_net") or 0 for t in today_trades)
+            # Opened today (buys)
+            opened_today = [
+                t for t in all_trades
+                if t.get("entry_time") and t["entry_time"][:10] == str(today)
+            ]
+
+            wins      = [t for t in closed_today if (t.get("pnl_gross") or 0) > 0]
+            losses    = [t for t in closed_today if (t.get("pnl_gross") or 0) <= 0]
+            total_pnl = sum(t.get("pnl_gross") or 0 for t in closed_today)
+            total_tax = sum(t.get("tax_reserved") or 0 for t in closed_today)
+            total_net = sum(t.get("pnl_net") or 0 for t in closed_today)
 
             open_trades = database.get_open_trades()
             status = await asyncio.to_thread(budget.get_budget_status)
             equity = status.get("positions_value", 0) + status.get("cash_available", 0)
 
             await notify_daily_summary(
-                total_trades=len(today_trades),
+                total_trades=len(closed_today),
                 wins=len(wins),
                 losses=len(losses),
                 total_pnl=total_pnl,
@@ -886,6 +894,7 @@ async def daily_summary_loop():
                 equity=equity,
                 tax_reserved=total_tax,
                 realized_pnl_net=total_net,
+                buys_today=len(opened_today),
             )
             logger.info(f"Daily summary sent: {len(today_trades)} trades, PnL=${total_pnl:+.2f}")
 
