@@ -14,11 +14,65 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# ── Persistence file ──────────────────────────────────────────────────────────
+# ── Persistence ───────────────────────────────────────────────────────────────
+# Primary: Postgres (Neon) via DATABASE_URL env var — survives Render restarts.
+# Fallback: local JSON file — used only if DATABASE_URL is not set.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    try:
+        import psycopg
+    except ImportError:
+        logger.warning("psycopg not installed — falling back to JSON file persistence")
+        USE_POSTGRES = False
+
+
 def _state_path() -> Path:
     """Path to the JSON file that persists paper broker state across restarts."""
     db_path = Path(settings.DATABASE_PATH)
     return db_path.parent / "paper_broker_state.json"
+
+
+def _pg_init() -> None:
+    """Create the state table in Postgres if it doesn't exist."""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS paper_broker_state (
+                    id INTEGER PRIMARY KEY,
+                    cash DOUBLE PRECISION NOT NULL,
+                    positions JSONB NOT NULL,
+                    saved_at DOUBLE PRECISION NOT NULL
+                )
+            """)
+        conn.commit()
+
+
+def _pg_load() -> dict | None:
+    """Load state from Postgres. Returns None if no row exists."""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT cash, positions FROM paper_broker_state WHERE id = 1")
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {"cash": float(row[0]), "positions": row[1]}
+
+
+def _pg_save(cash: float, positions: dict) -> None:
+    """Upsert state into Postgres."""
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO paper_broker_state (id, cash, positions, saved_at)
+                VALUES (1, %s, %s::jsonb, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    cash = EXCLUDED.cash,
+                    positions = EXCLUDED.positions,
+                    saved_at = EXCLUDED.saved_at
+            """, (cash, json.dumps(positions), time.time()))
+        conn.commit()
 
 
 class TVPaperBroker(BrokerBase):
@@ -58,7 +112,34 @@ class TVPaperBroker(BrokerBase):
 
     @classmethod
     def _load_state(cls) -> None:
-        """Load positions and cash from disk. Falls back to MAX_BUDGET if no file."""
+        """Load positions and cash from Postgres (primary) or disk (fallback).
+        Falls back to MAX_BUDGET if neither source has data."""
+        # Try Postgres first
+        if USE_POSTGRES:
+            try:
+                _pg_init()
+                data = _pg_load()
+                if data is not None:
+                    cls._cash = float(data["cash"])
+                    raw_pos = data.get("positions", {}) or {}
+                    cls._positions = {
+                        t: {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
+                        for t, p in raw_pos.items()
+                    }
+                    logger.info(
+                        f"[TVPaper] State loaded from Postgres | "
+                        f"cash=${cls._cash:,.2f} | positions={list(cls._positions.keys())}"
+                    )
+                    return
+                else:
+                    logger.info("[TVPaper] No state row in Postgres — starting fresh")
+                    cls._cash = float(settings.MAX_BUDGET)
+                    cls._positions = {}
+                    return
+            except Exception as e:
+                logger.warning(f"[TVPaper] Postgres load failed ({e}) — trying JSON fallback")
+
+        # Fallback: JSON file
         path = _state_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +148,6 @@ class TVPaperBroker(BrokerBase):
                     data = json.load(f)
                 cls._cash = float(data.get("cash", settings.MAX_BUDGET))
                 raw_pos = data.get("positions", {})
-                # Ensure qty is always float
                 cls._positions = {
                     t: {"qty": float(p["qty"]), "avg_cost": float(p["avg_cost"])}
                     for t, p in raw_pos.items()
@@ -87,7 +167,17 @@ class TVPaperBroker(BrokerBase):
 
     @classmethod
     def _save_state(cls) -> None:
-        """Persist current positions and cash to disk (called after every trade)."""
+        """Persist current positions and cash. Writes to Postgres if configured,
+        otherwise falls back to a local JSON file."""
+        # Primary: Postgres
+        if USE_POSTGRES:
+            try:
+                _pg_save(cls._cash, cls._positions)
+                return
+            except Exception as e:
+                logger.warning(f"[TVPaper] Postgres save failed ({e}) — falling back to JSON file")
+
+        # Fallback: JSON file
         path = _state_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +186,6 @@ class TVPaperBroker(BrokerBase):
                 "positions": cls._positions,
                 "saved_at": time.time(),
             }
-            # Write to temp file then rename for atomicity
             tmp = path.with_suffix(".tmp")
             with open(tmp, "w") as f:
                 json.dump(data, f, indent=2)
