@@ -307,7 +307,7 @@ def _fetch_closed_trades(since: datetime) -> list[dict]:
     conn = database.get_connection()
     rows = conn.execute(
         """SELECT * FROM trade_log
-           WHERE status IN ('closed','stop_loss','take_profit','smart_sell','emergency_exit')
+           WHERE status IN ('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit')
              AND exit_time IS NOT NULL
              AND exit_time >= ?
            ORDER BY exit_time ASC""",
