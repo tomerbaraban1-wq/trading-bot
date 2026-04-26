@@ -23,16 +23,23 @@ _dynamic_list_date: str = ""
 
 
 def _fetch_index_tickers() -> list[str]:
-    """Fetch tickers from S&P 500 + Nasdaq 100 via Wikipedia."""
+    """Fetch tickers from S&P 500 + Nasdaq 100 via Wikipedia.
+    Uses requests for the HTTP timeout (pandas.read_html doesn't support it),
+    then parses the HTML with pandas.
+    """
     import pandas as pd
+    import requests
     tickers = set()
     sources = [
         ("S&P 500",    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 0, "Symbol"),
         ("Nasdaq 100", "https://en.wikipedia.org/wiki/Nasdaq-100",                  4, "Ticker"),
     ]
+    headers = {"User-Agent": "Mozilla/5.0 TradingBot/1.0"}
     for name, url, table_idx, col in sources:
         try:
-            df = pd.read_html(url, timeout=15)[table_idx]
+            resp = requests.get(url, timeout=15, headers=headers)
+            resp.raise_for_status()
+            df = pd.read_html(resp.text)[table_idx]
             raw = df[col].dropna().tolist()
             cleaned = [str(t).replace(".", "-").strip() for t in raw]
             tickers.update(cleaned)
