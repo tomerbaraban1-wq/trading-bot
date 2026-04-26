@@ -264,6 +264,9 @@ async def stop_loss_monitor():
                             "stale_restart",
                         )
                         _stale_counter.pop(trade["id"], None)
+                        # Cleanup per-ticker state for re-entry
+                        _smart_sell_last_check.pop(ticker, None)
+                        _position_alert_sent.pop(ticker, None)
                         continue
                     # Position found — reset stale counter
                     _stale_counter.pop(trade["id"], None)
@@ -856,6 +859,11 @@ async def _emergency_exit(trade: dict):
             tax_result["tax_amount"], 0.0, "emergency_exit",
         )
         record_trade_result(pnl_gross)
+
+        # Cleanup per-ticker state so re-entry works correctly (same as _close_position)
+        _smart_sell_last_check.pop(ticker, None)
+        _position_alert_sent.pop(ticker, None)
+
         await notify_emergency(ticker, f"Critically bearish sentiment | PnL=${pnl_gross:+.2f}")
         logger.warning(
             f"EMERGENCY EXIT COMPLETE: {ticker} | PnL=${pnl_gross:+.2f} | "
