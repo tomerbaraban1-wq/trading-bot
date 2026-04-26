@@ -120,11 +120,8 @@ WATCHLIST = [
     # שבבים / חומרה
     "ARM", "SMCI", "DELL", "HPQ", "HPE", "STX", "WDC",
 
-    # AI / ענן
-    "MSFT", "GOOGL", "AMZN", "META", "NVDA",  # כבר למעלה — הדגשה
-
     # קריפטו / פינטק גדולים
-    "COIN", "MSTR", "SQ", "PYPL",
+    "COIN", "MSTR", "SQ",
 
     # ── פיננסים ──
     "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "V", "MA",
@@ -148,7 +145,7 @@ WATCHLIST = [
     "GIS", "K", "SJM", "HRL", "MKC",
 
     # ── מדיה ובידור ──
-    "DIS", "CMCSA", "WBD", "PARA", "NFLX",
+    "DIS", "CMCSA", "WBD", "PARA",
 
     # ── תקשורת ──
     "T", "VZ", "TMUS",
@@ -179,7 +176,6 @@ WATCHLIST = [
     "BAM",  # Brookfield
 
     # ── ייעוץ / IT שירותים ──
-    "ACN",  # Accenture
     "FI",   # Fiserv
     "FIS",  # Fidelity National
 
@@ -211,7 +207,6 @@ WATCHLIST = [
     # ── שירותים / תשתיות ──
     "NEE",   # NextEra Energy (~$120B) — אנרגיה ירוקה
     "ADP",   # Automatic Data Processing (~$100B)
-    "EQIX",  # Equinix (~$80B — data centers)
     "WM",    # Waste Management (~$80B)
 
     # ── קרנות סל (ETFs) — שוק רחב ──
@@ -225,6 +220,9 @@ WATCHLIST = [
     # קריפטו ETF
     "IBIT", "BITO",
 ]
+
+# הסר כפילויות תוך שמירת הסדר המקורי
+WATCHLIST = list(dict.fromkeys(WATCHLIST))
 
 # קטגוריות לכל סימבול — הגדרת ברירת מחדל: "מניה"
 # רק ETFs וסחורות צריכים הגדרה מפורשת (הפילטר חל עליהם אחרת)

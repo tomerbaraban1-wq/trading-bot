@@ -861,13 +861,18 @@ async def _emergency_exit(trade: dict):
 
 
 async def daily_summary_loop():
-    """Background task: send daily summary to Telegram at market close (~4pm ET)."""
+    """Background task: send daily summary to Telegram at market close (~4pm ET).
+    Accounts for EDT (UTC-4, summer) and EST (UTC-5, winter) automatically.
+    """
     import datetime
     while True:
         try:
             now = datetime.datetime.utcnow()
-            # Market closes at ~20:00 UTC (4pm ET / 23:00 Israel time)
-            target = now.replace(hour=20, minute=5, second=0, microsecond=0)
+            # Determine if US is on EDT (Mar-Nov) or EST (Nov-Mar)
+            # Market closes at 20:00 UTC in EDT, 21:00 UTC in EST
+            is_edt = 3 <= now.month <= 10
+            close_hour = 20 if is_edt else 21
+            target = now.replace(hour=close_hour, minute=5, second=0, microsecond=0)
             if now >= target:
                 target += datetime.timedelta(days=1)
 
