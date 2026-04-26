@@ -29,7 +29,7 @@ Public API:
   get_current_ratio(ticker) → float | None  (current / MA ratio)
 
 Environment variables:
-  VOLUME_MULTIPLIER      float  default 1.5   (current must be >= 1.5× MA)
+  VOLUME_MULTIPLIER      float  default 0.8   (current must be >= 0.8× MA — lenient by design)
   VOLUME_MA_PERIOD       int    default 20    (bars in the MA)
   VOLUME_BAR_INTERVAL    str    default "5m"  (yfinance interval for intraday)
   VOLUME_CACHE_TTL       int    default 300   (seconds, 5 min)
