@@ -93,8 +93,9 @@ class Settings:
     MAX_BUDGET: float = float(os.getenv("MAX_BUDGET", "10000"))
     MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "20"))
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "2.0"))
-    STOP_LOSS_PCT: float = 5.0   # sell if drops 5%
-    TAKE_PROFIT_PCT: float = 10.0  # sell if gains 10%
+    STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "5.0"))    # sell if drops N%
+    TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "10.0"))  # sell if gains N%
+    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "6"))   # max concurrent positions
 
     # Tax
     TAX_RATE: float = float(os.getenv("TAX_RATE", "0.25"))
@@ -110,7 +111,7 @@ class Settings:
     # Sentiment
     SENTIMENT_MIN_SCORE: int = int(os.getenv("SENTIMENT_MIN_SCORE", "4"))
     SENTIMENT_EMERGENCY_SCORE: int = int(os.getenv("SENTIMENT_EMERGENCY_SCORE", "2"))
-    NEWS_CACHE_TTL: int = int(os.getenv("NEWS_CACHE_TTL", "120"))
+    NEWS_CACHE_TTL: int = int(os.getenv("NEWS_CACHE_TTL", "300"))  # 5 min default (was 2 min)
 
     # Heartbeat
     HEARTBEAT_INTERVAL_MINUTES: int = int(os.getenv("HEARTBEAT_INTERVAL_MINUTES", "5"))
