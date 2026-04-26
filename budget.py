@@ -51,7 +51,8 @@ logger = logging.getLogger(__name__)
 
 # ── Risk parameters ────────────────────────────────────────────────────────────
 RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "10.0"))
-MAX_OPEN_POSITIONS:  int   = int(os.getenv("MAX_OPEN_POSITIONS",     "5"))
+# MAX_OPEN_POSITIONS read from settings to ensure same default as config.py (6)
+MAX_OPEN_POSITIONS:  int   = settings.MAX_OPEN_POSITIONS
 KELLY_ENABLED:       bool  = os.getenv("KELLY_ENABLED", "true").lower() == "true"
 KELLY_MIN_TRADES:    int   = int(os.getenv("KELLY_MIN_TRADES",       "10"))
 

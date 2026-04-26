@@ -509,3 +509,53 @@ class TVPaperBroker(BrokerBase):
             "tradable": True,
             "fractionable": False,
         }
+
+    def get_clock(self) -> dict:
+        """
+        Return market clock info compatible with Alpaca's clock API.
+        Computed locally using the same EDT/EST logic as is_market_open().
+        Used by morning_briefing_loop to schedule pre-market briefings.
+        """
+        import datetime
+        now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        is_open = self.is_market_open()
+
+        # Determine EDT/EST
+        month = now.month
+        is_edt = 3 <= month <= 10
+        open_hour = 13 if is_edt else 14
+        open_min = 30
+        close_hour = 20 if is_edt else 21
+        close_min = 0
+
+        # Compute next open/close
+        today_open = now.replace(hour=open_hour, minute=open_min, second=0, microsecond=0)
+        today_close = now.replace(hour=close_hour, minute=close_min, second=0, microsecond=0)
+
+        # Next open: today's open if it's still ahead, else tomorrow's open
+        if now < today_open and now.weekday() < 5:
+            next_open = today_open
+        else:
+            # Find next weekday with market open
+            days_ahead = 1
+            while True:
+                cand = (now + datetime.timedelta(days=days_ahead)).replace(
+                    hour=open_hour, minute=open_min, second=0, microsecond=0
+                )
+                if cand.weekday() < 5:  # Mon-Fri
+                    next_open = cand
+                    break
+                days_ahead += 1
+
+        # Next close: today's close if market is open, else next open's close
+        if is_open:
+            next_close = today_close
+        else:
+            next_close = next_open.replace(hour=close_hour, minute=close_min)
+
+        return {
+            "is_open": is_open,
+            "next_open": next_open.isoformat(),
+            "next_close": next_close.isoformat(),
+            "timestamp": now.isoformat(),
+        }
