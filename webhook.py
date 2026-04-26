@@ -96,9 +96,12 @@ async def receive_webhook(payload: WebhookPayload, request: Request):
         logger.warning(f"Webhook rate limit exceeded from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per 60 seconds")
 
-    # 1. Authenticate
+    # 1. Authenticate — reject if secret is empty (misconfigured) or wrong
+    if not settings.WEBHOOK_SECRET:
+        logger.error("WEBHOOK_SECRET is not configured — rejecting all webhook requests")
+        raise HTTPException(status_code=503, detail="Bot not configured: WEBHOOK_SECRET missing")
     if payload.secret != settings.WEBHOOK_SECRET:
-        logger.warning(f"Webhook auth failed for {payload.ticker}")
+        logger.warning(f"Webhook auth failed for {payload.ticker} from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     # 2. Validate signal (wrapped — may call broker API)

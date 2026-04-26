@@ -38,7 +38,7 @@ class TradeRecord(BaseModel):
     rsi: float | None = None
     macd: float | None = None
     macd_signal: float | None = None
-    bb_position: str | None = None
+    bb_position: float | None = None
     volume_ratio: float | None = None
     trailing_stop_pct: float | None = None
     exit_price: float | None = None
