@@ -799,6 +799,7 @@ async def performance_report(weeks: int = 4):
     Full performance KPI report for the last `weeks` calendar weeks.
     Returns Sharpe Ratio, Max Drawdown, win rate per strategy, daily equity curve.
     """
+    weeks = min(max(1, weeks), 52)  # clamp to [1, 52] weeks
     from performance import compute as perf_compute
     report = await asyncio.to_thread(perf_compute, weeks)
     return report.to_dict()
@@ -815,6 +816,7 @@ async def performance_csv(weeks: int = 4):
     from performance import compute as perf_compute, export_csv
     import tempfile, os
 
+    weeks    = min(max(1, weeks), 52)  # clamp to [1, 52] weeks
     report   = await asyncio.to_thread(perf_compute, weeks)
     tmp_dir  = tempfile.mkdtemp()
     csv_path = await asyncio.to_thread(export_csv, report, tmp_dir)
