@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # ── Persistence ───────────────────────────────────────────────────────────────
 # Primary: Postgres (Neon) via DATABASE_URL env var — survives Render restarts.
 # Fallback: local JSON file — used only if DATABASE_URL is not set.
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_URL = "".join(os.getenv("DATABASE_URL", "").split())  # strip all whitespace/newlines
 USE_POSTGRES = bool(DATABASE_URL)
 
 if USE_POSTGRES:
