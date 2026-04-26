@@ -53,9 +53,22 @@ def _state_path() -> Path:
     return db_path.parent / "paper_broker_state.json"
 
 
+def _pg_connect():
+    """Open a Postgres connection using keyword args (avoids URL parsing issues)."""
+    if _NEON_HOST and _NEON_PASSWORD:
+        return psycopg.connect(
+            host=_NEON_HOST,
+            user=_NEON_USER,
+            password=_NEON_PASSWORD,
+            dbname=_NEON_DB,
+            sslmode="require",
+        )
+    return psycopg.connect(DATABASE_URL)
+
+
 def _pg_init() -> None:
     """Create the state table in Postgres if it doesn't exist."""
-    with psycopg.connect(DATABASE_URL) as conn:
+    with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS paper_broker_state (
@@ -70,7 +83,7 @@ def _pg_init() -> None:
 
 def _pg_load() -> dict | None:
     """Load state from Postgres. Returns None if no row exists."""
-    with psycopg.connect(DATABASE_URL) as conn:
+    with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT cash, positions FROM paper_broker_state WHERE id = 1")
             row = cur.fetchone()
@@ -81,7 +94,7 @@ def _pg_load() -> dict | None:
 
 def _pg_save(cash: float, positions: dict) -> None:
     """Upsert state into Postgres."""
-    with psycopg.connect(DATABASE_URL) as conn:
+    with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO paper_broker_state (id, cash, positions, saved_at)
