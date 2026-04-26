@@ -17,20 +17,19 @@ logger = logging.getLogger(__name__)
 # ── Persistence ───────────────────────────────────────────────────────────────
 # Primary: Postgres (Neon) via DATABASE_URL env var — survives Render restarts.
 # Fallback: local JSON file — used only if DATABASE_URL is not set.
-DATABASE_URL = "".join(os.getenv("DATABASE_URL", "").split())  # strip all whitespace/newlines
-
-# Support individual connection params as fallback (easier to paste in Render)
 _NEON_HOST = os.getenv("NEON_HOST", "").strip()
 _NEON_USER = os.getenv("NEON_USER", "neondb_owner").strip()
 _NEON_PASSWORD = os.getenv("NEON_PASSWORD", "").strip()
 _NEON_DB = os.getenv("NEON_DB", "neondb").strip()
 
-# Build DATABASE_URL from parts if not provided directly
-if not DATABASE_URL and _NEON_HOST and _NEON_PASSWORD:
+# Prefer NEON_* vars (clean URL we control) over raw DATABASE_URL (may be malformed)
+if _NEON_HOST and _NEON_PASSWORD:
     DATABASE_URL = (
         f"postgresql://{_NEON_USER}:{_NEON_PASSWORD}"
         f"@{_NEON_HOST}/{_NEON_DB}?sslmode=require"
     )
+else:
+    DATABASE_URL = "".join(os.getenv("DATABASE_URL", "").split())
 
 USE_POSTGRES = bool(DATABASE_URL)
 logger.info(
