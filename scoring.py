@@ -11,7 +11,8 @@ from indicators import get_current_indicators, get_market_conditions, get_stock_
 
 logger = logging.getLogger(__name__)
 
-MIN_BUY_SCORE = 45  # minimum composite score to allow a buy
+import os as _os
+MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "45"))  # configurable via Render env var
 
 
 def _safe(val, default=None):

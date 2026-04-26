@@ -53,10 +53,13 @@ except ImportError:
         def _now_et() -> datetime:
             return datetime.now(pytz.utc).astimezone(_ET)
     except ImportError:
-        # Fallback: UTC-5 (no DST — conservative)
-        logger.warning("[TRADING_HOURS] zoneinfo/pytz not found — using UTC-5 offset (no DST)")
+        # Fallback: approximate DST — EDT (UTC-4) Mar-Nov, EST (UTC-5) Nov-Mar
+        logger.warning("[TRADING_HOURS] zoneinfo/pytz not found — using UTC-4/5 DST approximation")
         def _now_et() -> datetime:
-            return datetime.utcnow() - timedelta(hours=5)
+            now_utc = datetime.utcnow()
+            # EDT: March–October = UTC-4, EST: November–February = UTC-5
+            offset = 4 if 3 <= now_utc.month <= 10 else 5
+            return now_utc - timedelta(hours=offset)
 
 
 # ── NYSE market session ───────────────────────────────────────────────────────
@@ -134,6 +137,15 @@ _FOMC_DATES: set[date] = {
     date(2026, 9, 16),
     date(2026, 10, 28),
     date(2026, 12,  9),
+    # 2027
+    date(2027, 1, 27),
+    date(2027, 3, 17),
+    date(2027, 4, 28),
+    date(2027, 6, 16),
+    date(2027, 7, 28),
+    date(2027, 9, 15),
+    date(2027, 10, 27),
+    date(2027, 12,  8),
 }
 
 
