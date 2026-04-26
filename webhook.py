@@ -1179,6 +1179,7 @@ async def slippage_history(limit: int = 100):
     Return the most recent slippage observations (newest first).
     Each row shows signal_price vs fill_price and the resulting cost in bps.
     """
+    limit = min(max(1, limit), 500)  # clamp to [1, 500]
     rows = await asyncio.to_thread(database.get_slippage_history, limit)
     return {"count": len(rows), "records": rows}
 

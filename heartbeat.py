@@ -893,6 +893,12 @@ async def daily_summary_loop():
             while datetime.datetime.utcnow() < target:
                 await asyncio.sleep(60)
 
+            # Skip weekends — no trading, nothing to summarise
+            if datetime.datetime.utcnow().weekday() >= 5:  # 5=Sat, 6=Sun
+                logger.debug("Daily summary: skipping weekend")
+                await asyncio.sleep(60)
+                continue
+
             # Build summary from today's trades
             today = datetime.datetime.utcnow().date()
             all_trades = database.get_trade_history(limit=200)
@@ -960,8 +966,8 @@ async def portfolio_update_loop():
             open_trades = database.get_open_trades()
 
             if not open_trades:
-                await send_message("📂 <b>תיק עכשיו</b>\nאין פוזיציות פתוחות כרגע.")
-                # Still send so user knows bot is alive
+                # Don't spam "no positions" every hour — skip silently
+                pass
             else:
                 lines = ["📂 <b>תיק עכשיו</b>\n━━━━━━━━━━━━━━━━"]
                 total_unrealized = 0.0
