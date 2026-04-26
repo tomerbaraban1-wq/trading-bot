@@ -53,11 +53,24 @@ def _state_path() -> Path:
     return db_path.parent / "paper_broker_state.json"
 
 
+def _resolve_ipv4(hostname: str) -> str:
+    """Resolve hostname to its first IPv4 address (avoids IPv6 on Render free tier)."""
+    import socket
+    try:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        return infos[0][4][0]
+    except Exception:
+        return hostname  # fall back to hostname if resolution fails
+
+
 def _pg_connect():
-    """Open a Postgres connection using keyword args (avoids URL parsing issues)."""
+    """Open a Postgres connection using keyword args (avoids URL parsing issues).
+    Forces IPv4 to work around Render free tier IPv6 limitations."""
     if _NEON_HOST and _NEON_PASSWORD:
+        ipv4 = _resolve_ipv4(_NEON_HOST)
         return psycopg.connect(
-            host=_NEON_HOST,
+            host=_NEON_HOST,      # used for SSL certificate verification
+            hostaddr=ipv4,        # actual IP to connect to (forces IPv4)
             user=_NEON_USER,
             password=_NEON_PASSWORD,
             dbname=_NEON_DB,
