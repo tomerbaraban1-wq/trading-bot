@@ -47,6 +47,12 @@ def _check_rate_limit(request: Request) -> bool:
 
     # Add current timestamp
     _request_history[client_ip].append(now)
+
+    # Cleanup: remove IPs with empty lists to prevent memory leak
+    empty_ips = [ip for ip, ts in _request_history.items() if not ts]
+    for ip in empty_ips:
+        del _request_history[ip]
+
     return True
 
 

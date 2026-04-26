@@ -193,6 +193,11 @@ async def _close_position(
         ))
 
     await notify_sell(ticker, exit_price, pnl_gross, label)
+
+    # Cleanup per-ticker state so re-entry into the same ticker works correctly
+    _smart_sell_last_check.pop(ticker, None)   # allow immediate smart-sell check on re-entry
+    _position_alert_sent.pop(ticker, None)     # allow fresh movement alerts on re-entry
+
     return True
 
 
