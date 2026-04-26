@@ -33,6 +33,12 @@ if not DATABASE_URL and _NEON_HOST and _NEON_PASSWORD:
     )
 
 USE_POSTGRES = bool(DATABASE_URL)
+logger.info(
+    f"[TVPaper] DB config: USE_POSTGRES={USE_POSTGRES} | "
+    f"NEON_HOST={'SET' if _NEON_HOST else 'MISSING'} | "
+    f"NEON_PASSWORD={'SET' if _NEON_PASSWORD else 'MISSING'} | "
+    f"DATABASE_URL={'SET' if DATABASE_URL else 'EMPTY'}"
+)
 
 if USE_POSTGRES:
     try:
