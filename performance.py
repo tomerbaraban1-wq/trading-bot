@@ -148,12 +148,12 @@ def compute(weeks: int = 4) -> PerformanceReport:
     report.total_trades     = len(trades)
     report.total_wins       = sum(1 for p in pnl_values if p > 0)
     report.total_losses     = sum(1 for p in pnl_values if p <= 0)
-    report.overall_win_rate = round(report.total_wins / report.total_trades * 100, 1)
+    report.overall_win_rate = round(report.total_wins / report.total_trades * 100, 1) if report.total_trades else 0.0
     report.total_pnl_gross  = round(sum(pnl_values), 2)
     report.total_pnl_net    = round(sum(net_values), 2)
-    report.avg_pnl_per_trade = round(report.total_pnl_gross / report.total_trades, 2)
-    report.best_trade        = round(max(pnl_values), 2)
-    report.worst_trade       = round(min(pnl_values), 2)
+    report.avg_pnl_per_trade = round(report.total_pnl_gross / report.total_trades, 2) if report.total_trades else 0.0
+    report.best_trade        = round(max(pnl_values), 2) if pnl_values else 0.0
+    report.worst_trade       = round(min(pnl_values), 2) if pnl_values else 0.0
 
     # ── Equity curve ──────────────────────────────────────────────────────────
     daily = _build_daily_series(trades)
