@@ -34,7 +34,7 @@ Public API:
 
 Environment variables:
   ADX_PERIOD          int    default 14    (EWM span)
-  ADX_THRESHOLD       float  default 25.0  (ADX below this = ranging)
+  ADX_THRESHOLD       float  default 18.0  (ADX below this = ranging; lower = more trades allowed)
   ADX_LOOKBACK_DAYS   int    default 60    (daily bars to fetch)
   ADX_CACHE_TTL       int    default 1800  (seconds, 30 min)
 """

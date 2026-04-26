@@ -834,6 +834,7 @@ async def performance_csv(weeks: int = 4):
 
 @router.get("/trades")
 async def trade_history(ticker: str | None = None, limit: int = 50):
+    limit = min(max(1, limit), 500)   # clamp to [1, 500] — prevent memory exhaustion
     return database.get_trade_history(ticker, limit)
 
 
@@ -844,6 +845,7 @@ async def tax_report():
 
 @router.get("/learning")
 async def learning_log(pattern_type: str | None = None, limit: int = 50):
+    limit = min(max(1, limit), 200)   # clamp to [1, 200]
     return database.get_learning_entries(pattern_type, limit)
 
 
@@ -1045,6 +1047,10 @@ async def auto_invest(data: dict):
 @router.get("/news/{ticker}")
 async def get_news(ticker: str):
     """Fetch recent news headlines for a ticker via news_service (RSS)."""
+    import re
+    # Validate ticker — only uppercase letters, digits, dots and dashes (e.g. BRK-B, BF.B)
+    if not re.match(r'^[A-Za-z0-9.\-]{1,10}$', ticker):
+        raise HTTPException(status_code=400, detail="Invalid ticker format")
     try:
         from news_service import get_headlines
         headlines = await asyncio.to_thread(get_headlines, ticker.upper(), 5)
