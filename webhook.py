@@ -526,8 +526,8 @@ async def diagnose():
     report["step2_budget"] = {
         "cash_available": round(cash, 2),
         "open_positions": len(open_trades),
-        "max_positions": 6,
-        "verdict": "✅ PASS" if cash >= 10 and len(open_trades) < 6 else f"❌ BLOCKED — cash=${cash:.2f}, positions={len(open_trades)}/6",
+        "max_positions": settings.MAX_OPEN_POSITIONS,
+        "verdict": "✅ PASS" if cash >= 10 and len(open_trades) < settings.MAX_OPEN_POSITIONS else f"❌ BLOCKED — cash=${cash:.2f}, positions={len(open_trades)}/{settings.MAX_OPEN_POSITIONS}",
     }
 
     # ── 3. Circuit breaker ──────────────────────────────────────────────────────
@@ -594,7 +594,7 @@ async def diagnose():
     if not mkt_open:   blockers.append("Market is closed (broker check)")
     if not hours_ok:   blockers.append(f"Trading hours blocked: {hours_reason}")
     if cash < 10:      blockers.append(f"Not enough cash: ${cash:.2f}")
-    if len(open_trades) >= 6: blockers.append(f"Max positions reached: {len(open_trades)}/6")
+    if len(open_trades) >= settings.MAX_OPEN_POSITIONS: blockers.append(f"Max positions reached: {len(open_trades)}/{settings.MAX_OPEN_POSITIONS}")
     if not cb_ok:      blockers.append(f"Circuit breaker: {cb_reason}")
 
     report["summary"] = {
@@ -632,8 +632,8 @@ async def scan_now(secret: str = ""):
         return {"status": "skip", "reason": f"Not enough cash: ${remaining:.2f}"}
 
     open_count = len(database.get_open_trades())
-    if open_count >= 6:
-        return {"status": "skip", "reason": f"Max positions reached ({open_count}/6)"}
+    if open_count >= settings.MAX_OPEN_POSITIONS:
+        return {"status": "skip", "reason": f"Max positions reached ({open_count}/{settings.MAX_OPEN_POSITIONS})"}
 
     watchlist = get_watchlist()
     shuffled = watchlist.copy()
