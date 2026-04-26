@@ -848,11 +848,17 @@ async def learning_log(pattern_type: str | None = None, limit: int = 50):
 
 
 @router.post("/broker")
-async def set_broker(payload: BrokerSwitch):
+async def set_broker(payload: BrokerSwitch, request: Request):
     """
     Switch the active broker at runtime.
-    Body: {"broker": "alpaca_paper"|"alpaca_live"|"ibkr"|"oanda"|"tradier"|"tradier_live"}
+    Body: {"broker": "...", "secret": "WEBHOOK_SECRET"}
     """
+    # Auth — accept secret from body OR from X-Webhook-Secret header
+    secret = getattr(payload, "secret", None) or request.headers.get("X-Webhook-Secret", "")
+    if secret != settings.WEBHOOK_SECRET:
+        logger.warning(f"Broker switch auth failed from {request.client.host if request.client else 'unknown'}")
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
     valid = {
         "tv_paper",
         "alpaca_paper", "alpaca_live", "ibkr", "oanda", "tradier", "tradier_live",
@@ -874,8 +880,15 @@ async def set_broker(payload: BrokerSwitch):
 
 
 @router.post("/emergency-exit/{ticker}")
-async def emergency_exit(ticker: str):
-    """Manual emergency exit for a ticker."""
+async def emergency_exit(ticker: str, request: Request):
+    """Manual emergency exit for a ticker.
+    Auth: pass secret in `?secret=...` query param OR X-Webhook-Secret header.
+    """
+    secret = request.query_params.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
+    if secret != settings.WEBHOOK_SECRET:
+        logger.warning(f"Emergency exit auth failed for {ticker} from {request.client.host if request.client else 'unknown'}")
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
     ticker = ticker.upper()
     trade = database.get_open_trade_by_ticker(ticker)
     if not trade:
@@ -1162,8 +1175,15 @@ async def get_trading_settings():
 
 
 @router.post("/settings")
-async def update_settings(data: dict):
-    """Update bot settings from TradingView panel."""
+async def update_settings(data: dict, request: Request):
+    """Update bot settings from TradingView panel.
+    Auth: pass `secret` in body OR X-Webhook-Secret header.
+    """
+    secret = data.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
+    if secret != settings.WEBHOOK_SECRET:
+        logger.warning(f"Settings update auth failed from {request.client.host if request.client else 'unknown'}")
+        raise HTTPException(status_code=401, detail="Invalid secret")
+
     if "max_budget" in data:
         val = float(data["max_budget"])
         if val < 100:

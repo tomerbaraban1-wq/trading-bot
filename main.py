@@ -140,12 +140,22 @@ if hasattr(signal, "SIGTERM"):
 if hasattr(signal, "SIGINT"):
     signal.signal(signal.SIGINT, handle_shutdown)
 
-# Allow TradingView (and any site) to call the bot API
+# CORS — restrict to known safe origins (TradingView + bot's own dashboard).
+# Custom origins can be added via ALLOWED_ORIGINS env var (comma-separated).
+_default_origins = [
+    "https://www.tradingview.com",
+    "https://tradingview.com",
+    "https://tradebot-yc8p.onrender.com",
+]
+_extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+_allowed_origins = _default_origins + _extra_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_allowed_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Webhook-Secret"],
+    allow_credentials=False,
 )
 
 # Import and include routes

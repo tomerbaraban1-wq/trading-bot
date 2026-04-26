@@ -78,3 +78,4 @@ class HealthResponse(BaseModel):
 
 class BrokerSwitch(BaseModel):
     broker: str  # alpaca_paper | alpaca_live | ibkr | oanda | tradier | tradier_live
+    secret: str | None = None  # WEBHOOK_SECRET — protects this dangerous endpoint
