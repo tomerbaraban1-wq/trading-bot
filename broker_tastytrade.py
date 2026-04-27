@@ -73,18 +73,20 @@ class TastytradeBroker(BrokerBase):
             positions = account.get_positions(session)
             result = []
             for p in positions:
-                qty = int(getattr(p, "quantity", 0) or 0)
+                qty = float(getattr(p, "quantity", 0) or 0)   # support fractional
                 avg_cost = float(getattr(p, "average_open_price", 0) or 0)
                 current_price = float(getattr(p, "close_price", avg_cost) or avg_cost)
                 market_value = qty * current_price
                 unrealized_pl = (current_price - avg_cost) * qty
+                unrealized_plpc = ((current_price - avg_cost) / avg_cost) if avg_cost > 0 else 0.0
                 result.append({
                     "ticker": str(p.symbol),
                     "qty": qty,
-                    "avg_cost": avg_cost,
+                    "avg_entry_price": avg_cost,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": unrealized_pl,
+                    "unrealized_plpc": unrealized_plpc,
                 })
             return result
         except Exception as e:
@@ -117,11 +119,13 @@ class TastytradeBroker(BrokerBase):
         response = account.place_order(session, order, dry_run=False)
         order_id = str(getattr(response.order, "id", "unknown"))
         status = str(getattr(response.order, "status", "submitted"))
+        fill_price = getattr(response.order, "price", None) or getattr(response.order, "filled_average_price", None)
         logger.info(f"Tastytrade BUY submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": status,
         }
 
@@ -146,11 +150,13 @@ class TastytradeBroker(BrokerBase):
         response = account.place_order(session, order, dry_run=False)
         order_id = str(getattr(response.order, "id", "unknown"))
         status = str(getattr(response.order, "status", "submitted"))
+        fill_price = getattr(response.order, "price", None) or getattr(response.order, "filled_average_price", None)
         logger.info(f"Tastytrade SELL submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": status,
         }
 

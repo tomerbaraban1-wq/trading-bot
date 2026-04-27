@@ -114,11 +114,13 @@ class TradierBroker(BrokerBase):
         order = data.get("order", {})
         order_id = str(order.get("id", "unknown"))
         status = str(order.get("status", "submitted"))
+        avg_fill = order.get("avg_fill_price")
         logger.info(f"Tradier BUY submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
             "symbol": ticker.upper(),
             "qty": qty,
+            "price": float(avg_fill) if avg_fill else None,
             "status": status,
             "type": "market",
         }
@@ -144,11 +146,13 @@ class TradierBroker(BrokerBase):
         order = data.get("order", {})
         order_id = str(order.get("id", "unknown"))
         status = str(order.get("status", "submitted"))
+        avg_fill = order.get("avg_fill_price")
         logger.info(f"Tradier SELL submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
             "symbol": ticker.upper(),
             "qty": qty,
+            "price": float(avg_fill) if avg_fill else None,
             "status": status,
         }
 

@@ -100,10 +100,11 @@ class BinanceBroker(BrokerBase):
                 result.append({
                     "ticker": asset,
                     "qty": total,
-                    "avg_cost": 0.0,   # Binance spot doesn't expose avg cost easily
+                    "avg_entry_price": 0.0,   # Binance spot doesn't expose avg cost easily
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return result
         except Exception as e:
@@ -133,11 +134,19 @@ class BinanceBroker(BrokerBase):
             raise
         order_id = str(order.get("orderId", "unknown"))
         status = str(order.get("status", "submitted")).lower()
+        # Binance returns fills array with executed price; compute weighted avg
+        fills = order.get("fills", [])
+        avg_price = None
+        if fills:
+            total_qty = sum(float(f.get("qty", 0)) for f in fills)
+            total_cost = sum(float(f.get("price", 0)) * float(f.get("qty", 0)) for f in fills)
+            avg_price = total_cost / total_qty if total_qty > 0 else None
         logger.info(f"Binance BUY submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
@@ -159,11 +168,18 @@ class BinanceBroker(BrokerBase):
             raise
         order_id = str(order.get("orderId", "unknown"))
         status = str(order.get("status", "submitted")).lower()
+        fills = order.get("fills", [])
+        avg_price = None
+        if fills:
+            total_qty = sum(float(f.get("qty", 0)) for f in fills)
+            total_cost = sum(float(f.get("price", 0)) * float(f.get("qty", 0)) for f in fills)
+            avg_price = total_cost / total_qty if total_qty > 0 else None
         logger.info(f"Binance SELL submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 

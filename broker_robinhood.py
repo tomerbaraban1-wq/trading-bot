@@ -77,13 +77,15 @@ class RobinhoodBroker(BrokerBase):
                     current_price = 0.0
                 market_value = qty * current_price
                 unrealized_pl = (current_price - avg_cost) * qty
+                unrealized_plpc = ((current_price - avg_cost) / avg_cost) if avg_cost > 0 else 0.0
                 result.append({
                     "ticker": ticker,
                     "qty": qty,
-                    "avg_cost": avg_cost,
+                    "avg_entry_price": avg_cost,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": unrealized_pl,
+                    "unrealized_plpc": unrealized_plpc,
                 })
             return result
         except Exception as e:
@@ -110,11 +112,13 @@ class RobinhoodBroker(BrokerBase):
             raise
         order_id = str(order.get("id", "unknown"))
         status = str(order.get("state", "submitted")).lower()
+        avg_price = order.get("average_price") or order.get("price")
         logger.info(f"Robinhood BUY submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": ticker.upper(),
+            "symbol": ticker.upper(),
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
@@ -132,11 +136,13 @@ class RobinhoodBroker(BrokerBase):
             raise
         order_id = str(order.get("id", "unknown"))
         status = str(order.get("state", "submitted")).lower()
+        avg_price = order.get("average_price") or order.get("price")
         logger.info(f"Robinhood SELL submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": ticker.upper(),
+            "symbol": ticker.upper(),
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
