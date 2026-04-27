@@ -599,9 +599,21 @@ async function emergencyExit() {
     const ticker = document.getElementById('emergencyTicker').value.trim().toUpperCase();
     if (!ticker) return;
     if (!confirm(`Emergency exit ${ticker}?`)) return;
+    // Get the WEBHOOK_SECRET — saved in localStorage or prompt once
+    let secret = localStorage.getItem('webhook_secret');
+    if (!secret) {
+        secret = prompt('Enter your WEBHOOK_SECRET (saved locally for next time):');
+        if (!secret) return;
+        localStorage.setItem('webhook_secret', secret);
+    }
     try {
-        const r = await fetch(`${API}/emergency-exit/${ticker}`, {method:'POST'});
+        const r = await fetch(`${API}/emergency-exit/${ticker}?secret=${encodeURIComponent(secret)}`, {method:'POST'});
         const d = await r.json();
+        if (r.status === 401 || r.status === 403) {
+            localStorage.removeItem('webhook_secret');
+            alert('Invalid secret. Please try again.');
+            return;
+        }
         alert(JSON.stringify(d, null, 2));
         fetchData();
     } catch(e) { alert('Error: '+e.message); }
@@ -629,6 +641,14 @@ async function saveSettings() {
 
     msg.style.color = '#8b949e';
     msg.textContent = 'שומר...';
+    // Get the WEBHOOK_SECRET — saved in localStorage or prompt once
+    let secret = localStorage.getItem('webhook_secret');
+    if (!secret) {
+        secret = prompt('Enter your WEBHOOK_SECRET (saved locally for next time):');
+        if (!secret) { msg.textContent = ''; return; }
+        localStorage.setItem('webhook_secret', secret);
+    }
+    payload.secret = secret;
     try {
         const r = await fetch('/settings', {
             method: 'POST',
@@ -639,6 +659,9 @@ async function saveSettings() {
             msg.style.color = '#3fb950';
             msg.textContent = '✅ ההגדרות נשמרו בהצלחה!';
         } else {
+            if (r.status === 401 || r.status === 403) {
+                localStorage.removeItem('webhook_secret');
+            }
             const err = await r.json().catch(() => ({}));
             msg.style.color = '#f85149';
             msg.textContent = '❌ שגיאה: ' + (err.detail || r.status);
