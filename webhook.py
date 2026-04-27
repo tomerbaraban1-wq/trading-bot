@@ -1027,6 +1027,10 @@ async def auto_invest(data: dict):
     for pick in picks:
         if remaining < 1:
             break
+        # Check max open positions before each buy
+        open_count = len(database.get_open_trades())
+        if open_count >= settings.MAX_OPEN_POSITIONS:
+            break
         ticker = pick["ticker"]
         price  = float(pick.get("price") or 0)
         if price <= 0:
