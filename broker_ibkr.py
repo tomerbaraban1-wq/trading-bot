@@ -96,10 +96,13 @@ class IBKRBroker(BrokerBase):
         trade = ib.placeOrder(contract, order)
         ib.sleep(1)
         logger.info(f"IBKR BUY submitted: {ticker} x{qty}")
+        # Extract average fill price (avgFillPrice on completed trades, else None)
+        fill_price = getattr(trade.orderStatus, "avgFillPrice", None)
         return {
             "order_id": str(trade.order.orderId),
             "symbol": ticker.upper(),
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": str(trade.orderStatus.status),
             "type": "market",
         }
@@ -120,10 +123,12 @@ class IBKRBroker(BrokerBase):
         trade = ib.placeOrder(contract, order)
         ib.sleep(1)
         logger.info(f"IBKR SELL submitted: {ticker} x{qty}")
+        fill_price = getattr(trade.orderStatus, "avgFillPrice", None)
         return {
             "order_id": str(trade.order.orderId),
             "symbol": ticker.upper(),
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": str(trade.orderStatus.status),
         }
 
