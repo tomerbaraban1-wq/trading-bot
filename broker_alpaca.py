@@ -73,6 +73,7 @@ class AlpacaBroker(BrokerBase):
                 "current_price": float(p.current_price),
                 "market_value": float(p.market_value),
                 "unrealized_pl": float(p.unrealized_pl),
+                "unrealized_plpc": float(p.unrealized_plpc),  # used by Take Profit check
             }
         except APIError:
             return None
@@ -95,10 +96,13 @@ class AlpacaBroker(BrokerBase):
 
         order = retry_sync(client.submit_order, order_request)
         logger.info(f"BUY order submitted: {ticker} x{qty} (trailing stop: {stop_pct}%)")
+        # Extract fill price (filled_avg_price after fill, else None for unfilled orders)
+        fill_price = getattr(order, "filled_avg_price", None)
         return {
             "order_id": str(order.id),
             "symbol": order.symbol,
             "qty": float(order.qty),
+            "price": float(fill_price) if fill_price else None,
             "status": str(order.status),
             "type": str(order.type),
         }
@@ -121,10 +125,12 @@ class AlpacaBroker(BrokerBase):
 
         order = retry_sync(client.submit_order, order_request)
         logger.info(f"SELL order submitted: {ticker} x{qty}")
+        fill_price = getattr(order, "filled_avg_price", None)
         return {
             "order_id": str(order.id),
             "symbol": order.symbol,
             "qty": float(order.qty),
+            "price": float(fill_price) if fill_price else None,
             "status": str(order.status),
         }
 

@@ -332,12 +332,13 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
 
     # Log trade
     actual_price = order.get("price") or payload.price
-    trade_id = log_trade_open(payload, sentiment, order, max_qty)
+    filled_qty = float(order.get("filled_qty", max_qty))   # use actual fill, handle partial iceberg
+    trade_id = log_trade_open(payload, sentiment, order, filled_qty)
 
     # Record actual slippage (signal price vs fill price, fire-and-forget)
     from slippage import record as _slippage_record
     asyncio.ensure_future(asyncio.to_thread(
-        _slippage_record, payload.price, actual_price, max_qty, "buy", ticker
+        _slippage_record, payload.price, actual_price, filled_qty, "buy", ticker
     ))
 
     # Set ATR trailing stop immediately after fill
@@ -362,10 +363,10 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         None, "",  # live_blocked_by=None means live also traded
     ))
 
-    # Notify Telegram
+    # Notify Telegram (use filled_qty for accurate display on partial fills)
     asyncio.ensure_future(notify_trade_open(
-        ticker=ticker, qty=max_qty, price=actual_price,
-        notional=round(actual_price * max_qty, 2),
+        ticker=ticker, qty=filled_qty, price=actual_price,
+        notional=round(actual_price * filled_qty, 2),
         score=result.get("composite_score", 0),
         sentiment_score=sentiment.score,
         trade_id=trade_id,
@@ -377,7 +378,7 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
         "status": "executed",
         "action": "buy",
         "ticker": ticker,
-        "qty": max_qty,
+        "qty": filled_qty,
         "price": actual_price,
         "sentiment_score": sentiment.score,
         "trade_id": trade_id,
@@ -693,7 +694,8 @@ async def scan_now(secret: str = ""):
             slip = await asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
             order = await iceberg_buy(ticker, qty, price)
             actual_price = float(order.get("price") or price)
-            remaining -= actual_price * qty
+            filled_qty = float(order.get("filled_qty", qty))   # use actual fill, handle partial iceberg
+            remaining -= actual_price * filled_qty
 
             from models import WebhookPayload, TradeAction
             fake_payload = WebhookPayload(
@@ -701,7 +703,7 @@ async def scan_now(secret: str = ""):
                 ticker=ticker, action=TradeAction.BUY, price=actual_price,
             )
             from trade_logger import log_trade_open
-            trade_id = log_trade_open(fake_payload, sent, order, qty, sizing_meta, slip)
+            trade_id = log_trade_open(fake_payload, sent, order, filled_qty, sizing_meta, slip)
 
             # Set ATR trailing stop immediately after fill (same as _handle_buy / auto_invest_loop)
             try:
@@ -711,10 +713,10 @@ async def scan_now(secret: str = ""):
             except Exception as atr_err:
                 logger.warning(f"[SCAN/NOW] ATR stop failed for {ticker}: {atr_err}")
 
-            asyncio.ensure_future(notify_buy(ticker, qty, actual_price, score, sent.score))
-            asyncio.ensure_future(asyncio.to_thread(slippage_record, price, actual_price, qty, "buy", ticker))
+            asyncio.ensure_future(notify_buy(ticker, filled_qty, actual_price, score, sent.score))
+            asyncio.ensure_future(asyncio.to_thread(slippage_record, price, actual_price, filled_qty, "buy", ticker))
 
-            bought.append({"ticker": ticker, "qty": round(qty, 4), "price": actual_price, "score": score})
+            bought.append({"ticker": ticker, "qty": round(filled_qty, 4), "price": actual_price, "score": score})
 
         except Exception as e:
             skipped.append({"ticker": ticker, "reason": str(e)})
