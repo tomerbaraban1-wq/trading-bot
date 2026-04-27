@@ -757,10 +757,11 @@ async def scan_preview():
             results.append({"ticker": ticker, "error": str(e)})
 
     results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    from scoring import MIN_BUY_SCORE
     return {
-        "min_score_to_buy": 50,
+        "min_score_to_buy": MIN_BUY_SCORE,
         "results": results,
-        "tip": "אם כל הציונים מתחת ל-50 — השוק לא בכיוון טוב כרגע",
+        "tip": f"אם כל הציונים מתחת ל-{MIN_BUY_SCORE} — השוק לא בכיוון טוב כרגע",
     }
 
 
