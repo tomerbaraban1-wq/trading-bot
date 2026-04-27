@@ -423,7 +423,8 @@ def get_last_heartbeat() -> dict | None:
 
 def cleanup_old_heartbeats(days: int = 7):
     conn = get_connection()
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    # Use utcnow() to match SQLite CURRENT_TIMESTAMP which is always UTC
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     result = conn.execute("DELETE FROM heartbeat_log WHERE timestamp < ?", (cutoff,))
     conn.commit()
     if result.rowcount > 0:
