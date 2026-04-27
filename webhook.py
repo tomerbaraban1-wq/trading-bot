@@ -705,7 +705,7 @@ async def scan_now(secret: str = ""):
                 logger.warning(f"[SCAN/NOW] ATR stop failed for {ticker}: {atr_err}")
 
             asyncio.ensure_future(notify_buy(ticker, qty, actual_price, score, sent.score))
-            _create_background_task(asyncio.to_thread(slippage_record, price, actual_price, qty, "buy", ticker))
+            asyncio.ensure_future(asyncio.to_thread(slippage_record, price, actual_price, qty, "buy", ticker))
 
             bought.append({"ticker": ticker, "qty": round(qty, 4), "price": actual_price, "score": score})
 
