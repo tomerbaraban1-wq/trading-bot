@@ -84,6 +84,7 @@ def _pg_connect():
             password=_NEON_PASSWORD,
             dbname=_NEON_DB,
             sslmode="require",
+            connect_timeout=30,   # wait up to 30s for Neon to wake from idle
         )
     return psycopg.connect(DATABASE_URL)
 

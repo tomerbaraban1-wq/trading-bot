@@ -941,6 +941,16 @@ async def emergency_exit(ticker: str, request: Request):
             tax_result["tax_amount"], 0.0, "emergency_exit",
         )
 
+        # Update circuit breaker daily P&L
+        was_ok, _ = check_circuit_breaker()
+        record_trade_result(pnl_gross)
+        is_ok, _ = check_circuit_breaker()
+        if not is_ok and was_ok:
+            cb_st = cb_status()
+            asyncio.ensure_future(notify_circuit_breaker_tripped(
+                cb_st["daily_pnl"], cb_st["max_daily_loss"], cb_st["trip_reason"]
+            ))
+
         # Cleanup per-ticker state so re-entry works correctly
         from heartbeat import _smart_sell_last_check, _position_alert_sent
         _smart_sell_last_check.pop(ticker, None)
