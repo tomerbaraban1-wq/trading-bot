@@ -659,6 +659,13 @@ async def scan_now(secret: str = ""):
     for ticker in candidates[:10]:
         if remaining < 10:
             break
+        # Re-check positions limit on each iteration (we may have bought one already)
+        if len(database.get_open_trades()) >= settings.MAX_OPEN_POSITIONS:
+            break
+        # Re-check circuit breaker on each iteration
+        cb_ok_loop, cb_reason_loop = check_circuit_breaker()
+        if not cb_ok_loop:
+            break
         try:
             sent = await asyncio.wait_for(asyncio.to_thread(score_sentiment, ticker), timeout=25)
             comp = await asyncio.wait_for(asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=25)
