@@ -405,7 +405,11 @@ def _compute_strategy_stats(trades: list[dict]) -> list[StrategyStats]:
             continue
 
         if strat not in buckets:
-            buckets[strat] = StrategyStats(strategy=strat)
+            # Initialise best/worst with the first real pnl value (not 0)
+            s = StrategyStats(strategy=strat)
+            s.best_trade  = pnl
+            s.worst_trade = pnl
+            buckets[strat] = s
 
         s = buckets[strat]
         s.total      += 1
