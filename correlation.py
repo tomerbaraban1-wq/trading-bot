@@ -306,8 +306,11 @@ def _fetch_log_returns(tickers: list[str]) -> pd.DataFrame:
 
     df      = pd.concat(closes.values(), axis=1)
     # Log-returns: ln(P_t / P_{t-1}) — more stationary than simple returns
-    returns = df.apply(lambda col: col.dropna().transform(lambda p: p / p.shift(1)).apply(
-        lambda x: math.log(x) if x > 0 else float("nan")
+    # Use ratio then log to handle index alignment correctly
+    import numpy as np
+    ratio   = df / df.shift(1)
+    returns = ratio.apply(lambda col: col.map(
+        lambda x: math.log(x) if pd.notna(x) and x > 0 else float("nan")
     ))
     return returns.dropna(how="all")
 
