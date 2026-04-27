@@ -1344,3 +1344,57 @@ async def test_telegram():
         "TELEGRAM_CHAT_ID":   chat_hint,
         "message": "הודעת בדיקה נשלחה בהצלחה ✅" if ok else "❌ שליחה נכשלה — בדוק לוגים",
     }
+
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(update: dict):
+    """
+    Receive incoming Telegram messages and reply intelligently.
+
+    To activate:
+      curl -F "url=https://YOUR-DOMAIN/telegram/webhook" \
+           https://api.telegram.org/bot<TOKEN>/setWebhook
+
+    The bot only replies to messages from the configured TELEGRAM_CHAT_ID
+    (security against bot username leaks).
+    """
+    from telegram_chat import handle_telegram_update
+    try:
+        result = await handle_telegram_update(update)
+        return result
+    except Exception as e:
+        logger.error(f"Telegram webhook error: {e}")
+        return {"status": "error", "reason": str(e)}
+
+
+@router.get("/telegram/setup")
+async def telegram_setup_webhook(secret: str = ""):
+    """
+    One-time setup: tell Telegram to send messages to /telegram/webhook.
+    Call this URL once after deploying:
+      /telegram/setup?secret=YOUR_WEBHOOK_SECRET
+    """
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from telegram_bot import TELEGRAM_BOT_TOKEN
+    if not TELEGRAM_BOT_TOKEN:
+        return {"status": "error", "reason": "TELEGRAM_BOT_TOKEN not configured"}
+
+    import os as _os
+    base_url = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not base_url:
+        return {"status": "error", "reason": "RENDER_EXTERNAL_URL not set"}
+
+    webhook_url = f"{base_url}/telegram/webhook"
+
+    import aiohttp
+    async with aiohttp.ClientSession() as session:
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        async with session.post(api_url, json={"url": webhook_url}) as resp:
+            data = await resp.json()
+            return {
+                "status": "ok" if data.get("ok") else "failed",
+                "webhook_url": webhook_url,
+                "telegram_response": data,
+            }

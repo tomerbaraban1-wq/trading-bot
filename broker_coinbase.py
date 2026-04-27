@@ -111,10 +111,11 @@ class CoinbaseBroker(BrokerBase):
                 result.append({
                     "ticker": currency,
                     "qty": total,
-                    "avg_cost": 0.0,
+                    "avg_entry_price": 0.0,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return result
         except Exception as e:
@@ -149,8 +150,9 @@ class CoinbaseBroker(BrokerBase):
         logger.info(f"Coinbase BUY submitted: {product_id} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": product_id,
+            "symbol": product_id,
             "qty": qty,
+            "price": None,           # Coinbase fills async — price not in submit response
             "status": status,
         }
 
@@ -175,8 +177,9 @@ class CoinbaseBroker(BrokerBase):
         logger.info(f"Coinbase SELL submitted: {product_id} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": product_id,
+            "symbol": product_id,
             "qty": qty,
+            "price": None,           # Coinbase fills async — price not in submit response
             "status": status,
         }
 

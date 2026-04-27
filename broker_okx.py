@@ -106,10 +106,11 @@ class OKXBroker(BrokerBase):
                 result.append({
                     "ticker": ccy,
                     "qty": qty,
-                    "avg_cost": 0.0,
+                    "avg_entry_price": 0.0,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return result
         except Exception as e:
@@ -146,11 +147,13 @@ class OKXBroker(BrokerBase):
         data = resp.get("data", [{}])[0]
         order_id = str(data.get("ordId", "unknown"))
         status = "submitted" if resp.get("code") == "0" else "error"
+        avg_price = data.get("avgPx") or data.get("fillPx")
         logger.info(f"OKX BUY submitted: {inst_id} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": inst_id,
+            "symbol": inst_id,
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
@@ -177,11 +180,13 @@ class OKXBroker(BrokerBase):
         data = resp.get("data", [{}])[0]
         order_id = str(data.get("ordId", "unknown"))
         status = "submitted" if resp.get("code") == "0" else "error"
+        avg_price = data.get("avgPx") or data.get("fillPx")
         logger.info(f"OKX SELL submitted: {inst_id} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": inst_id,
+            "symbol": inst_id,
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 

@@ -93,10 +93,11 @@ class BybitBroker(BrokerBase):
                 result.append({
                     "ticker": asset,
                     "qty": qty,
-                    "avg_cost": 0.0,
+                    "avg_entry_price": 0.0,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return result
         except Exception as e:
@@ -132,11 +133,13 @@ class BybitBroker(BrokerBase):
         result = resp.get("result", {})
         order_id = str(result.get("orderId", "unknown"))
         status = str(result.get("orderStatus", "submitted")).lower()
+        avg_price = result.get("avgPrice") or result.get("price")
         logger.info(f"Bybit BUY submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
@@ -163,11 +166,13 @@ class BybitBroker(BrokerBase):
         result = resp.get("result", {})
         order_id = str(result.get("orderId", "unknown"))
         status = str(result.get("orderStatus", "submitted")).lower()
+        avg_price = result.get("avgPrice") or result.get("price")
         logger.info(f"Bybit SELL submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 

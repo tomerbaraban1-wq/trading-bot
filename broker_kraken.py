@@ -128,10 +128,11 @@ class KrakenBroker(BrokerBase):
                 positions.append({
                     "ticker": asset.lstrip("XZ"),
                     "qty": qty,
-                    "avg_cost": 0.0,
+                    "avg_entry_price": 0.0,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return positions
         except Exception as e:
@@ -161,11 +162,19 @@ class KrakenBroker(BrokerBase):
         result = self._query_private("AddOrder", data)
         txids = result.get("txid", [])
         order_id = txids[0] if txids else str(uuid.uuid4())
+        # Kraken doesn't return fill price immediately on AddOrder — fall back to ticker price
+        try:
+            ticker_data = self._query_public("Ticker", {"pair": pair})
+            price_data = next(iter(ticker_data.values()))
+            avg_price = float(price_data["c"][0])
+        except Exception:
+            avg_price = None
         logger.info(f"Kraken BUY submitted: {pair} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": pair,
+            "symbol": pair,
             "qty": qty,
+            "price": avg_price,
             "status": "submitted",
         }
 
@@ -187,11 +196,18 @@ class KrakenBroker(BrokerBase):
         result = self._query_private("AddOrder", data)
         txids = result.get("txid", [])
         order_id = txids[0] if txids else str(uuid.uuid4())
+        try:
+            ticker_data = self._query_public("Ticker", {"pair": pair})
+            price_data = next(iter(ticker_data.values()))
+            avg_price = float(price_data["c"][0])
+        except Exception:
+            avg_price = None
         logger.info(f"Kraken SELL submitted: {pair} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": pair,
+            "symbol": pair,
             "qty": qty,
+            "price": avg_price,
             "status": "submitted",
         }
 
