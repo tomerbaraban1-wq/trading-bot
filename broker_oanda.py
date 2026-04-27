@@ -146,11 +146,13 @@ class OandaBroker(BrokerBase):
         resp = ep.response
         fill = resp.get("orderFillTransaction", {})
         order_id = fill.get("id", resp.get("relatedTransactionIDs", ["?"])[0])
+        fill_price = fill.get("price")
         logger.info(f"Oanda BUY submitted: {instrument} x{qty}")
         return {
             "order_id": str(order_id),
             "symbol": instrument,
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": "filled",
             "type": "market",
         }
@@ -180,11 +182,13 @@ class OandaBroker(BrokerBase):
         resp = ep.response
         fill = resp.get("orderFillTransaction", {})
         order_id = fill.get("id", resp.get("relatedTransactionIDs", ["?"])[0])
+        fill_price = fill.get("price")
         logger.info(f"Oanda SELL submitted: {instrument} x{qty}")
         return {
             "order_id": str(order_id),
             "symbol": instrument,
             "qty": qty,
+            "price": float(fill_price) if fill_price else None,
             "status": "filled",
         }
 
