@@ -241,8 +241,22 @@ class TradeBotWidget(ctk.CTk):
         ticker = self.exit_entry.get().strip().upper()
         if not ticker:
             return
+        # Get secret from env (.env via dotenv) or local file fallback
+        secret = os.environ.get("WEBHOOK_SECRET", "")
+        if not secret:
+            try:
+                from config import settings as _s
+                secret = _s.WEBHOOK_SECRET
+            except Exception:
+                pass
+        if not secret:
+            return  # no secret configured — can't authenticate
         try:
-            requests.post(f"{API_URL}/emergency-exit/{ticker}", timeout=5)
+            requests.post(
+                f"{API_URL}/emergency-exit/{ticker}",
+                params={"secret": secret},
+                timeout=5,
+            )
         except Exception:
             pass
 

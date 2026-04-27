@@ -348,8 +348,23 @@ class TradeBotApp(ctk.CTk):
         ticker = self.exit_entry.get().strip().upper()
         if not ticker:
             return
+        # Read secret from env or settings
+        secret = os.environ.get("WEBHOOK_SECRET", "")
+        if not secret:
+            try:
+                from config import settings as _s
+                secret = _s.WEBHOOK_SECRET
+            except Exception:
+                pass
+        if not secret:
+            self._log("Emergency exit failed: WEBHOOK_SECRET not configured")
+            return
         try:
-            res = requests.post(f"{API_URL}/emergency-exit/{ticker}", timeout=5)
+            res = requests.post(
+                f"{API_URL}/emergency-exit/{ticker}",
+                params={"secret": secret},
+                timeout=5,
+            )
             data = res.json()
             self._log(f"Emergency exit {ticker}: {json.dumps(data)}")
         except Exception as e:
