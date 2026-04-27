@@ -979,10 +979,15 @@ async def auto_invest(data: dict):
     הבוט מחליט לבד כמה חברות לקנות.
     Body: { "secret": "..." }
     """
-    if data.get("secret") != settings.WEBHOOK_SECRET:
+    if not settings.WEBHOOK_SECRET or data.get("secret") != settings.WEBHOOK_SECRET:
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     import asyncio
+
+    # Circuit breaker check — stop if daily loss limit exceeded
+    cb_ok, cb_reason = check_circuit_breaker()
+    if not cb_ok:
+        return {"status": "blocked", "reason": f"Circuit breaker: {cb_reason}"}
 
     # 1. סרוק וקבל top 10 מועמדים
     try:
@@ -993,9 +998,8 @@ async def auto_invest(data: dict):
     if not all_picks:
         return {"status": "error", "reason": "No stocks passed screening"}
 
-    # 2. בחר רק נכסים עם ציון >= 5
-    MIN_SCORE = 5
-    picks = [p for p in all_picks if p.get("score", 0) >= MIN_SCORE] or all_picks[:5]
+    # 2. בחר רק נכסים עם ציון >= 3 (technical score מ-scanner, טווח 0-15)
+    picks = [p for p in all_picks if p.get("score", 0) >= 3] or all_picks[:5]
     picks = picks[:10]  # עד 10 מועמדים
 
     # 3. קבל תקציב זמין
@@ -1046,6 +1050,18 @@ async def auto_invest(data: dict):
                 price=price,
             )
             trade_id = log_trade_open(fake_payload, sentiment, order, qty)
+
+            # Set ATR trailing stop immediately after fill
+            try:
+                from atr_stop import compute_initial_stop
+                atr_stop_price, _ = await asyncio.to_thread(
+                    compute_initial_stop, ticker, float(order.get("price") or price)
+                )
+                await asyncio.to_thread(database.update_trade_stop, trade_id, atr_stop_price,
+                                        float(order.get("price") or price))
+            except Exception as atr_err:
+                logger.warning(f"[AUTO-INVEST] ATR stop failed for {ticker}: {atr_err}")
+
             results.append({
                 "ticker": ticker,
                 "status": "bought",
