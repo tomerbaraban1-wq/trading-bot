@@ -629,7 +629,7 @@ async def auto_invest_loop():
                             _shadow.evaluate, ticker, actual_price, score, sentiment.score,
                             _vol_ratio, None, "", "auto_invest",
                         ))
-                        await notify_buy(ticker, qty, actual_price, score, sentiment.score)
+                        await notify_buy(ticker, filled_qty, actual_price, score, sentiment.score)
 
                     except _asyncio.TimeoutError:
                         logger.warning(f"AUTO-INVEST: {ticker} timed out, skipping")

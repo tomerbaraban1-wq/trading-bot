@@ -1087,18 +1087,19 @@ async def auto_invest(data: dict):
             except Exception as atr_err:
                 logger.warning(f"[AUTO-INVEST] ATR stop failed for {ticker}: {atr_err}")
 
+            actual_price = float(order.get("price") or price)
             results.append({
                 "ticker": ticker,
                 "status": "bought",
                 "qty": qty,
-                "price": price,
-                "spent": round(qty * price, 2),
+                "price": actual_price,
+                "spent": round(qty * actual_price, 2),
                 "category": pick.get("category", ""),
                 "trade_id": trade_id,
             })
-            spent = qty * price
+            spent = qty * actual_price
             remaining -= spent
-            logger.info(f"Auto-invest: bought {qty}x {ticker} @ ${price:.2f} | נשאר: ${remaining:.2f}")
+            logger.info(f"Auto-invest: bought {qty}x {ticker} @ ${actual_price:.2f} | נשאר: ${remaining:.2f}")
         except Exception as e:
             results.append({"ticker": ticker, "status": "error", "reason": str(e)})
 
