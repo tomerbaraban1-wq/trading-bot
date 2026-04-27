@@ -453,6 +453,11 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
     )
     log_learning(trade["id"], description, f"{outcome}_pattern", indicators, outcome, pnl_gross)
 
+    # Cleanup per-ticker state so re-entry works correctly
+    from heartbeat import _smart_sell_last_check, _position_alert_sent
+    _smart_sell_last_check.pop(ticker, None)
+    _position_alert_sent.pop(ticker, None)
+
     # Notify Telegram — full P&L breakdown
     duration_hours = _trade_duration_hours(trade.get("entry_time"))
     asyncio.ensure_future(notify_trade_close(
@@ -926,6 +931,11 @@ async def emergency_exit(ticker: str, request: Request):
             trade["id"], exit_price, pnl_gross, pnl_net,
             tax_result["tax_amount"], 0.0, "emergency_exit",
         )
+
+        # Cleanup per-ticker state so re-entry works correctly
+        from heartbeat import _smart_sell_last_check, _position_alert_sent
+        _smart_sell_last_check.pop(ticker, None)
+        _position_alert_sent.pop(ticker, None)
 
         logger.warning(f"EMERGENCY EXIT: {ticker} | PnL=${pnl_gross:+.2f}")
         return {
