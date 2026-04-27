@@ -99,13 +99,15 @@ class SchwabBroker(BrokerBase):
                 current_price = float(p.get("marketValue", 0)) / qty if qty > 0 else avg_cost
                 market_value = float(p.get("marketValue", 0))
                 unrealized_pl = float(p.get("unrealizedPnL", 0))
+                unrealized_plpc = (unrealized_pl / (avg_cost * qty)) if avg_cost > 0 and qty > 0 else 0.0
                 result.append({
                     "ticker": symbol,
                     "qty": qty,
-                    "avg_cost": avg_cost,
+                    "avg_entry_price": avg_cost,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": unrealized_pl,
+                    "unrealized_plpc": unrealized_plpc,
                 })
             return result
         except Exception as e:
@@ -133,8 +135,9 @@ class SchwabBroker(BrokerBase):
         logger.info(f"Schwab BUY submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": None,          # Schwab async fill — price not available at submission
             "status": "submitted",
         }
 
@@ -155,8 +158,9 @@ class SchwabBroker(BrokerBase):
         logger.info(f"Schwab SELL submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": qty,
+            "price": None,          # Schwab async fill — price not available at submission
             "status": "submitted",
         }
 
