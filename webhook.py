@@ -693,7 +693,16 @@ async def scan_now(secret: str = ""):
                 ticker=ticker, action=TradeAction.BUY, price=actual_price,
             )
             from trade_logger import log_trade_open
-            log_trade_open(fake_payload, sent, order, qty, sizing_meta, slip)
+            trade_id = log_trade_open(fake_payload, sent, order, qty, sizing_meta, slip)
+
+            # Set ATR trailing stop immediately after fill (same as _handle_buy / auto_invest_loop)
+            try:
+                from atr_stop import compute_initial_stop
+                atr_stop_price, _ = await asyncio.to_thread(compute_initial_stop, ticker, actual_price)
+                await asyncio.to_thread(database.update_trade_stop, trade_id, atr_stop_price, actual_price)
+            except Exception as atr_err:
+                logger.warning(f"[SCAN/NOW] ATR stop failed for {ticker}: {atr_err}")
+
             asyncio.ensure_future(notify_buy(ticker, qty, actual_price, score, sent.score))
             _create_background_task(asyncio.to_thread(slippage_record, price, actual_price, qty, "buy", ticker))
 
