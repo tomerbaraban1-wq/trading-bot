@@ -591,13 +591,14 @@ async def auto_invest_loop():
                         from iceberg import iceberg_buy
                         order = await iceberg_buy(ticker, qty, price)
                         actual_price = float(order.get("price") or price)
-                        spent        = actual_price * qty
+                        filled_qty   = float(order.get("filled_qty", qty))  # use actual fill
+                        spent        = actual_price * filled_qty
                         remaining   -= spent
                         bought      += 1
 
                         # Record actual slippage (signal price vs fill price)
                         _create_background_task(_asyncio.to_thread(
-                            slippage_record, price, actual_price, qty, "buy", ticker
+                            slippage_record, price, actual_price, filled_qty, "buy", ticker
                         ))
 
                         from models import WebhookPayload, TradeAction
@@ -605,7 +606,7 @@ async def auto_invest_loop():
                             secret=settings.WEBHOOK_SECRET,
                             ticker=ticker, action=TradeAction.BUY, price=actual_price,
                         )
-                        trade_id = log_trade_open(fake_payload, sentiment, order, qty, sizing_meta, slip)
+                        trade_id = log_trade_open(fake_payload, sentiment, order, filled_qty, sizing_meta, slip)
 
                         # Set ATR trailing stop immediately after fill
                         try:

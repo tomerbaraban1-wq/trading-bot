@@ -207,7 +207,7 @@ async def iceberg_buy(
         except Exception:
             fresh_price = initial_price
 
-        lim_price = limit_buy_price(fresh_price, ticker)
+        lim_price = await asyncio.to_thread(limit_buy_price, fresh_price, ticker)
 
         # Submit child order
         try:
