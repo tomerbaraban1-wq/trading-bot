@@ -623,7 +623,7 @@ async def scan_now(secret: str = ""):
     Requires secret param: /scan/now?secret=YOUR_SECRET
     Ignores market hours (useful for testing outside trading hours).
     """
-    if secret != settings.WEBHOOK_SECRET:
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     from scanner import get_watchlist
@@ -873,7 +873,7 @@ async def set_broker(payload: BrokerSwitch, request: Request):
     """
     # Auth — accept secret from body OR from X-Webhook-Secret header
     secret = getattr(payload, "secret", None) or request.headers.get("X-Webhook-Secret", "")
-    if secret != settings.WEBHOOK_SECRET:
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
         logger.warning(f"Broker switch auth failed from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
@@ -903,7 +903,7 @@ async def emergency_exit(ticker: str, request: Request):
     Auth: pass secret in `?secret=...` query param OR X-Webhook-Secret header.
     """
     secret = request.query_params.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
-    if secret != settings.WEBHOOK_SECRET:
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
         logger.warning(f"Emergency exit auth failed for {ticker} from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
@@ -1208,7 +1208,7 @@ async def update_settings(data: dict, request: Request):
     Auth: pass `secret` in body OR X-Webhook-Secret header.
     """
     secret = data.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
-    if secret != settings.WEBHOOK_SECRET:
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
         logger.warning(f"Settings update auth failed from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
