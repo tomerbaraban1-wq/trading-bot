@@ -53,12 +53,21 @@ def _state_path() -> Path:
     return db_path.parent / "paper_broker_state.json"
 
 
+_ipv4_cache: dict[str, str] = {}   # hostname → IPv4 (cached for lifetime of process)
+
+
 def _resolve_ipv4(hostname: str) -> str:
-    """Resolve hostname to its first IPv4 address (avoids IPv6 on Render free tier)."""
+    """Resolve hostname to its first IPv4 address (avoids IPv6 on Render free tier).
+    Cached for the lifetime of the process — DNS rarely changes for Neon endpoints.
+    """
+    if hostname in _ipv4_cache:
+        return _ipv4_cache[hostname]
     import socket
     try:
         infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
-        return infos[0][4][0]
+        ip = infos[0][4][0]
+        _ipv4_cache[hostname] = ip
+        return ip
     except Exception:
         return hostname  # fall back to hostname if resolution fails
 
