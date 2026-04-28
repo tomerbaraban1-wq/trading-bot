@@ -268,6 +268,109 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
                 lines.append(f"  {emoji} {p['ticker']}: ${pnl:+.2f} ({p['pct']:+.1f}%)")
         return "\n".join(lines)
 
+    # ── חדשות שוק ────────────────────────────────────────────────────
+    if any(w in msg for w in ["חדשות", "news", "עדכונים", "מה חדש"]):
+        words = msg.upper().split()
+        tickers_in_msg = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                          and w not in ["חדשות", "NEWS", "מה", "של", "ה", "עדכונים"]]
+        from news_service import get_headlines, get_general_headlines
+        if tickers_in_msg:
+            ticker = tickers_in_msg[0]
+            headlines = get_headlines(ticker, limit=5)
+            if not headlines:
+                return f"📰 אין חדשות ל-{ticker} כרגע."
+            lines = [f"📰 <b>חדשות {ticker}:</b>"]
+            for h in headlines[:5]:
+                lines.append(f"• {h[:100]}")
+            return "\n".join(lines)
+        else:
+            headlines = get_general_headlines(limit=5)
+            if not headlines:
+                return "📰 אין חדשות זמינות כרגע."
+            lines = ["📰 <b>חדשות שוק:</b>"]
+            for h in headlines[:5]:
+                lines.append(f"• {h[:100]}")
+            return "\n".join(lines)
+
+    # ── סנטימנט מניה ─────────────────────────────────────────────────
+    if any(w in msg for w in ["סנטימנט", "sentiment", "חדשות", "מצב רוח"]):
+        words = msg.upper().split()
+        tickers_in_msg = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                          and w not in ["סנטימנט", "SENTIMENT", "מה", "של"]]
+        if tickers_in_msg:
+            ticker = tickers_in_msg[0]
+            try:
+                from sentiment import score_sentiment
+                result = score_sentiment(ticker)
+                score = result.score
+                if score >= 7:
+                    emoji = "🟢"
+                elif score >= 5:
+                    emoji = "🟡"
+                else:
+                    emoji = "🔴"
+                return (
+                    f"{emoji} <b>סנטימנט {ticker}</b>\n"
+                    f"📊 ציון: {score}/10\n"
+                    f"💬 {result.reasoning[:150]}"
+                )
+            except Exception:
+                return f"לא הצלחתי לבדוק סנטימנט ל-{ticker} 🤔"
+
+    # ── ציון מניה ספציפית ────────────────────────────────────────────
+    if any(w in msg for w in ["ציון של", "score of", "תציון"]):
+        words = msg.upper().split()
+        tickers_in_msg = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                          and w not in ["ציון", "של", "SCORE", "OF"]]
+        if tickers_in_msg:
+            ticker = tickers_in_msg[0]
+            try:
+                from sentiment import score_sentiment
+                from scoring import get_composite_score
+                sent = score_sentiment(ticker)
+                comp = get_composite_score(ticker, sent.score)
+                score = comp["composite_score"]
+                should_buy = comp["should_buy"]
+                emoji = "✅" if should_buy else "❌"
+                return (
+                    f"🎯 <b>ציון {ticker}: {score}/100</b> {emoji}\n"
+                    f"📊 טכני: {comp['scores']['technicals']:.0f}\n"
+                    f"🌍 שוק: {comp['scores']['market']:.0f}\n"
+                    f"🧠 סנטימנט: {sent.score}/10\n"
+                    f"{'✅ הבוט ישקול לקנות' if should_buy else '❌ ציון נמוך מדי לקנייה'}"
+                )
+            except Exception:
+                return f"לא הצלחתי לציין את {ticker} 🤔"
+
+    # ── סריקה עכשיו ──────────────────────────────────────────────────
+    if any(w in msg for w in ["סרוק", "סריקה", "scan", "מצא מניה"]):
+        try:
+            from scanner import scan_stocks
+            picks = scan_stocks(max_results=3)
+            if not picks:
+                return "🔍 לא נמצאו מניות מתאימות כרגע."
+            lines = ["🔍 <b>מניות מובילות עכשיו:</b>"]
+            for p in picks:
+                lines.append(f"📈 <b>{p['ticker']}</b> | ציון: {p['score']:.0f} | ${p['price']:.2f}")
+            return "\n".join(lines)
+        except Exception:
+            return "לא הצלחתי לסרוק כרגע 🤔"
+
+    # ── מס ───────────────────────────────────────────────────────────
+    if any(w in msg for w in ["מס", "tax", "מיסוי", "כמה מס"]):
+        try:
+            import database as _db
+            tax = _db.get_tax_summary()
+            return (
+                f"🧾 <b>דוח מס</b>\n"
+                f"💰 רווח ממומש: ${tax.get('realized_pnl_gross', 0):+.2f}\n"
+                f"💳 רווח נטו: ${tax.get('realized_pnl_net', 0):+.2f}\n"
+                f"🏦 מס שהופרש: ${tax.get('tax_reserved', 0):.2f}\n"
+                f"✅ קרדיט מס: ${tax.get('tax_credit', 0):.2f}"
+            )
+        except Exception:
+            return "לא הצלחתי להביא את דוח המס 🤔"
+
     # ── מחיר מניה ────────────────────────────────────────────────────
     if any(w in msg for w in ["מחיר", "price", "כמה עולה", "כמה שווה"]) and len(msg.split()) >= 2:
         words = msg.upper().split()
@@ -395,16 +498,23 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
             "  • כמה שווה התיק?\n"
             "  • כמה הרווחתי?\n"
             "  • כמה מזומן יש לי?\n"
-            "  • כמה פוזיציות אפשר לפתוח?\n\n"
+            "  • כמה פוזיציות אפשר?\n"
+            "  • דוח מס\n\n"
             "📈 <b>מניות:</b>\n"
             "  • אילו מניות יש לי?\n"
-            "  • AAPL (שם מניה — פרטים)\n"
-            "  • מחיר TSLA (מחיר עכשיו)\n\n"
+            "  • AAPL (פרטי מניה)\n"
+            "  • מחיר TSLA\n"
+            "  • סנטימנט NVDA\n"
+            "  • ציון של MSFT\n\n"
             "📊 <b>ביצועים:</b>\n"
             "  • ביצועים שבועיים\n"
             "  • עסקאות אחרונות?\n\n"
+            "🔍 <b>סריקה וחדשות:</b>\n"
+            "  • סרוק מניות\n"
+            "  • חדשות שוק\n"
+            "  • חדשות AAPL\n\n"
             "🤖 <b>בוט:</b>\n"
-            "  • מה הבוט עושה עכשיו?\n"
+            "  • מה הבוט עושה?\n"
             "  • האם השוק פתוח?\n"
             "  • הגדרות הבוט\n"
             "  • ציון קנייה\n"
