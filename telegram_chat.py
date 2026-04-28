@@ -268,6 +268,155 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
                 lines.append(f"  {emoji} {p['ticker']}: ${pnl:+.2f} ({p['pct']:+.1f}%)")
         return "\n".join(lines)
 
+    # ── uptime / זמן פעילות ──────────────────────────────────────────
+    if any(w in msg for w in ["uptime", "כמה זמן", "פעיל מתי", "זמן פעילות"]):
+        try:
+            from main import get_uptime
+            secs = get_uptime()
+            h = int(secs // 3600)
+            m = int((secs % 3600) // 60)
+            return f"⏱️ <b>זמן פעילות:</b> {h} שעות {m} דקות"
+        except Exception:
+            return "⏱️ לא הצלחתי לקרוא את זמן הפעילות."
+
+    # ── RSI מניה ─────────────────────────────────────────────────────
+    if any(w in msg for w in ["rsi", "אינדיקטור", "טכני"]):
+        words = msg.upper().split()
+        tickers_in_msg = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                          and w not in ["RSI", "אינדיקטור", "טכני", "של"]]
+        if tickers_in_msg:
+            ticker = tickers_in_msg[0]
+            try:
+                from indicators import get_current_indicators
+                ind = get_current_indicators(ticker)
+                if not ind:
+                    return f"לא הצלחתי להביא אינדיקטורים ל-{ticker} 🤔"
+                rsi = ind.get("rsi")
+                macd = ind.get("macd")
+                bb = ind.get("bb_position")
+                rsi_txt = f"{rsi:.1f}" if rsi else "N/A"
+                if rsi and rsi < 30: rsi_emoji = "🔵 (oversold)"
+                elif rsi and rsi > 70: rsi_emoji = "🔴 (overbought)"
+                else: rsi_emoji = "🟡 (neutral)"
+                return (
+                    f"📊 <b>אינדיקטורים {ticker}</b>\n"
+                    f"📈 RSI: {rsi_txt} {rsi_emoji}\n"
+                    f"⚡ MACD: {'חיובי ✅' if macd and macd > 0 else 'שלילי ❌'}\n"
+                    f"📉 Bollinger: {f'{bb:.2f}' if bb else 'N/A'} (0=תחתון, 1=עליון)\n"
+                    f"💹 נפח: {str(round(ind.get('volume_ratio', 0), 1)) + 'x' if ind.get('volume_ratio') else 'N/A'}"
+                )
+            except Exception:
+                return f"לא הצלחתי להביא אינדיקטורים ל-{ticker} 🤔"
+
+    # ── השוואת 2 מניות ────────────────────────────────────────────────
+    if any(w in msg for w in ["השווה", "compare", "vs", "מול"]):
+        words = msg.upper().split()
+        tickers = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                   and w not in ["השווה", "COMPARE", "VS", "מול", "בין", "ל"]]
+        if len(tickers) >= 2:
+            try:
+                import yfinance as yf
+                results = []
+                for ticker in tickers[:2]:
+                    t = yf.Ticker(ticker)
+                    info = t.fast_info
+                    price = float(getattr(info, "last_price", 0) or 0)
+                    prev = float(getattr(info, "previous_close", price) or price)
+                    chg = ((price - prev) / prev * 100) if prev > 0 else 0
+                    results.append((ticker, price, chg))
+                lines = [f"⚖️ <b>השוואה: {results[0][0]} vs {results[1][0]}</b>"]
+                for ticker, price, chg in results:
+                    emoji = "📈" if chg >= 0 else "📉"
+                    lines.append(f"{emoji} <b>{ticker}</b>: ${price:.2f} ({chg:+.2f}%)")
+                winner = max(results, key=lambda x: x[2])
+                lines.append(f"\n🏆 מוביל: <b>{winner[0]}</b>")
+                return "\n".join(lines)
+            except Exception:
+                return "לא הצלחתי להשוות 🤔"
+
+    # ── TOP מניות לפי ציון ────────────────────────────────────────────
+    if any(w in msg for w in ["top", "טופ", "מובילות", "הכי טובות", "top 5"]):
+        try:
+            from scanner import scan_stocks
+            from sentiment import score_sentiment
+            picks = scan_stocks(max_results=5)
+            if not picks:
+                return "🔍 לא נמצאו מניות כרגע."
+            lines = ["🏆 <b>TOP 5 מניות עכשיו:</b>"]
+            for i, p in enumerate(picks, 1):
+                lines.append(f"{i}. <b>{p['ticker']}</b> | ציון: {p['score']:.0f} | ${p.get('price', 0):.2f}")
+            return "\n".join(lines)
+        except Exception:
+            return "לא הצלחתי להביא TOP מניות 🤔"
+
+    # ── כמה עסקאות עשה הבוט ─────────────────────────────────────────
+    if any(w in msg for w in ["כמה עסקאות", "סה\"כ עסקאות", "total trades", "כמה פעמים"]):
+        try:
+            import database as _db
+            all_trades = _db.get_trade_history(limit=1000)
+            closed = [t for t in all_trades if t.get("status") and t["status"] != "open"]
+            open_t = [t for t in all_trades if t.get("status") == "open"]
+            wins = [t for t in closed if (t.get("pnl_gross") or 0) > 0]
+            return (
+                f"📊 <b>סטטיסטיקת עסקאות</b>\n"
+                f"🔢 סה״כ עסקאות: {len(all_trades)}\n"
+                f"✅ סגורות: {len(closed)}\n"
+                f"📈 פתוחות: {len(open_t)}\n"
+                f"🏆 רווחיות: {len(wins)}/{len(closed)} ({round(len(wins)/len(closed)*100, 1) if closed else 0}%)"
+            )
+        except Exception:
+            return "לא הצלחתי להביא סטטיסטיקות 🤔"
+
+    # ── 52 שבועות high/low ──────────────────────────────────────────
+    if any(w in msg for w in ["52", "שיא", "שפל", "52w", "שנה"]) and len(msg.split()) >= 2:
+        words = msg.upper().split()
+        tickers_in_msg = [w for w in words if 2 <= len(w) <= 6 and w.isalpha()
+                          and w not in ["שיא", "שפל", "שנה", "52W"]]
+        if tickers_in_msg:
+            ticker = tickers_in_msg[0]
+            try:
+                import yfinance as yf
+                t = yf.Ticker(ticker)
+                info = t.info
+                high = info.get("fiftyTwoWeekHigh")
+                low = info.get("fiftyTwoWeekLow")
+                price = float(getattr(t.fast_info, "last_price", 0) or 0)
+                if high and low:
+                    pct_from_high = (price - high) / high * 100
+                    pct_from_low = (price - low) / low * 100
+                    return (
+                        f"📊 <b>{ticker} — 52 שבועות</b>\n"
+                        f"🔺 שיא: ${high:.2f} ({pct_from_high:+.1f}% עכשיו)\n"
+                        f"🔻 שפל: ${low:.2f} ({pct_from_low:+.1f}% עכשיו)\n"
+                        f"💵 עכשיו: ${price:.2f}"
+                    )
+                else:
+                    return f"לא מצאתי נתוני 52 שבועות ל-{ticker} 🤔"
+            except Exception:
+                return f"לא הצלחתי להביא נתונים ל-{ticker} 🤔"
+
+    # ── מניות מהסקטור שלי ────────────────────────────────────────────
+    if any(w in msg for w in ["סקטור", "sector", "ענף"]):
+        positions = ctx.get("open_positions", [])
+        if not positions:
+            return "📭 אין פוזיציות פתוחות כרגע."
+        try:
+            import yfinance as yf
+            lines = ["🏭 <b>סקטורים בתיק:</b>"]
+            sectors: dict = {}
+            for p in positions:
+                try:
+                    info = yf.Ticker(p["ticker"]).info
+                    sector = info.get("sector", "לא ידוע")
+                    sectors[sector] = sectors.get(sector, []) + [p["ticker"]]
+                except Exception:
+                    sectors["לא ידוע"] = sectors.get("לא ידוע", []) + [p["ticker"]]
+            for sector, tickers in sectors.items():
+                lines.append(f"  • {sector}: {', '.join(tickers)}")
+            return "\n".join(lines)
+        except Exception:
+            return "לא הצלחתי לזהות סקטורים 🤔"
+
     # ── VIX / פחד בשוק ───────────────────────────────────────────────
     if any(w in msg for w in ["vix", "פחד", "תנודתיות", "volatility", "מדד פחד"]):
         try:
@@ -628,33 +777,34 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
     # ── עזרה ──────────────────────────────────────────────────────────
     if any(w in msg for w in ["עזרה", "help", "מה אפשר", "פקודות", "תפריט"]):
         return (
-            "📋 <b>כל הפקודות:</b>\n\n"
+            "📋 <b>כל הפקודות (30+):</b>\n\n"
             "💼 <b>תיק:</b>\n"
-            "  • מה המצב? | כמה שווה התיק?\n"
-            "  • כמה הרווחתי? | כמה מזומן?\n"
-            "  • כמה השקעתי? | דוח מס\n"
-            "  • כמה פוזיציות אפשר?\n"
-            "  • הרווח היום?\n\n"
+            "  • מה המצב? | כמה שווה?\n"
+            "  • כמה הרווחתי? | מזומן?\n"
+            "  • כמה השקעתי? | מס?\n"
+            "  • הרווח היום? | uptime\n\n"
             "📈 <b>מניות:</b>\n"
             "  • אילו מניות יש לי?\n"
-            "  • AAPL (פרטי מניה)\n"
-            "  • מחיר TSLA\n"
+            "  • AAPL (פרטים) | מחיר TSLA\n"
             "  • הכי רווחית | הכי בהפסד\n"
+            "  • RSI AAPL | 52 שבועות AAPL\n"
+            "  • השווה AAPL MSFT\n"
+            "  • סקטורים | stop loss\n\n"
+            "🎯 <b>ניתוח:</b>\n"
             "  • סנטימנט NVDA\n"
             "  • ציון של MSFT\n"
-            "  • stop loss\n\n"
+            "  • TOP 5 מניות\n"
+            "  • VIX | כמה עסקאות?\n\n"
             "📊 <b>ביצועים:</b>\n"
             "  • ביצועים שבועיים\n"
             "  • עסקאות אחרונות?\n\n"
-            "🔍 <b>סריקה וחדשות:</b>\n"
+            "🔍 <b>חדשות וסריקה:</b>\n"
             "  • סרוק מניות\n"
-            "  • חדשות שוק | חדשות AAPL\n"
-            "  • VIX (מדד פחד)\n\n"
+            "  • חדשות שוק | חדשות AAPL\n\n"
             "🤖 <b>בוט:</b>\n"
             "  • מה הבוט עושה?\n"
-            "  • האם השוק פתוח?\n"
-            "  • הגדרות הבוט | ציון קנייה\n"
-            "  • circuit breaker\n"
+            "  • שוק פתוח? | הגדרות\n"
+            "  • ציון קנייה | circuit breaker\n"
             "  • למה לא קונה?"
         )
 
