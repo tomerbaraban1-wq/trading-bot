@@ -58,6 +58,29 @@ async def lifespan(app: FastAPI):
     logger.info("=== Trading Bot Started ===")
     logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {settings.ALPACA_BASE_URL} | DB Mode: {durability_mode}")
 
+    # ── Auto-register Telegram webhook ───────────────────────────────────────
+    # Registers /telegram/webhook with Telegram so the bot can receive messages.
+    # Only runs if TELEGRAM_BOT_TOKEN and RENDER_EXTERNAL_URL are configured.
+    try:
+        _render_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+        _tg_token   = settings.TELEGRAM_BOT_TOKEN
+        if _render_url and _tg_token:
+            import aiohttp as _aiohttp
+            _webhook_url = f"{_render_url}/telegram/webhook"
+            async with _aiohttp.ClientSession() as _sess:
+                async with _sess.post(
+                    f"https://api.telegram.org/bot{_tg_token}/setWebhook",
+                    json={"url": _webhook_url},
+                    timeout=_aiohttp.ClientTimeout(total=10),
+                ) as _resp:
+                    _data = await _resp.json()
+                    if _data.get("ok"):
+                        logger.info(f"Telegram webhook registered: {_webhook_url}")
+                    else:
+                        logger.warning(f"Telegram webhook registration failed: {_data}")
+    except Exception as _e:
+        logger.warning(f"Telegram webhook auto-register failed (non-critical): {_e}")
+
     # ── Startup state restore log ─────────────────────────────────────────────
     # Show what we're resuming from (SQLite persists across restarts; broker API
     # provides live cash/equity).  This is purely informational — no state is
