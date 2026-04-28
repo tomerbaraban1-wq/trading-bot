@@ -268,6 +268,109 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
                 lines.append(f"  {emoji} {p['ticker']}: ${pnl:+.2f} ({p['pct']:+.1f}%)")
         return "\n".join(lines)
 
+    # ── מחיר מניה ────────────────────────────────────────────────────
+    if any(w in msg for w in ["מחיר", "price", "כמה עולה", "כמה שווה"]) and len(msg.split()) >= 2:
+        words = msg.upper().split()
+        tickers_to_check = [w for w in words if 2 <= len(w) <= 6 and w.isalpha() and w not in
+                            ["PRICE", "מחיר", "כמה", "עולה", "שווה", "מה", "של", "ה"]]
+        if tickers_to_check:
+            ticker = tickers_to_check[0]
+            try:
+                import yfinance as yf
+                t = yf.Ticker(ticker)
+                info = t.fast_info
+                price = float(getattr(info, "last_price", 0) or getattr(info, "previous_close", 0) or 0)
+                if price > 0:
+                    return f"💵 <b>{ticker}</b>: ${price:.2f}"
+                else:
+                    return f"לא מצאתי מחיר ל-{ticker} 🤔"
+            except Exception:
+                return f"לא מצאתי מחיר ל-{ticker} 🤔"
+
+    # ── הפסד מקסימלי יומי ────────────────────────────────────────────
+    if any(w in msg for w in ["circuit", "breaker", "מגבלה", "הפסד יומי", "עצירה"]):
+        from circuit_breaker import get_status as _cb_status
+        cb = _cb_status()
+        tripped = cb.get("tripped", False)
+        emoji = "🔴" if tripped else "🟢"
+        return (
+            f"{emoji} <b>Circuit Breaker</b>\n"
+            f"{'🚨 פעיל — אין קניות!' if tripped else '✅ תקין — הבוט קונה'}\n"
+            f"📉 הפסד יומי: ${cb.get('daily_pnl', 0):+.2f}\n"
+            f"🚫 מגבלה: ${cb.get('max_daily_loss', 0):.2f}"
+        )
+
+    # ── ביצועים שבועיים ──────────────────────────────────────────────
+    if any(w in msg for w in ["שבוע", "שבועי", "ביצועים", "סטטיסטיקות"]):
+        import database as _db
+        trades = _db.get_trade_history(limit=50)
+        closed = [t for t in trades if t.get("status") and t["status"] != "open" and t.get("pnl_gross")]
+        if not closed:
+            return "📊 אין עסקאות סגורות עדיין."
+        wins = [t for t in closed if (t.get("pnl_gross") or 0) > 0]
+        total_pnl = sum(t.get("pnl_gross") or 0 for t in closed)
+        win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+        best = max(closed, key=lambda t: t.get("pnl_gross") or 0)
+        worst = min(closed, key=lambda t: t.get("pnl_gross") or 0)
+        return (
+            f"📊 <b>ביצועים</b>\n"
+            f"🔢 עסקאות: {len(closed)}\n"
+            f"🎯 אחוז הצלחה: {win_rate}%\n"
+            f"💰 רווח כולל: ${total_pnl:+.2f}\n"
+            f"🏆 הטובה: {best.get('ticker')} ${(best.get('pnl_gross') or 0):+.2f}\n"
+            f"💀 הגרועה: {worst.get('ticker')} ${(worst.get('pnl_gross') or 0):+.2f}"
+        )
+
+    # ── כמה פוזיציות נוספות אפשר לפתוח ─────────────────────────────
+    if any(w in msg for w in ["כמה אפשר", "כמה עוד", "מקום", "פנוי"]):
+        from config import settings as _s
+        open_count = ctx.get("open_positions_count", 0)
+        max_pos = _s.MAX_OPEN_POSITIONS
+        remaining = max_pos - open_count
+        return (
+            f"📊 <b>קיבולת תיק</b>\n"
+            f"📈 פוזיציות פתוחות: {open_count}/{max_pos}\n"
+            f"✅ אפשר לפתוח עוד: {remaining} פוזיציות"
+        )
+
+    # ── ציון קנייה ──────────────────────────────────────────────────
+    if any(w in msg for w in ["ציון", "score", "סף", "60", "קנייה"]):
+        from scoring import MIN_BUY_SCORE
+        return (
+            f"🎯 <b>ציון קנייה</b>\n"
+            f"הבוט קונה מניות עם ציון <b>{MIN_BUY_SCORE}+</b> מתוך 100\n"
+            f"הציון מורכב מ:\n"
+            f"  • 60% טכני (RSI, MACD, Bollinger)\n"
+            f"  • 20% שוק (VIX, SPY)\n"
+            f"  • 20% סנטימנט (חדשות AI)"
+        )
+
+    # ── האם השוק פתוח ───────────────────────────────────────────────
+    if any(w in msg for w in ["שוק", "פתוח", "סגור", "שעות", "market"]):
+        import broker as _broker
+        try:
+            is_open = _broker.is_market_open()
+            status_text = "🟢 <b>השוק פתוח!</b>" if is_open else "🔴 <b>השוק סגור</b>"
+            return (
+                f"{status_text}\n"
+                f"⏰ שעות מסחר: 16:30-23:00 שעון ישראל\n"
+                f"📅 ימי מסחר: ב׳-ו׳"
+            )
+        except Exception:
+            return "לא הצלחתי לבדוק את שעות השוק 🤔"
+
+    # ── הגדרות הבוט ─────────────────────────────────────────────────
+    if any(w in msg for w in ["הגדרות", "settings", "stop loss", "take profit", "אחוז"]):
+        from config import settings as _s
+        return (
+            f"⚙️ <b>הגדרות הבוט</b>\n"
+            f"🛑 Stop Loss: {_s.STOP_LOSS_PCT}%\n"
+            f"✅ Take Profit: {_s.TAKE_PROFIT_PCT}%\n"
+            f"🎯 ציון מינימום: {_s.MAX_OPEN_POSITIONS} פוזיציות מקס'\n"
+            f"💰 תקציב: ${_s.MAX_BUDGET:,.2f}\n"
+            f"📊 גודל פוזיציה מקסימלי: {_s.MAX_POSITION_PCT}%"
+        )
+
     # ── ברכה ──────────────────────────────────────────────────────────
     if any(w in msg for w in ["שלום", "היי", "הי", "hello", "hi", "בוקר", "ערב"]):
         return (
@@ -291,13 +394,21 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
             "  • מה המצב?\n"
             "  • כמה שווה התיק?\n"
             "  • כמה הרווחתי?\n"
-            "  • כמה מזומן יש לי?\n\n"
+            "  • כמה מזומן יש לי?\n"
+            "  • כמה פוזיציות אפשר לפתוח?\n\n"
             "📈 <b>מניות:</b>\n"
             "  • אילו מניות יש לי?\n"
-            "  • AAPL (שם מניה ספציפית)\n\n"
+            "  • AAPL (שם מניה — פרטים)\n"
+            "  • מחיר TSLA (מחיר עכשיו)\n\n"
+            "📊 <b>ביצועים:</b>\n"
+            "  • ביצועים שבועיים\n"
+            "  • עסקאות אחרונות?\n\n"
             "🤖 <b>בוט:</b>\n"
             "  • מה הבוט עושה עכשיו?\n"
-            "  • עסקאות אחרונות?"
+            "  • האם השוק פתוח?\n"
+            "  • הגדרות הבוט\n"
+            "  • ציון קנייה\n"
+            "  • circuit breaker"
         )
 
     # ── ברירת מחדל ────────────────────────────────────────────────────
