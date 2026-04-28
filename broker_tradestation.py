@@ -120,7 +120,7 @@ class TradeStationBroker(BrokerBase):
                 result.append({
                     "ticker": ticker,
                     "qty": qty,
-                    "avg_cost": avg_cost,
+                    "avg_entry_price": avg_cost,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": unrealized_pl,

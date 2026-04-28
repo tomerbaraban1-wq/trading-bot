@@ -83,10 +83,11 @@ class GeminiBroker(BrokerBase):
                 result.append({
                     "ticker": ccy,
                     "qty": qty,
-                    "avg_cost": 0.0,
+                    "avg_entry_price": 0.0,
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": 0.0,
+                    "unrealized_plpc": 0.0,
                 })
             return result
         except Exception as e:
@@ -125,8 +126,9 @@ class GeminiBroker(BrokerBase):
         logger.info(f"Gemini BUY submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": float(qty),
+            "price": None,
             "status": "submitted",
         }
 
@@ -155,8 +157,9 @@ class GeminiBroker(BrokerBase):
         logger.info(f"Gemini SELL submitted: {symbol} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": symbol,
+            "symbol": symbol,
             "qty": float(qty),
+            "price": None,
             "status": "submitted",
         }
 
