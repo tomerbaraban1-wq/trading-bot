@@ -98,17 +98,43 @@ def _generate_reply(user_message: str) -> str:
     context = _build_context()
 
     if not client:
-        # Fallback: simple keyword-based answers in Hebrew
         return _fallback_reply(user_message, context)
 
+    positions = context.get("open_positions", [])
+    pos_text = ""
+    if positions:
+        pos_text = "\nפוזיציות פתוחות:\n"
+        for p in positions:
+            emoji = "🟢" if p["pct"] >= 0 else "🔴"
+            pos_text += (
+                f"  {emoji} {p['ticker']}: {p['qty']} מניות | "
+                f"כניסה ${p['entry']} → עכשיו ${p['current']} | "
+                f"שינוי {p['pct']:+.1f}% | "
+                f"שווי ${round(p['current'] * p['qty'], 2)}\n"
+            )
+    else:
+        pos_text = "\nאין פוזיציות פתוחות כרגע.\n"
+
+    total_portfolio_value = sum(
+        p["current"] * p["qty"] for p in positions
+    )
+
     system_prompt = (
-        "אתה עוזר אישי לבוט מסחר אוטומטי. ענה תמיד בעברית בקצרה (עד 3 שורות).\n"
-        "ענה רק על שאלות שקשורות לבוט, למסחר או למצב התיק.\n"
-        "אם המשתמש מנסה לשאול אותך משהו אחר — תזכיר שאתה עוזר לבוט מסחר.\n"
-        "תהיה ידידותי ועניני. אל תשתמש באימוג'ים מוגזמים — מקסימום 1-2 לכל תשובה.\n"
-        "השתמש במידע על התיק כדי לענות על שאלות כמו 'מה המצב?', 'כמה רווח יש לי?',\n"
-        "'איזה מניות יש לי?', 'מה הבוט עושה עכשיו?' וכו'.\n\n"
-        f"מצב הבוט עכשיו (JSON):\n{json.dumps(context, ensure_ascii=False, indent=2)}"
+        "אתה עוזר חכם לבוט מסחר אוטומטי. ענה **תמיד בעברית**.\n"
+        "תן תשובות מפורטות ומדויקות בהתבסס על נתוני התיק האמיתיים.\n"
+        "כשמישהו שואל על מניות — ציין את שם המניה, הכמות, המחיר הנוכחי, השינוי %, והשווי.\n"
+        "כשמישהו שואל על שווי — ציין את הסכום בדולרים.\n"
+        "כשמישהו שואל על רווח/הפסד — ציין גם רווח פתוח וגם ממומש.\n"
+        "תהיה ידידותי וברור. השתמש באימוג'ים מתאימים.\n\n"
+        f"📊 נתוני התיק:\n"
+        f"💵 מזומן זמין: ${context.get('cash', 0):,.2f}\n"
+        f"💼 שווי כל המניות: ${total_portfolio_value:,.2f}\n"
+        f"📈 שווי תיק כולל: ${context.get('equity', 0):,.2f}\n"
+        f"💰 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}\n"
+        f"💳 רווח ממומש (נטו): ${context.get('realized_pnl_net', 0):+,.2f}\n"
+        f"🔢 מספר פוזיציות: {context.get('open_positions_count', 0)}\n"
+        f"{pos_text}"
+        f"\nעסקאות אחרונות: {json.dumps(context.get('recent_closed_trades', []), ensure_ascii=False)}"
     )
 
     try:
@@ -128,44 +154,88 @@ def _generate_reply(user_message: str) -> str:
 
 
 def _fallback_reply(user_message: str, ctx: dict) -> str:
-    """Simple keyword-matching reply when LLM is unavailable."""
+    """Smart keyword-matching reply when LLM is unavailable."""
     msg = user_message.lower()
+    positions = ctx.get("open_positions", [])
+    total_val = sum(p["current"] * p["qty"] for p in positions)
 
-    if any(w in msg for w in ["מצב", "סטטוס", "status", "כמה", "תיק"]):
-        return (
-            f"📊 מצב התיק:\n"
-            f"💵 מזומן: ${ctx.get('cash', 0):,.2f}\n"
-            f"💼 שווי תיק: ${ctx.get('equity', 0):,.2f}\n"
-            f"📈 פוזיציות פתוחות: {ctx.get('open_positions_count', 0)}\n"
-            f"💰 רווח/הפסד פתוח: ${ctx.get('open_pnl', 0):+.2f}"
-        )
-
-    if any(w in msg for w in ["פוזיציות", "מניות", "positions"]):
-        positions = ctx.get("open_positions", [])
-        if not positions:
-            return "אין פוזיציות פתוחות כרגע 📭"
-        lines = [f"📈 {len(positions)} פוזיציות פתוחות:"]
-        for p in positions[:6]:
-            emoji = "🟢" if p["pct"] >= 0 else "🔴"
-            lines.append(f"{emoji} {p['ticker']}: {p['pct']:+.1f}% (${p['current']})")
+    # ── מצב כללי ──────────────────────────────────────────────────────
+    if any(w in msg for w in ["מצב", "סטטוס", "status", "תיק", "סיכום"]):
+        lines = [
+            "📊 <b>מצב התיק</b>",
+            f"💵 מזומן: ${ctx.get('cash', 0):,.2f}",
+            f"📈 שווי מניות: ${total_val:,.2f}",
+            f"💼 שווי כולל: ${ctx.get('equity', 0):,.2f}",
+            f"💰 רווח/הפסד פתוח: ${ctx.get('open_pnl', 0):+.2f}",
+            f"💳 רווח ממומש: ${ctx.get('realized_pnl_net', 0):+.2f}",
+            f"🔢 פוזיציות פתוחות: {ctx.get('open_positions_count', 0)}",
+        ]
         return "\n".join(lines)
 
-    if any(w in msg for w in ["רווח", "הפסד", "כסף", "pnl"]):
+    # ── רשימת מניות ───────────────────────────────────────────────────
+    if any(w in msg for w in ["מניות", "פוזיציות", "מחזיק", "יש לי", "positions"]):
+        if not positions:
+            return "📭 אין פוזיציות פתוחות כרגע."
+        lines = [f"📈 <b>{len(positions)} פוזיציות פתוחות:</b>"]
+        for p in positions:
+            emoji = "🟢" if p["pct"] >= 0 else "🔴"
+            val = round(p["current"] * p["qty"], 2)
+            lines.append(
+                f"{emoji} <b>{p['ticker']}</b>: {p['qty']} מניות | "
+                f"${p['current']} ({p['pct']:+.1f}%) | שווי ${val:,.2f}"
+            )
+        lines.append(f"\n💼 <b>סה״כ שווי מניות: ${total_val:,.2f}</b>")
+        return "\n".join(lines)
+
+    # ── שווי ──────────────────────────────────────────────────────────
+    if any(w in msg for w in ["שווי", "כמה שווה", "ערך", "value"]):
+        lines = [
+            "💼 <b>שווי התיק</b>",
+            f"📈 שווי מניות: ${total_val:,.2f}",
+            f"💵 מזומן: ${ctx.get('cash', 0):,.2f}",
+            f"💰 סה״כ: ${ctx.get('equity', 0):,.2f}",
+        ]
+        if positions:
+            lines.append("\n<b>פירוט:</b>")
+            for p in positions:
+                val = round(p["current"] * p["qty"], 2)
+                lines.append(f"  • {p['ticker']}: ${val:,.2f}")
+        return "\n".join(lines)
+
+    # ── רווח/הפסד ─────────────────────────────────────────────────────
+    if any(w in msg for w in ["רווח", "הפסד", "כסף", "pnl", "הרווחתי", "הפסדתי"]):
+        lines = [
+            "💰 <b>רווח/הפסד</b>",
+            f"📊 פתוח (לא ממומש): ${ctx.get('open_pnl', 0):+.2f}",
+            f"💳 ממומש (נטו אחרי מס): ${ctx.get('realized_pnl_net', 0):+.2f}",
+        ]
+        if positions:
+            lines.append("\n<b>לפי מניה:</b>")
+            for p in positions:
+                emoji = "📈" if p["pct"] >= 0 else "📉"
+                pnl = round((p["current"] - p["entry"]) * p["qty"], 2)
+                lines.append(f"  {emoji} {p['ticker']}: ${pnl:+.2f} ({p['pct']:+.1f}%)")
+        return "\n".join(lines)
+
+    # ── ברכה ──────────────────────────────────────────────────────────
+    if any(w in msg for w in ["שלום", "היי", "הי", "hello", "hi", "בוקר", "ערב"]):
         return (
-            f"💰 רווח/הפסד:\n"
-            f"📊 פתוח: ${ctx.get('open_pnl', 0):+.2f}\n"
-            f"💳 ממומש (נטו): ${ctx.get('realized_pnl_net', 0):+.2f}"
+            "שלום! 👋 אני הבוט שלך.\n\n"
+            "תוכל לשאול אותי:\n"
+            "• <b>מה המצב?</b> — סיכום התיק\n"
+            "• <b>אילו מניות יש לי?</b> — כל הפוזיציות\n"
+            "• <b>כמה שווה התיק?</b> — שווי כולל\n"
+            "• <b>כמה הרווחתי?</b> — רווח/הפסד"
         )
 
-    if any(w in msg for w in ["שלום", "היי", "הי", "hello", "hi"]):
-        return "שלום! 👋 איך אפשר לעזור? תוכל לשאול אותי על מצב התיק, פוזיציות, רווחים וכו'."
-
+    # ── ברירת מחדל ────────────────────────────────────────────────────
     return (
-        "מצטער, לא הבנתי 🤔\n"
-        "תוכל לשאול אותי דברים כמו:\n"
+        "🤔 לא הבנתי את השאלה.\n\n"
+        "נסה לשאול:\n"
         "• מה המצב?\n"
-        "• אילו פוזיציות יש לי?\n"
-        "• כמה רווח יש לי?"
+        "• אילו מניות יש לי?\n"
+        "• כמה שווה התיק?\n"
+        "• כמה הרווחתי?"
     )
 
 
