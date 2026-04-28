@@ -117,6 +117,7 @@ class TradeStationBroker(BrokerBase):
                 current_price = float(pos.get("Last", 0) or 0)
                 market_value = float(pos.get("MarketValue", 0) or 0)
                 unrealized_pl = float(pos.get("UnrealizedProfitLoss", 0) or 0)
+                unrealized_plpc = ((current_price - avg_cost) / avg_cost) if avg_cost > 0 else 0.0
                 result.append({
                     "ticker": ticker,
                     "qty": qty,
@@ -124,6 +125,7 @@ class TradeStationBroker(BrokerBase):
                     "current_price": current_price,
                     "market_value": market_value,
                     "unrealized_pl": unrealized_pl,
+                    "unrealized_plpc": unrealized_plpc,
                 })
             return result
         except Exception as e:
@@ -158,11 +160,13 @@ class TradeStationBroker(BrokerBase):
         orders = resp.get("Orders", [{}])
         order_id = str(orders[0].get("OrderID", "unknown")) if orders else "unknown"
         status = str(orders[0].get("Status", "submitted")).lower() if orders else "submitted"
+        avg_price = orders[0].get("FilledPrice") if orders else None
         logger.info(f"TradeStation BUY submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": ticker.upper(),
+            "symbol": ticker.upper(),
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
@@ -188,11 +192,13 @@ class TradeStationBroker(BrokerBase):
         orders = resp.get("Orders", [{}])
         order_id = str(orders[0].get("OrderID", "unknown")) if orders else "unknown"
         status = str(orders[0].get("Status", "submitted")).lower() if orders else "submitted"
+        avg_price = orders[0].get("FilledPrice") if orders else None
         logger.info(f"TradeStation SELL submitted: {ticker} x{qty} order_id={order_id}")
         return {
             "order_id": order_id,
-            "ticker": ticker.upper(),
+            "symbol": ticker.upper(),
             "qty": float(qty),
+            "price": float(avg_price) if avg_price else None,
             "status": status,
         }
 
