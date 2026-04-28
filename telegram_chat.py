@@ -268,6 +268,142 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
                 lines.append(f"  {emoji} {p['ticker']}: ${pnl:+.2f} ({p['pct']:+.1f}%)")
         return "\n".join(lines)
 
+    # ── VIX / פחד בשוק ───────────────────────────────────────────────
+    if any(w in msg for w in ["vix", "פחד", "תנודתיות", "volatility", "מדד פחד"]):
+        try:
+            from indicators import get_vix
+            vix = get_vix()
+            if vix is None:
+                return "לא הצלחתי להביא את ה-VIX כרגע 🤔"
+            if vix < 15:
+                emoji, mood = "😎", "שוק רגוע מאוד"
+            elif vix < 20:
+                emoji, mood = "🟢", "שוק רגוע"
+            elif vix < 25:
+                emoji, mood = "🟡", "שוק מעט עצבני"
+            elif vix < 30:
+                emoji, mood = "🟠", "פחד גבוה"
+            else:
+                emoji, mood = "🔴", "פאניקה בשוק!"
+            return f"{emoji} <b>VIX (מדד פחד): {vix}</b>\n📊 {mood}"
+        except Exception:
+            return "לא הצלחתי להביא את ה-VIX 🤔"
+
+    # ── מניה הכי רווחית ─────────────────────────────────────────────
+    if any(w in msg for w in ["הכי רווחית", "הטובה", "best", "מנצחת", "top"]):
+        positions = ctx.get("open_positions", [])
+        if not positions:
+            return "📭 אין פוזיציות פתוחות כרגע."
+        best = max(positions, key=lambda p: p["pct"])
+        val = round(best["current"] * best["qty"], 2)
+        pnl = round((best["current"] - best["entry"]) * best["qty"], 2)
+        return (
+            f"🏆 <b>המניה הכי רווחית: {best['ticker']}</b>\n"
+            f"📈 שינוי: {best['pct']:+.1f}%\n"
+            f"💰 רווח: ${pnl:+.2f}\n"
+            f"💼 שווי: ${val:,.2f}"
+        )
+
+    # ── מניה הכי בהפסד ──────────────────────────────────────────────
+    if any(w in msg for w in ["הכי בהפסד", "הגרועה", "worst", "מפסידה"]):
+        positions = ctx.get("open_positions", [])
+        if not positions:
+            return "📭 אין פוזיציות פתוחות כרגע."
+        worst = min(positions, key=lambda p: p["pct"])
+        val = round(worst["current"] * worst["qty"], 2)
+        pnl = round((worst["current"] - worst["entry"]) * worst["qty"], 2)
+        return (
+            f"📉 <b>המניה הכי בהפסד: {worst['ticker']}</b>\n"
+            f"📉 שינוי: {worst['pct']:+.1f}%\n"
+            f"💸 הפסד: ${pnl:+.2f}\n"
+            f"💼 שווי: ${val:,.2f}"
+        )
+
+    # ── כמה הרווחתי היום ────────────────────────────────────────────
+    if any(w in msg for w in ["היום", "today", "יומי", "הרווח היום"]):
+        try:
+            import database as _db
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            trades = _db.get_trade_history(limit=100)
+            today_closed = [t for t in trades
+                            if t.get("exit_time") and str(t["exit_time"])[:10] == today
+                            and t.get("pnl_gross")]
+            today_pnl = sum(t.get("pnl_gross", 0) or 0 for t in today_closed)
+            open_pnl = ctx.get("open_pnl", 0)
+            emoji = "📈" if (today_pnl + open_pnl) >= 0 else "📉"
+            return (
+                f"{emoji} <b>היום</b>\n"
+                f"💰 רווח ממומש היום: ${today_pnl:+.2f}\n"
+                f"📊 רווח פתוח: ${open_pnl:+.2f}\n"
+                f"💼 סה״כ: ${today_pnl + open_pnl:+.2f}\n"
+                f"🔢 עסקאות סגורות: {len(today_closed)}"
+            )
+        except Exception:
+            return "לא הצלחתי להביא נתוני היום 🤔"
+
+    # ── ATR / סטופ לוס ────────────────────────────────────────────────
+    if any(w in msg for w in ["stop loss", "סטופ", "atr", "הגנה", "stoploss"]):
+        positions = ctx.get("open_positions", [])
+        if not positions:
+            return "📭 אין פוזיציות פתוחות — אין סטופ לוס פעיל."
+        try:
+            import database as _db
+            open_trades = _db.get_open_trades()
+            lines = ["🛡️ <b>סטופ לוס (ATR Trailing):</b>"]
+            for t in open_trades:
+                stop = t.get("atr_stop_price")
+                if stop:
+                    wm = t.get("high_watermark", t["entry_price"])
+                    lines.append(
+                        f"  • {t['ticker']}: סטופ ${stop:.2f} | "
+                        f"שיא ${wm:.2f}"
+                    )
+            return "\n".join(lines) if len(lines) > 1 else "אין סטופ לוס מוגדר עדיין."
+        except Exception:
+            return "לא הצלחתי להביא את הסטופ לוס 🤔"
+
+    # ── אחוז תקציב בשימוש ────────────────────────────────────────────
+    if any(w in msg for w in ["כמה השקעתי", "אחוז", "percentage", "ניצול"]):
+        cash = ctx.get("cash", 0)
+        budget = ctx.get("max_budget", 1000)
+        invested = budget - cash
+        pct_used = round(invested / budget * 100, 1) if budget > 0 else 0
+        return (
+            f"📊 <b>ניצול תקציב</b>\n"
+            f"💰 תקציב כולל: ${budget:,.2f}\n"
+            f"📈 מושקע: ${invested:,.2f} ({pct_used}%)\n"
+            f"💵 פנוי: ${cash:,.2f} ({100-pct_used:.1f}%)"
+        )
+
+    # ── מה הבוט לא קנה ──────────────────────────────────────────────
+    if any(w in msg for w in ["למה לא קנה", "למה לא קונה", "מה חסום", "blocked"]):
+        return (
+            "🔍 <b>למה הבוט לא קונה?</b>\n"
+            "כנס ל: /diagnose לאבחון מלא\n\n"
+            "<b>סיבות אפשריות:</b>\n"
+            "• שוק סגור\n"
+            "• ציון מניה נמוך מ-60\n"
+            "• מגבלת 6 פוזיציות הושגה\n"
+            "• Circuit Breaker פעיל\n"
+            "• אין מספיק מזומן\n"
+            "• נפח מסחר נמוך\n"
+            "• שוק בנייטרל (ADX<18)"
+        )
+
+    # ── הגדרת פקודה קצרה ─────────────────────────────────────────────
+    if msg.strip() in ["/status", "/start", "/help", "/מצב"]:
+        cash = ctx.get("cash", 0)
+        equity = ctx.get("equity", 0)
+        n = ctx.get("open_positions_count", 0)
+        pnl = ctx.get("open_pnl", 0)
+        return (
+            f"📊 <b>מצב מהיר</b>\n"
+            f"💵 ${cash:,.2f} מזומן | 💼 ${equity:,.2f} תיק\n"
+            f"📈 {n} פוזיציות | 💰 ${pnl:+.2f} PnL\n\n"
+            f"כתוב <b>עזרה</b> לכל הפקודות."
+        )
+
     # ── חדשות שוק ────────────────────────────────────────────────────
     if any(w in msg for w in ["חדשות", "news", "עדכונים", "מה חדש"]):
         words = msg.upper().split()
@@ -492,33 +628,34 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
     # ── עזרה ──────────────────────────────────────────────────────────
     if any(w in msg for w in ["עזרה", "help", "מה אפשר", "פקודות", "תפריט"]):
         return (
-            "📋 <b>כל מה שאפשר לשאול:</b>\n\n"
+            "📋 <b>כל הפקודות:</b>\n\n"
             "💼 <b>תיק:</b>\n"
-            "  • מה המצב?\n"
-            "  • כמה שווה התיק?\n"
-            "  • כמה הרווחתי?\n"
-            "  • כמה מזומן יש לי?\n"
+            "  • מה המצב? | כמה שווה התיק?\n"
+            "  • כמה הרווחתי? | כמה מזומן?\n"
+            "  • כמה השקעתי? | דוח מס\n"
             "  • כמה פוזיציות אפשר?\n"
-            "  • דוח מס\n\n"
+            "  • הרווח היום?\n\n"
             "📈 <b>מניות:</b>\n"
             "  • אילו מניות יש לי?\n"
             "  • AAPL (פרטי מניה)\n"
             "  • מחיר TSLA\n"
+            "  • הכי רווחית | הכי בהפסד\n"
             "  • סנטימנט NVDA\n"
-            "  • ציון של MSFT\n\n"
+            "  • ציון של MSFT\n"
+            "  • stop loss\n\n"
             "📊 <b>ביצועים:</b>\n"
             "  • ביצועים שבועיים\n"
             "  • עסקאות אחרונות?\n\n"
             "🔍 <b>סריקה וחדשות:</b>\n"
             "  • סרוק מניות\n"
-            "  • חדשות שוק\n"
-            "  • חדשות AAPL\n\n"
+            "  • חדשות שוק | חדשות AAPL\n"
+            "  • VIX (מדד פחד)\n\n"
             "🤖 <b>בוט:</b>\n"
             "  • מה הבוט עושה?\n"
             "  • האם השוק פתוח?\n"
-            "  • הגדרות הבוט\n"
-            "  • ציון קנייה\n"
-            "  • circuit breaker"
+            "  • הגדרות הבוט | ציון קנייה\n"
+            "  • circuit breaker\n"
+            "  • למה לא קונה?"
         )
 
     # ── ברירת מחדל ────────────────────────────────────────────────────
