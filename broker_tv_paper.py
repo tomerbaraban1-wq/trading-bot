@@ -488,28 +488,49 @@ class TVPaperBroker(BrokerBase):
 
     def is_market_open(self) -> bool:
         """
-        Check US equity market hours using UTC time (fast, no API call).
-        Accounts for EDT (summer) and EST (winter) automatically.
-        EDT: 13:30-20:00 UTC | EST: 14:30-21:00 UTC
+        Check US equity market hours using UTC time.
+        Supports EXTENDED_HOURS_TRADING env var for pre-market and after-hours.
+
+        Regular hours:   EDT 13:30-20:00 UTC | EST 14:30-21:00 UTC
+        Pre-market:      EDT 08:00-13:30 UTC | EST 09:00-14:30 UTC  (4:00-9:30 ET)
+        After-hours:     EDT 20:00-00:00 UTC | EST 21:00-01:00 UTC  (4:00-8:00 PM ET)
         """
         import datetime
+        extended = os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
+
         now = datetime.datetime.utcnow()
         # Skip weekends
-        if now.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        if now.weekday() >= 5:
             return False
-        # Determine if US is on EDT (2nd Sun Mar - 1st Sun Nov) or EST
-        # Simple approximation: EDT runs roughly March 8 – November 1
+
         month = now.month
-        is_edt = 3 <= month <= 10  # close enough for trading purposes
+        is_edt = 3 <= month <= 10
+
         if is_edt:
-            open_hour, open_min = 13, 30   # 9:30 ET = 13:30 UTC
-            close_hour, close_min = 20, 0  # 4:00 ET = 20:00 UTC
+            regular_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
+            regular_close = now.replace(hour=20, minute=0,  second=0, microsecond=0)
+            pre_open      = now.replace(hour=8,  minute=0,  second=0, microsecond=0)
+            after_close   = now.replace(hour=0,  minute=0,  second=0, microsecond=0) + datetime.timedelta(days=1)
         else:
-            open_hour, open_min = 14, 30   # 9:30 ET = 14:30 UTC
-            close_hour, close_min = 21, 0  # 4:00 ET = 21:00 UTC
-        market_open  = now.replace(hour=open_hour,  minute=open_min,  second=0, microsecond=0)
-        market_close = now.replace(hour=close_hour, minute=close_min, second=0, microsecond=0)
-        return market_open <= now <= market_close
+            regular_open  = now.replace(hour=14, minute=30, second=0, microsecond=0)
+            regular_close = now.replace(hour=21, minute=0,  second=0, microsecond=0)
+            pre_open      = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
+            after_close   = now.replace(hour=1,  minute=0,  second=0, microsecond=0) + datetime.timedelta(days=1)
+
+        # Regular market hours — always active
+        if regular_open <= now <= regular_close:
+            return True
+
+        # Extended hours — only if enabled
+        if extended:
+            # Pre-market: 4:00 AM - 9:30 AM ET
+            if pre_open <= now < regular_open:
+                return True
+            # After-hours: 4:00 PM - 8:00 PM ET
+            if regular_close < now <= after_close:
+                return True
+
+        return False
 
     def get_asset(self, ticker: str) -> dict | None:
         """Always return tradable — paper trading accepts any ticker."""

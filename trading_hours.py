@@ -39,6 +39,7 @@ ENABLED:               bool = os.getenv("TRADING_HOURS_ENABLED",       "true").l
 HIGH_LIQUIDITY_ONLY:   bool = os.getenv("TRADING_HIGH_LIQUIDITY_ONLY", "false").lower() == "true"
 FOMC_BLACKOUT_MIN:     int  = int(os.getenv("TRADING_FOMC_BLACKOUT_MIN",     "30"))
 FOMC_POST_MIN:         int  = int(os.getenv("TRADING_FOMC_POSTBLACKOUT_MIN", "60"))
+EXTENDED_HOURS:        bool = os.getenv("EXTENDED_HOURS_TRADING",       "false").lower() == "true"
 
 # ── Timezone setup ────────────────────────────────────────────────────────────
 try:
@@ -178,11 +179,20 @@ def is_ok_to_trade() -> tuple[bool, str]:
     if today in _NYSE_HOLIDAYS:
         return False, f"NYSE holiday — {today.isoformat()}"
 
-    # 3. Outside NYSE session (9:30–16:00 ET)
+    # 3. Outside NYSE session — respect EXTENDED_HOURS_TRADING setting
+    _PRE_MARKET_OPEN  = time(4, 0)    # 4:00 AM ET
+    _AFTER_HOURS_CLOSE = time(20, 0)  # 8:00 PM ET
+
     if current_time < _NYSE_OPEN:
-        return False, f"Pre-market — NYSE opens at 09:30 ET (now {current_time.strftime('%H:%M')} ET)"
+        if EXTENDED_HOURS and current_time >= _PRE_MARKET_OPEN:
+            pass  # Allow pre-market trading
+        else:
+            return False, f"פרי-מרקט — NYSE נפתח ב-09:30 ET (עכשיו {current_time.strftime('%H:%M')} ET)"
     if current_time >= _NYSE_CLOSE:
-        return False, f"After-hours — NYSE closed at 16:00 ET (now {current_time.strftime('%H:%M')} ET)"
+        if EXTENDED_HOURS and current_time < _AFTER_HOURS_CLOSE:
+            pass  # Allow after-hours trading
+        else:
+            return False, f"אפטר-אוורס — NYSE נסגר ב-16:00 ET (עכשיו {current_time.strftime('%H:%M')} ET)"
 
     # 4. FOMC blackout window
     if today in _FOMC_DATES:
