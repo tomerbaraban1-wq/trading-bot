@@ -43,15 +43,16 @@ def _get_client() -> OpenAI | None:
 
 
 def _build_context() -> dict:
-    """Gather live trading context for the LLM."""
+    """Gather FULL live trading context for the LLM — positions, market, news, stats."""
     try:
         status = budget.get_budget_status()
         open_trades = database.get_open_trades()
-        history = database.get_trade_history(limit=5)
+        history = database.get_trade_history(limit=10)
     except Exception as exc:
-        logger.warning(f"[CHAT] Failed to build full context: {exc}")
+        logger.warning(f"[CHAT] Failed to build context: {exc}")
         status, open_trades, history = {}, [], []
 
+    # ── Positions with live prices ────────────────────────────────────
     positions_summary = []
     for t in open_trades:
         ticker = t.get("ticker")
@@ -60,35 +61,95 @@ def _build_context() -> dict:
             if pos:
                 cur = float(pos.get("current_price", t["entry_price"]))
                 pct = (cur - t["entry_price"]) / t["entry_price"] * 100 if t["entry_price"] else 0
+                pnl = (cur - t["entry_price"]) * t["qty"]
+                val = cur * t["qty"]
                 positions_summary.append({
-                    "ticker": ticker,
-                    "qty": t["qty"],
-                    "entry": round(t["entry_price"], 2),
-                    "current": round(cur, 2),
-                    "pct": round(pct, 2),
+                    "ticker":   ticker,
+                    "qty":      round(t["qty"], 4),
+                    "entry":    round(t["entry_price"], 2),
+                    "current":  round(cur, 2),
+                    "pct":      round(pct, 2),
+                    "pnl":      round(pnl, 2),
+                    "value":    round(val, 2),
+                    "atr_stop": round(t.get("atr_stop_price") or 0, 2),
                 })
         except Exception:
             pass
 
-    recent = []
+    # ── Closed trades ─────────────────────────────────────────────────
+    closed = []
+    wins = 0
     for t in history:
-        if t.get("status") and t["status"] != "open":
-            recent.append({
+        if t.get("status") and t["status"] != "open" and t.get("pnl_gross") is not None:
+            closed.append({
                 "ticker": t.get("ticker"),
-                "pnl": round(t.get("pnl_gross", 0) or 0, 2),
+                "pnl":    round(t.get("pnl_gross", 0) or 0, 2),
                 "status": t.get("status"),
             })
+            if (t.get("pnl_gross") or 0) > 0:
+                wins += 1
+
+    # ── Market conditions ─────────────────────────────────────────────
+    vix = None
+    market_open = False
+    try:
+        from indicators import get_vix
+        vix = get_vix()
+        market_open = broker.is_market_open()
+    except Exception:
+        pass
+
+    # ── Circuit breaker ───────────────────────────────────────────────
+    cb_tripped = False
+    try:
+        from circuit_breaker import check_circuit_breaker
+        ok, _ = check_circuit_breaker()
+        cb_tripped = not ok
+    except Exception:
+        pass
+
+    # ── Recent headlines ──────────────────────────────────────────────
+    news = []
+    try:
+        from news_service import get_general_headlines
+        news = get_general_headlines(3)
+    except Exception:
+        pass
+
+    # ── Bot settings ──────────────────────────────────────────────────
+    from scoring import MIN_BUY_SCORE
+
+    total_val = sum(p["value"] for p in positions_summary)
+    win_rate = round(wins / len(closed) * 100, 1) if closed else 0
 
     return {
-        "cash": status.get("cash_available", 0),
-        "equity": status.get("equity", 0),
-        "open_pnl": status.get("open_pnl", 0),
-        "realized_pnl_net": status.get("realized_pnl_net", 0),
-        "max_budget": status.get("total_budget", 1000),
+        # Portfolio
+        "cash":                 round(status.get("cash_available", 0), 2),
+        "equity":               round(status.get("equity", 0), 2),
+        "open_pnl":             round(status.get("open_pnl", 0), 2),
+        "realized_pnl_net":     round(status.get("realized_pnl_net", 0), 2),
+        "realized_pnl_gross":   round(status.get("realized_pnl_gross", 0), 2),
+        "max_budget":           round(status.get("total_budget", 1000), 2),
+        "total_invested":       round(total_val, 2),
+        # Positions
         "open_positions_count": len(open_trades),
-        "open_positions": positions_summary,
-        "recent_closed_trades": recent,
-        "broker": settings.ACTIVE_BROKER,
+        "open_positions":       positions_summary,
+        # History
+        "closed_trades":        closed,
+        "total_closed":         len(closed),
+        "win_rate":             win_rate,
+        # Market
+        "market_open":          market_open,
+        "vix":                  vix,
+        "circuit_breaker":      cb_tripped,
+        # Bot config
+        "min_buy_score":        MIN_BUY_SCORE,
+        "max_positions":        settings.MAX_OPEN_POSITIONS,
+        "stop_loss_pct":        settings.STOP_LOSS_PCT,
+        "take_profit_pct":      settings.TAKE_PROFIT_PCT,
+        "broker":               settings.ACTIVE_BROKER,
+        # News
+        "latest_news":          news,
     }
 
 
@@ -109,62 +170,75 @@ def _generate_reply(user_message: str) -> str:
     return _fallback_reply(user_message, context)
 
 def _llm_reply(user_message: str, context: dict) -> str:
-    """Full LLM-powered dynamic reply — handles ANY question intelligently."""
+    """Full LLM-powered dynamic reply — analyzes ANY question and provides the most relevant answer."""
     client = _get_client()
     if not client:
         return _fallback_reply(user_message, context)
 
+    # Build rich position summary
     positions = context.get("open_positions", [])
-    pos_text = ""
-    if positions:
-        pos_text = "\nפוזיציות פתוחות:\n"
-        for p in positions:
-            emoji = "🟢" if p["pct"] >= 0 else "🔴"
-            pos_text += (
-                f"  {emoji} {p['ticker']}: {p['qty']} מניות | "
-                f"כניסה ${p['entry']} → עכשיו ${p['current']} | "
-                f"שינוי {p['pct']:+.1f}% | "
-                f"שווי ${round(p['current'] * p['qty'], 2)}\n"
-            )
-    else:
-        pos_text = "\nאין פוזיציות פתוחות כרגע.\n"
+    pos_lines = []
+    for p in positions:
+        emoji = "🟢" if p["pct"] >= 0 else "🔴"
+        pos_lines.append(
+            f"{emoji} {p['ticker']}: {p['qty']} מניות | כניסה ${p['entry']} | "
+            f"עכשיו ${p['current']} ({p['pct']:+.1f}%) | רווח/הפסד ${p['pnl']:+.2f} | "
+            f"שווי ${ p['value']:,.2f} | סטופ-לוס ${p['atr_stop']}"
+        )
+    pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
 
-    total_portfolio_value = sum(
-        p["current"] * p["qty"] for p in positions
-    )
+    # News
+    news_text = " | ".join(context.get("latest_news", [])[:3]) or "אין חדשות"
 
-    system_prompt = (
-        "⚠️ חובה: ענה אך ורק בעברית. אסור לכתוב אפילו מילה אחת באנגלית.\n"
-        "אם יש מונחים באנגלית (שמות מניות, מינוח פיננסי) — כתוב אותם כפי שהם אך הסברים תמיד בעברית.\n\n"
-        "אתה עוזר אישי חכם ודינמי של בוט מסחר אוטומטי.\n"
-        "נתח כל שאלה לעומק והתאם את התשובה בדיוק למה שנשאל.\n"
-        "אם נשאל על מניה ספציפית — תן פרטים רק עליה.\n"
-        "אם נשאל שאלה כללית — תן סיכום מקיף.\n"
-        "אם נשאל שאלה שאינה קשורה למסחר — ענה בכל זאת בידידותיות.\n"
-        "השתמש באימוג'ים מתאימים. ענה בקצרה כשאפשר (עד 5 שורות).\n"
-        "אל תחזור על מידע שלא נשאל עליו.\n\n"
-        f"=== נתוני התיק הנוכחי ===\n"
-        f"מזומן: ${context.get('cash', 0):,.2f} | "
-        f"שווי מניות: ${total_portfolio_value:,.2f} | "
-        f"תיק כולל: ${context.get('equity', 0):,.2f}\n"
-        f"רווח פתוח: ${context.get('open_pnl', 0):+,.2f} | "
-        f"רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}\n"
-        f"פוזיציות: {context.get('open_positions_count', 0)}\n"
-        f"{pos_text}"
-        f"עסקאות אחרונות: {json.dumps(context.get('recent_closed_trades', []), ensure_ascii=False)}\n"
-        f"=========================\n"
-        f"ענה בעברית על השאלה הבאה של המשתמש:"
-    )
+    # Closed trades summary
+    closed = context.get("closed_trades", [])
+    closed_text = json.dumps(closed[-5:], ensure_ascii=False) if closed else "אין עסקאות סגורות"
+
+    system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) יישארו באנגלית — שאר הטקסט בעברית בלבד.
+
+אתה עוזר אישי חכם של בוט מסחר אוטומטי בשם "TradingBot".
+תפקידך: לנתח כל שאלה של המשתמש ולענות בצורה הכי רלוונטית ומדויקת.
+
+כללי תשובה:
+• ענה רק על מה שנשאל — אל תוסיף מידע מיותר
+• שאלה על מניה ספציפית? תן פרטים רק עליה
+• שאלה כללית על התיק? תן סיכום מלא
+• שאלה על אסטרטגיה? הסבר כיצד הבוט עובד
+• שאלה שאינה על מסחר? ענה בידידותיות
+• השתמש באימוג'ים מתאימים
+• תגובה קצרה ועניינית (3-6 שורות בדרך כלל)
+
+══════════════ מצב הבוט עכשיו ══════════════
+💰 מזומן: ${context.get('cash', 0):,.2f} | שווי מניות: ${context.get('total_invested', 0):,.2f}
+💼 תיק כולל: ${context.get('equity', 0):,.2f}
+📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
+💳 רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}
+🔢 פוזיציות פתוחות: {context.get('open_positions_count', 0)}/{context.get('max_positions', 6)}
+📊 אחוז הצלחה: {context.get('win_rate', 0)}% מתוך {context.get('total_closed', 0)} עסקאות
+
+📈 פוזיציות:
+{pos_text}
+
+📰 חדשות אחרונות: {news_text}
+
+⚙️ הגדרות: ציון קנייה מינ' {context.get('min_buy_score', 60)} | Stop Loss {context.get('stop_loss_pct', 5)}% | Take Profit {context.get('take_profit_pct', 10)}%
+🛑 Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ תקין'}
+🕐 שוק: {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
+📉 VIX: {context.get('vix') or 'N/A'}
+
+📋 עסקאות אחרונות: {closed_text}
+═══════════════════════════════════════════
+"""
 
     try:
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
+                {"role": "user",   "content": user_message},
             ],
-            max_tokens=500,
-            temperature=0.4,
+            max_tokens=600,
+            temperature=0.3,
         )
         reply = response.choices[0].message.content.strip()
 
