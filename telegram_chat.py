@@ -93,10 +93,24 @@ def _build_context() -> dict:
 
 
 def _generate_reply(user_message: str) -> str:
-    """Use Groq LLM to generate a Hebrew reply based on the question + bot context."""
+    """
+    Generate a dynamic Hebrew reply using Groq LLM + live trading context.
+    LLM is ALWAYS tried first for any question.
+    Falls back to keyword matching only if LLM is unavailable.
+    """
     client = _get_client()
     context = _build_context()
 
+    # ── Try LLM for ALL messages ────────────────────────────────────────────
+    if client:
+        return _llm_reply(user_message, context)
+
+    # ── Fallback: keyword matching ──────────────────────────────────────────
+    return _fallback_reply(user_message, context)
+
+def _llm_reply(user_message: str, context: dict) -> str:
+    """Full LLM-powered dynamic reply — handles ANY question intelligently."""
+    client = _get_client()
     if not client:
         return _fallback_reply(user_message, context)
 
@@ -120,21 +134,25 @@ def _generate_reply(user_message: str) -> str:
     )
 
     system_prompt = (
-        "אתה עוזר חכם לבוט מסחר אוטומטי. ענה **תמיד בעברית**.\n"
-        "תן תשובות מפורטות ומדויקות בהתבסס על נתוני התיק האמיתיים.\n"
-        "כשמישהו שואל על מניות — ציין את שם המניה, הכמות, המחיר הנוכחי, השינוי %, והשווי.\n"
-        "כשמישהו שואל על שווי — ציין את הסכום בדולרים.\n"
-        "כשמישהו שואל על רווח/הפסד — ציין גם רווח פתוח וגם ממומש.\n"
-        "תהיה ידידותי וברור. השתמש באימוג'ים מתאימים.\n\n"
-        f"📊 נתוני התיק:\n"
-        f"💵 מזומן זמין: ${context.get('cash', 0):,.2f}\n"
-        f"💼 שווי כל המניות: ${total_portfolio_value:,.2f}\n"
-        f"📈 שווי תיק כולל: ${context.get('equity', 0):,.2f}\n"
-        f"💰 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}\n"
-        f"💳 רווח ממומש (נטו): ${context.get('realized_pnl_net', 0):+,.2f}\n"
-        f"🔢 מספר פוזיציות: {context.get('open_positions_count', 0)}\n"
+        "אתה עוזר אישי חכם ודינמי של בוט מסחר אוטומטי.\n"
+        "ענה תמיד בעברית בצורה ישירה, ברורה וידידותית.\n"
+        "נתח כל שאלה לעומק והתאם את התשובה בדיוק למה שנשאל.\n"
+        "אם נשאל על מניה ספציפית — תן פרטים רק עליה.\n"
+        "אם נשאל שאלה כללית — תן סיכום מקיף.\n"
+        "אם נשאל שאלה שאינה קשורה למסחר — ענה בכל זאת בידידותיות.\n"
+        "השתמש באימוג'ים מתאימים. ענה בקצרה כשאפשר (עד 5 שורות).\n"
+        "אל תחזור על מידע שלא נשאל עליו.\n\n"
+        f"=== נתוני התיק הנוכחי ===\n"
+        f"מזומן: ${context.get('cash', 0):,.2f} | "
+        f"שווי מניות: ${total_portfolio_value:,.2f} | "
+        f"תיק כולל: ${context.get('equity', 0):,.2f}\n"
+        f"רווח פתוח: ${context.get('open_pnl', 0):+,.2f} | "
+        f"רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}\n"
+        f"פוזיציות: {context.get('open_positions_count', 0)}\n"
         f"{pos_text}"
-        f"\nעסקאות אחרונות: {json.dumps(context.get('recent_closed_trades', []), ensure_ascii=False)}"
+        f"עסקאות אחרונות: {json.dumps(context.get('recent_closed_trades', []), ensure_ascii=False)}\n"
+        f"=========================\n"
+        f"ענה בעברית על השאלה הבאה של המשתמש:"
     )
 
     try:
@@ -144,10 +162,12 @@ def _generate_reply(user_message: str) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
-            max_tokens=400,
-            temperature=0.5,
+            max_tokens=500,
+            temperature=0.4,
         )
-        return response.choices[0].message.content.strip()
+        reply = response.choices[0].message.content.strip()
+        logger.info(f"[CHAT] LLM reply generated ({len(reply)} chars)")
+        return reply
     except Exception as exc:
         logger.warning(f"[CHAT] LLM failed: {exc} — using fallback")
         return _fallback_reply(user_message, context)
@@ -539,6 +559,53 @@ def _fallback_reply(user_message: str, ctx: dict) -> str:
             "• נפח מסחר נמוך\n"
             "• שוק בנייטרל (ADX<18)"
         )
+
+    # ── תדרוך בוקר ידני ─────────────────────────────────────────────
+    if any(w in msg for w in ["תדרוך", "briefing", "בוקר טוב", "תקציר יומי"]):
+        try:
+            from news_service import get_general_headlines as _ghl
+            from scanner import get_watchlist as _gwl
+            from scoring import get_composite_score as _gcs
+            from sentiment import score_sentiment as _ss
+            headlines = _ghl(5)
+            # Translate if possible
+            if settings.GROQ_API_KEY and headlines:
+                try:
+                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
+                    _cli = _get_client()
+                    if _cli:
+                        _resp = _cli.chat.completions.create(
+                            model=settings.LLM_MODEL,
+                            messages=[{"role": "user",
+                                       "content": f"תרגם לעברית קצרה (עד 8 מילים לכל כותרת):\n{_raw}"}],
+                            max_tokens=200, temperature=0.3,
+                        )
+                        _lines = _resp.choices[0].message.content.strip().split("\n")
+                        _tr = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
+                        headlines = _tr[:5] if _tr else headlines
+                except Exception:
+                    pass
+            news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות"
+            wl = _gwl()[:6]
+            top = []
+            for ticker in wl:
+                try:
+                    sent = _ss(ticker)
+                    comp = _gcs(ticker, sent.score)
+                    top.append((ticker, comp["composite_score"], sent.score))
+                except Exception:
+                    pass
+            top.sort(key=lambda x: x[1], reverse=True)
+            cands = "\n".join(f"📊 <b>{t}</b> — {s:.0f}/100 | סנטימנט {se}/10"
+                              for t, s, se in top[:3]) or "טרם חושב"
+            return (
+                f"☀️ <b>תדרוך שוק</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📰 <b>חדשות מובילות:</b>\n{news_text}\n\n"
+                f"🎯 <b>מועמדים מובילים:</b>\n{cands}"
+            )
+        except Exception as e:
+            return f"לא הצלחתי להביא תדרוך: {e}"
 
     # ── הגדרת פקודה קצרה ─────────────────────────────────────────────
     if msg.strip() in ["/status", "/start", "/help", "/מצב"]:

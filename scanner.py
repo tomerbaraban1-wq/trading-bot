@@ -149,7 +149,7 @@ WATCHLIST = [
 
     # ── מוצרי צריכה / מזון ──
     "PG", "KO", "PEP", "PM", "MO", "MDLZ", "CL", "KMB",
-    "GIS", "K", "SJM", "HRL", "MKC",
+    "GIS", "SJM", "HRL", "MKC",  # K (Kellogg) נרכשה — הוסר
 
     # ── מדיה ובידור ──
     "DIS", "CMCSA", "WBD", "PARA",
@@ -159,12 +159,12 @@ WATCHLIST = [
 
     # ── אנרגיה ──
     "XOM", "CVX", "COP", "EOG", "SLB", "OXY", "PSX", "VLO",
-    "MPC", "HES", "DVN", "FANG",
+    "MPC", "DVN",  # HES נרכשה ע"י CVX, FANG מחוזק — הוסרו
 
     # ── תעשייה / ביטחון ──
     "BA", "CAT", "HON", "RTX", "LMT", "GE", "MMM", "DE",
     "UPS", "FDX", "ETN", "EMR", "ROK", "PH", "ITW",
-    "NOC", "GD", "L3H", "HII", "TDG",
+    "NOC", "GD", "LHX", "HII", "TDG",  # L3H → LHX (L3Harris נכון)
 
     # ── נדל"ן / תשתיות ──
     "AMT", "PLD", "CCI", "EQIX", "PSA", "O", "WELL", "DLR",
