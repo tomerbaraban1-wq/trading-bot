@@ -436,6 +436,22 @@ async def auto_invest_loop():
                 await asyncio.sleep(5 * 60)
                 continue
 
+            # SPY trend guard — skip if overall market is in downtrend
+            try:
+                from indicators import get_market_conditions
+                _mkt = get_market_conditions()
+                if _mkt.get("spy_above_sma50") is False:
+                    logger.info("AUTO-INVEST: SPY below SMA50 (downtrend) — skipping buys")
+                    await asyncio.sleep(5 * 60)
+                    continue
+                _vix = _mkt.get("vix")
+                if _vix and _vix > 30:
+                    logger.info(f"AUTO-INVEST: VIX={_vix:.1f} extreme fear — skipping buys")
+                    await asyncio.sleep(5 * 60)
+                    continue
+            except Exception:
+                pass   # fail-open: proceed if market data unavailable
+
             # Trading hours / liquidity / FOMC blackout guard
             from trading_hours import is_ok_to_trade
             hours_ok, hours_reason = is_ok_to_trade()
