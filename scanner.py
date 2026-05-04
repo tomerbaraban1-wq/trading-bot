@@ -119,7 +119,7 @@ WATCHLIST = [
 
     # תוכנה / ענן / SaaS
     "NOW", "CRM", "ADBE", "INTU", "PANW", "CRWD", "FTNT", "SNPS",
-    "CDNS", "ANSS", "PTC", "PLTR", "SAP", "ASML",
+    "CDNS", "PTC", "PLTR", "SAP", "ASML",  # ANSS נרכשה ע"י SNPS — הוסרה
 
     # אינטרנט / מדיה / מסחר
     "NFLX", "UBER", "BKNG", "ABNB", "EBAY", "PYPL", "SHOP", "MELI",
