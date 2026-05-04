@@ -702,6 +702,27 @@ async def morning_briefing_loop():
             from scoring import get_composite_score
 
             headlines = await asyncio.to_thread(get_general_headlines, 5)
+
+            # Translate headlines to Hebrew using Groq LLM
+            if headlines and settings.GROQ_API_KEY:
+                try:
+                    from openai import OpenAI as _OAI
+                    _cli = _OAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
+                    _resp = _cli.chat.completions.create(
+                        model=settings.LLM_MODEL,
+                        messages=[{
+                            "role": "user",
+                            "content": f"תרגם את הכותרות הבאות לעברית קצרה (עד 10 מילים כל אחת). החזר רק את הכותרות המתורגמות, ממוספרות:\n{_raw}"
+                        }],
+                        max_tokens=300, temperature=0.3,
+                    )
+                    _lines = _resp.choices[0].message.content.strip().split("\n")
+                    _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
+                    headlines = _translated[:5] if _translated else headlines
+                except Exception as _te:
+                    logger.debug(f"[BRIEFING] Translation failed: {_te}")
+
             news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות"
 
             # Score top 3 candidates quickly
