@@ -431,6 +431,33 @@ def cleanup_old_heartbeats(days: int = 7):
         logger.info(f"Cleaned up {result.rowcount} heartbeat entries older than {days} days")
 
 
+def cleanup_old_data(days: int = 30):
+    """
+    Clean up old records from shadow_trades, slippage_log, and learning_log.
+    Keeps the last `days` days of data.  Prevents unbounded table growth.
+    """
+    conn = get_connection()
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    total = 0
+
+    for table, col in [
+        ("shadow_trades", "created_at"),
+        ("slippage_log",  "created_at"),
+        ("learning_log",  "created_at"),
+    ]:
+        try:
+            r = conn.execute(f"DELETE FROM {table} WHERE {col} < ?", (cutoff,))
+            if r.rowcount > 0:
+                logger.info(f"Cleanup: removed {r.rowcount} rows from {table}")
+                total += r.rowcount
+        except Exception as e:
+            logger.debug(f"Cleanup {table} skipped: {e}")
+
+    conn.commit()
+    if total > 0:
+        logger.info(f"Total cleanup: {total} old rows removed (>{days} days)")
+
+
 # ===== Shadow Trades =====
 
 def save_shadow_trade(row: dict) -> int:

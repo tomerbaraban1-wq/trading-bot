@@ -102,13 +102,14 @@ async def heartbeat_loop():
 
 
 async def heartbeat_cleanup_loop():
-    """Background task: cleanup old heartbeats every 1 hour (prevents blocking main heartbeat loop)."""
+    """Background task: cleanup old data every 6 hours to prevent unbounded DB growth."""
     await asyncio.sleep(60)  # Initial delay
     while True:
         try:
-            await asyncio.sleep(60 * 60)  # Run every 1 hour
+            await asyncio.sleep(6 * 60 * 60)  # Run every 6 hours
             await asyncio.to_thread(database.cleanup_old_heartbeats, days=7)
-            logger.debug("Cleaned up old heartbeat records")
+            await asyncio.to_thread(database.cleanup_old_data, days=30)
+            logger.debug("Cleaned up old records (heartbeats, shadow, slippage, learning)")
         except asyncio.CancelledError:
             raise
         except Exception as e:
