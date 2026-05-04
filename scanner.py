@@ -376,8 +376,12 @@ def scan_stocks(max_results: int = 3) -> list[dict]:
 
     # Use dynamic watchlist (pre-filtered large-caps) — skip per-ticker market cap checks
     watchlist = get_watchlist()
+    # Shuffle for diversity — different stocks scanned each cycle
+    import random as _random
+    shuffled = list(watchlist)
+    _random.shuffle(shuffled)
 
-    for ticker in watchlist:
+    for ticker in shuffled:
         try:
             category = ASSET_CATEGORY.get(ticker, "מניה")
 
@@ -403,6 +407,11 @@ def scan_stocks(max_results: int = 3) -> list[dict]:
                 "change_pct": change_pct,
                 "reason": reason,
             })
+
+            # Early exit: stop scanning once we have enough strong candidates
+            if len(results) >= max_results * 5:
+                break
+
         except Exception as e:
             logger.warning(f"Scanner: failed to process {ticker}: {e}")
             continue

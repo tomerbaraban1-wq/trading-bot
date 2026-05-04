@@ -331,6 +331,10 @@ def _fetch_atr(ticker: str, fallback_price: float) -> float:
         )
 
     with _atr_lock:
+        # Cap cache at 150 entries — evict oldest if full
+        if len(_atr_cache) >= 150:
+            oldest = min(_atr_cache.items(), key=lambda x: x[1][1])
+            del _atr_cache[oldest[0]]
         _atr_cache[ticker] = (atr, now)
 
     logger.debug(f"[ATR STOP] {ticker}: ATR_14 = ${atr:.4f}")

@@ -80,6 +80,10 @@ def _fetch_atr_pct(ticker: str) -> float:
         logger.warning(f"[SLIPPAGE] ATR fetch failed for {ticker}: {e} — using max_slip")
         atr_pct = MAX_SLIP_PCT / 100
 
+    # Cap cache at 150 entries — evict oldest if full
+    if len(_atr_cache) >= 150:
+        oldest = min(_atr_cache.items(), key=lambda x: x[1][1])
+        del _atr_cache[oldest[0]]
     _atr_cache[ticker] = (atr_pct, now)
     return atr_pct
 

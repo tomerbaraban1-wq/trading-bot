@@ -151,11 +151,13 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 _indicators_cache: dict = {}   # symbol -> (data, timestamp)
 _IND_CACHE_TTL = 300           # 5 minutes — reuse same data within scan cycle
+_IND_CACHE_MAX = 100           # max entries to prevent memory growth
 
 
 def get_current_indicators(symbol: str) -> dict | None:
     """Get current indicator snapshot for a symbol — all indicators.
     Cached for 5 minutes to avoid redundant yfinance calls within the same scan.
+    Cache capped at 100 entries to prevent memory growth.
     """
     import time as _time
     now = _time.time()
@@ -163,7 +165,12 @@ def get_current_indicators(symbol: str) -> dict | None:
     if cached and now - cached[1] < _IND_CACHE_TTL:
         return cached[0]
 
-    df = get_stock_data(symbol, period="6mo")
+    # Evict oldest entries if cache is full
+    if len(_indicators_cache) >= _IND_CACHE_MAX:
+        oldest = min(_indicators_cache.items(), key=lambda x: x[1][1])
+        del _indicators_cache[oldest[0]]
+
+    df = get_stock_data(symbol, period="3mo")  # 3mo instead of 6mo — faster
     if df.empty:
         return None
     df = add_all_indicators(df)
