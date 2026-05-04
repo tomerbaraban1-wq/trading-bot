@@ -50,7 +50,7 @@ import broker
 logger = logging.getLogger(__name__)
 
 # ── Risk parameters ────────────────────────────────────────────────────────────
-RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "10.0"))
+RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "2.0"))  # 2% risk per trade (was wrongly 10%)
 # MAX_OPEN_POSITIONS read from settings to ensure same default as config.py (6)
 MAX_OPEN_POSITIONS:  int   = settings.MAX_OPEN_POSITIONS
 KELLY_ENABLED:       bool  = os.getenv("KELLY_ENABLED", "true").lower() == "true"
