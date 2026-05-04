@@ -52,29 +52,60 @@ def _build_context() -> dict:
         logger.warning(f"[CHAT] Failed to build context: {exc}")
         status, open_trades, history = {}, [], []
 
-    # ── Positions with live prices ────────────────────────────────────
+    # ── Positions: merge DB trade log + live broker positions ─────────
+    # DB trade_log has entry prices; broker has live prices.
+    # After Render restart, SQLite may be wiped — fall back to broker only.
     positions_summary = []
-    for t in open_trades:
-        ticker = t.get("ticker")
-        try:
-            pos = broker.get_position(ticker)
-            if pos:
-                cur = float(pos.get("current_price", t["entry_price"]))
-                pct = (cur - t["entry_price"]) / t["entry_price"] * 100 if t["entry_price"] else 0
-                pnl = (cur - t["entry_price"]) * t["qty"]
-                val = cur * t["qty"]
+
+    if open_trades:
+        # Primary: use SQLite trade records (have entry price)
+        for t in open_trades:
+            ticker = t.get("ticker")
+            try:
+                pos = broker.get_position(ticker)
+                cur = float(pos.get("current_price", t["entry_price"])) if pos else t["entry_price"]
+                entry = t["entry_price"]
+                qty = t["qty"]
+                pct = (cur - entry) / entry * 100 if entry else 0
+                pnl = (cur - entry) * qty
+                val = cur * qty
                 positions_summary.append({
                     "ticker":   ticker,
-                    "qty":      round(t["qty"], 4),
-                    "entry":    round(t["entry_price"], 2),
+                    "qty":      round(qty, 4),
+                    "entry":    round(entry, 2),
                     "current":  round(cur, 2),
                     "pct":      round(pct, 2),
                     "pnl":      round(pnl, 2),
                     "value":    round(val, 2),
                     "atr_stop": round(t.get("atr_stop_price") or 0, 2),
                 })
-        except Exception:
-            pass
+            except Exception:
+                pass
+    else:
+        # Fallback: read directly from broker (after DB wipe)
+        try:
+            broker_positions = broker.get_positions()
+            for pos in broker_positions:
+                ticker = pos.get("ticker", "")
+                qty    = float(pos.get("qty", 0))
+                cur    = float(pos.get("current_price", 0))
+                entry  = float(pos.get("avg_entry_price", cur))
+                pct    = float(pos.get("unrealized_plpc", 0)) * 100
+                pnl    = float(pos.get("unrealized_pl", 0))
+                val    = float(pos.get("market_value", cur * qty))
+                if qty > 0:
+                    positions_summary.append({
+                        "ticker":  ticker,
+                        "qty":     round(qty, 4),
+                        "entry":   round(entry, 2),
+                        "current": round(cur, 2),
+                        "pct":     round(pct, 2),
+                        "pnl":     round(pnl, 2),
+                        "value":   round(val, 2),
+                        "atr_stop": 0,
+                    })
+        except Exception as e:
+            logger.warning(f"[CHAT] broker.get_positions failed: {e}")
 
     # ── Closed trades ─────────────────────────────────────────────────
     closed = []
