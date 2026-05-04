@@ -823,7 +823,8 @@ async def news_refresh_loop():
             await asyncio.to_thread(get_general_headlines, 10)
             # Refresh per-ticker headlines for open positions + watchlist
             open_trades = database.get_open_trades()
-            tickers = list({t["ticker"] for t in open_trades}) + WATCHLIST[:10]
+            # Only refresh news for open positions (not watchlist) to save memory
+            tickers = list({t["ticker"] for t in open_trades})[:5]
             for ticker in tickers:
                 try:
                     await asyncio.to_thread(get_headlines, ticker, 5)
@@ -834,7 +835,7 @@ async def news_refresh_loop():
             raise
         except Exception as e:
             logger.debug(f"News refresh error (non-critical): {e}")
-        await asyncio.sleep(60)   # refresh every 60 seconds
+        await asyncio.sleep(300)   # refresh every 5 minutes (was 60s) — reduces memory pressure
 
 
 async def shadow_monitor_loop():

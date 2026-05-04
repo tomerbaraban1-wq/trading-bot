@@ -107,28 +107,37 @@ async def lifespan(app: FastAPI):
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
                            weekly_report_loop, shadow_monitor_loop, portfolio_update_loop,
                            news_refresh_loop, morning_briefing_loop, position_alert_loop)
-    heartbeat_task      = asyncio.create_task(heartbeat_loop())
+    # ── Core tasks (always run) ───────────────────────────────────────
+    heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
-    sentiment_task      = asyncio.create_task(sentiment_monitor())
-    stop_loss_task      = asyncio.create_task(stop_loss_monitor())
-    auto_invest_task    = asyncio.create_task(auto_invest_loop())
-    keep_alive_task     = asyncio.create_task(keep_alive_loop())
-    daily_summary_task  = asyncio.create_task(daily_summary_loop())
-    weekly_report_task  = asyncio.create_task(weekly_report_loop())
-    shadow_monitor_task   = asyncio.create_task(shadow_monitor_loop())
-    portfolio_update_task = asyncio.create_task(portfolio_update_loop())
-    news_refresh_task     = asyncio.create_task(news_refresh_loop())
-    morning_briefing_task = asyncio.create_task(morning_briefing_loop())
-    position_alert_task   = asyncio.create_task(position_alert_loop())
+    stop_loss_task         = asyncio.create_task(stop_loss_monitor())
+    auto_invest_task       = asyncio.create_task(auto_invest_loop())
+    keep_alive_task        = asyncio.create_task(keep_alive_loop())
+    daily_summary_task     = asyncio.create_task(daily_summary_loop())
+    weekly_report_task     = asyncio.create_task(weekly_report_loop())
+    morning_briefing_task  = asyncio.create_task(morning_briefing_loop())
+    news_refresh_task      = asyncio.create_task(news_refresh_loop())
+
+    # ── Optional tasks (disabled on free tier to save memory) ────────
+    import os as _os
+    _full_mode = _os.getenv("FULL_MODE", "false").lower() == "true"
+    sentiment_task      = asyncio.create_task(sentiment_monitor())     if _full_mode else None
+    shadow_monitor_task = asyncio.create_task(shadow_monitor_loop())   if _full_mode else None
+    portfolio_update_task = asyncio.create_task(portfolio_update_loop()) if _full_mode else None
+    position_alert_task = asyncio.create_task(position_alert_loop())   if _full_mode else None
+
+    if not _full_mode:
+        logger.info("Memory-saving mode: shadow, portfolio_update, position_alert, sentiment disabled. Set FULL_MODE=true to enable.")
 
     yield
 
     # Shutdown — Gracefully cancel and await all background tasks with timeout
     logger.info("Initiating graceful shutdown...")
-    all_tasks = [heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
-                 keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
-                 portfolio_update_task, news_refresh_task,
-                 morning_briefing_task, position_alert_task]
+    all_tasks = [t for t in [
+        heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
+        keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
+        portfolio_update_task, news_refresh_task, morning_briefing_task, position_alert_task,
+    ] if t is not None]
 
     # Cancel all background tasks
     for task in all_tasks:
