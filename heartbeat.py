@@ -463,7 +463,7 @@ async def auto_invest_loop():
                     continue
 
                 # Take 20 per cycle — rotates through full list over ~30 min
-                SCAN_PER_CYCLE = 20
+                SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "30"))  # was 20
                 candidates = [
                     t for t in shuffled[:SCAN_PER_CYCLE]
                     if not database.get_open_trade_by_ticker(t)
