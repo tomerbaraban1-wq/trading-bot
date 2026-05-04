@@ -147,6 +147,26 @@ def _build_context() -> dict:
     except Exception:
         pass
 
+    # ── Trading hours (Israeli time) ─────────────────────────────────
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    # Israel is UTC+3 (IDT summer) or UTC+2 (IST winter)
+    israel_offset = 3 if 3 <= now_utc.month <= 10 else 2
+    now_il = now_utc + timedelta(hours=israel_offset)
+    is_edt = 3 <= now_utc.month <= 10
+    trading_hours = {
+        "now_israel":          now_il.strftime("%H:%M (%A)"),
+        "market_open_israel":  "16:30" if is_edt else "15:30",
+        "market_close_israel": "23:00" if is_edt else "22:00",
+        "premarket_israel":    "12:00" if is_edt else "11:00",
+        "afterhours_israel":   "23:00-02:00" if is_edt else "22:00-01:00",
+        "bot_scan_interval":   "כל 5 דקות בשעות מסחר",
+        "morning_briefing":    "16:00 שעון ישראל (30 דקות לפני פתיחה)" if is_edt else "15:00 שעון ישראל",
+        "daily_summary":       "23:05 שעון ישראל (אחרי סגירה)" if is_edt else "22:05 שעון ישראל",
+        "weekly_report":       "ראשון 23:10 שעון ישראל",
+        "season":              "קיץ (EDT)" if is_edt else "חורף (EST)",
+    }
+
     # ── Bot settings ──────────────────────────────────────────────────
     from scoring import MIN_BUY_SCORE
 
@@ -181,6 +201,8 @@ def _build_context() -> dict:
         "broker":               settings.ACTIVE_BROKER,
         # News
         "latest_news":          news,
+        # Trading hours
+        "trading_hours":        trading_hours,
     }
 
 
@@ -254,6 +276,15 @@ def _llm_reply(user_message: str, context: dict) -> str:
 🛑 Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ תקין'}
 🕐 שוק: {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 📉 VIX: {context.get('vix') or 'N/A'}
+
+🕐 שעון ישראל עכשיו: {context.get('trading_hours', {}).get('now_israel', 'N/A')}
+📅 עונה: {context.get('trading_hours', {}).get('season', 'N/A')}
+⏰ שעות מסחר (ישראל): {context.get('trading_hours', {}).get('market_open_israel', '16:30')}–{context.get('trading_hours', {}).get('market_close_israel', '23:00')}
+🌅 פרי-מרקט: מ-{context.get('trading_hours', {}).get('premarket_israel', '12:00')}
+🔍 סריקות: {context.get('trading_hours', {}).get('bot_scan_interval', 'כל 5 דקות')}
+☀️ תדרוך בוקר: {context.get('trading_hours', {}).get('morning_briefing', '16:00')}
+📊 סיכום יומי: {context.get('trading_hours', {}).get('daily_summary', '23:05')}
+📈 דוח שבועי: {context.get('trading_hours', {}).get('weekly_report', 'ראשון 23:10')}
 
 📋 עסקאות אחרונות: {closed_text}
 ═══════════════════════════════════════════
