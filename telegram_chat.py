@@ -134,8 +134,9 @@ def _llm_reply(user_message: str, context: dict) -> str:
     )
 
     system_prompt = (
+        "⚠️ חובה: ענה אך ורק בעברית. אסור לכתוב אפילו מילה אחת באנגלית.\n"
+        "אם יש מונחים באנגלית (שמות מניות, מינוח פיננסי) — כתוב אותם כפי שהם אך הסברים תמיד בעברית.\n\n"
         "אתה עוזר אישי חכם ודינמי של בוט מסחר אוטומטי.\n"
-        "ענה תמיד בעברית בצורה ישירה, ברורה וידידותית.\n"
         "נתח כל שאלה לעומק והתאם את התשובה בדיוק למה שנשאל.\n"
         "אם נשאל על מניה ספציפית — תן פרטים רק עליה.\n"
         "אם נשאל שאלה כללית — תן סיכום מקיף.\n"
@@ -166,6 +167,24 @@ def _llm_reply(user_message: str, context: dict) -> str:
             temperature=0.4,
         )
         reply = response.choices[0].message.content.strip()
+
+        # Verify reply is in Hebrew — if mostly English chars, translate it
+        hebrew_chars = sum(1 for c in reply if 'א' <= c <= 'ת')
+        latin_chars = sum(1 for c in reply if c.isalpha() and c.isascii())
+        if latin_chars > hebrew_chars * 2 and len(reply) > 20:
+            # Too much English — ask LLM to translate
+            logger.warning(f"[CHAT] Reply was in English, translating...")
+            try:
+                tr_resp = client.chat.completions.create(
+                    model=settings.LLM_MODEL,
+                    messages=[{"role": "user",
+                                "content": f"תרגם את הטקסט הבא לעברית בלבד:\n{reply}"}],
+                    max_tokens=500, temperature=0.2,
+                )
+                reply = tr_resp.choices[0].message.content.strip()
+            except Exception:
+                pass
+
         logger.info(f"[CHAT] LLM reply generated ({len(reply)} chars)")
         return reply
     except Exception as exc:
