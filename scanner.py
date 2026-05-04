@@ -369,27 +369,17 @@ def _get_market_cap(ticker: str) -> float:
 def scan_stocks(max_results: int = 3) -> list[dict]:
     """
     Scan the watchlist with technical indicators and return the top stocks.
-    מסנן חברות עם שווי שוק מתחת ל-MIN_MARKET_CAP.
-
-    Returns a list of dicts sorted by score (highest first), each with:
-    ticker, score, rsi, macd, signal, bb_position, volume_ratio,
-    price, change_pct, market_cap, reason
+    Uses get_watchlist() (already pre-filtered by market cap) to avoid
+    249 extra yfinance market-cap calls.
     """
     results = []
 
-    for ticker in WATCHLIST:
+    # Use dynamic watchlist (pre-filtered large-caps) — skip per-ticker market cap checks
+    watchlist = get_watchlist()
+
+    for ticker in watchlist:
         try:
-            # ── פילטר שווי שוק / AUM ──
-            market_cap = _get_market_cap(ticker)
             category = ASSET_CATEGORY.get(ticker, "מניה")
-            # חל על מניות וקרנות סל — סחורות/נגזרים עוברים בחופשי
-            needs_filter = category in ("מניה", "קרן סל")
-            if needs_filter and market_cap > 0 and market_cap < MIN_MARKET_CAP:
-                logger.debug(
-                    f"Scanner: {ticker} filtered out — "
-                    f"market cap/AUM ${market_cap/1e6:.0f}M < ${MIN_MARKET_CAP/1e6:.0f}M"
-                )
-                continue
 
             ind = get_current_indicators(ticker)
             if ind is None:
@@ -403,7 +393,7 @@ def scan_stocks(max_results: int = 3) -> list[dict]:
                 "ticker": ticker,
                 "score": tech_score,
                 "category": category,
-                "market_cap": market_cap,
+                "market_cap": 0,   # pre-filtered, no need to re-fetch
                 "rsi": ind.get("rsi"),
                 "macd": ind.get("macd"),
                 "signal": ind.get("macd_signal"),

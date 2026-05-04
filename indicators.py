@@ -149,8 +149,20 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_indicators_cache: dict = {}   # symbol -> (data, timestamp)
+_IND_CACHE_TTL = 300           # 5 minutes — reuse same data within scan cycle
+
+
 def get_current_indicators(symbol: str) -> dict | None:
-    """Get current indicator snapshot for a symbol — all indicators."""
+    """Get current indicator snapshot for a symbol — all indicators.
+    Cached for 5 minutes to avoid redundant yfinance calls within the same scan.
+    """
+    import time as _time
+    now = _time.time()
+    cached = _indicators_cache.get(symbol)
+    if cached and now - cached[1] < _IND_CACHE_TTL:
+        return cached[0]
+
     df = get_stock_data(symbol, period="6mo")
     if df.empty:
         return None
@@ -158,7 +170,6 @@ def get_current_indicators(symbol: str) -> dict | None:
     if df.empty or len(df) < 2:
         return None
     last = df.iloc[-1]
-    prev = df.iloc[-2]
     close = float(last["close"])
 
     def safe(val):
@@ -230,6 +241,10 @@ def get_current_indicators(symbol: str) -> dict | None:
         # Daily return
         "daily_return": safe(last.get("daily_return")),
     }
+
+    # Cache the result
+    _indicators_cache[symbol] = (result, now)
+    return result
 
 
 _market_cache: dict = {"data": None, "ts": 0}
