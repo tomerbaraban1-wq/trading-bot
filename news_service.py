@@ -22,6 +22,7 @@ RSS_FEEDS = [
 
 _news_cache: dict = {}
 _cache_time: dict = {}
+_NEWS_CACHE_MAX = 100   # max entries — evict oldest to prevent memory growth
 
 
 def get_headlines(ticker: str, limit: int = 5) -> list[str]:
@@ -62,6 +63,12 @@ def get_headlines(ticker: str, limit: int = 5) -> list[str]:
             seen.add(key)
             unique.append(h)
 
+    # Evict oldest if cache is full
+    if len(_news_cache) >= _NEWS_CACHE_MAX:
+        oldest = min(_cache_time.items(), key=lambda x: x[1])
+        del _news_cache[oldest[0]]
+        del _cache_time[oldest[0]]
+
     _news_cache[cache_key] = unique
     _cache_time[cache_key] = now
 
@@ -98,6 +105,12 @@ def get_general_headlines(limit: int = 10) -> list[str]:
         if key not in seen:
             seen.add(key)
             unique.append(h)
+
+    # Evict oldest if cache is full
+    if len(_news_cache) >= _NEWS_CACHE_MAX:
+        oldest = min(_cache_time.items(), key=lambda x: x[1])
+        del _news_cache[oldest[0]]
+        del _cache_time[oldest[0]]
 
     _news_cache[cache_key] = unique
     _cache_time[cache_key] = now

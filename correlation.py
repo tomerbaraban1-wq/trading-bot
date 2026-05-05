@@ -337,6 +337,11 @@ def _get_cached(a: str, b: str) -> float | None:
 def _set_cached(a: str, b: str, corr: float) -> None:
     key = _cache_key(a, b)
     with _cache_lock:
+        # Evict oldest 10 entries if cache exceeds 200 pairs
+        if len(_cache) >= 200:
+            oldest = sorted(_cache.items(), key=lambda x: x[1][1])[:10]
+            for k, _ in oldest:
+                del _cache[k]
         _cache[key] = (corr, time.time())
 
 

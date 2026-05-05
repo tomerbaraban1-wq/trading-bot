@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 _client = None
 _sentiment_cache: dict = {}
 _cache_lock = threading.Lock()  # guards _sentiment_cache across threads
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 300       # 5 minutes
+_SENTIMENT_CACHE_MAX = 100  # max entries to prevent memory growth
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -172,6 +173,10 @@ def score_sentiment(ticker: str) -> SentimentResult:
         timestamp=now,
     )
     with _cache_lock:
+        # Evict oldest if cache is full
+        if len(_sentiment_cache) >= _SENTIMENT_CACHE_MAX:
+            oldest = min(_sentiment_cache.items(), key=lambda x: x[1].timestamp)
+            del _sentiment_cache[oldest[0]]
         _sentiment_cache[ticker] = result
 
     logger.info(f"Sentiment for {ticker}: {score}/10 - {reasoning}")

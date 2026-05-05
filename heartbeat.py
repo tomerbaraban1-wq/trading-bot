@@ -506,6 +506,18 @@ async def auto_invest_loop():
                             f"AUTO-INVEST: {ticker} → {score}/100 "
                             f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
                         )
+                        # Learning check — skip if ticker matches known loss patterns
+                        try:
+                            from learning import should_override_buy as _sob
+                            from indicators import get_current_indicators as _gci
+                            _ind = _gci(ticker) or {}
+                            _block, _block_reason = _sob(ticker, _ind)
+                            if _block:
+                                logger.info(f"AUTO-INVEST: {ticker} blocked by learning — {_block_reason}")
+                                continue
+                        except Exception:
+                            pass  # fail-open: proceed if learning check fails
+
                         if not composite["should_buy"]:
                             # price not yet fetched at this point — pass 0.0 as placeholder
                             _create_background_task(_asyncio.to_thread(
