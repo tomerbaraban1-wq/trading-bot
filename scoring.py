@@ -12,7 +12,7 @@ from indicators import get_current_indicators, get_market_conditions, get_stock_
 logger = logging.getLogger(__name__)
 
 import os as _os
-MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "65"))  # raised 45→65 for better quality entries
+MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "58"))  # balanced: was 65 (too strict), now 58
 
 
 def _safe(val, default=None):
