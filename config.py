@@ -94,8 +94,8 @@ class Settings:
     MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "20"))
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "2.0"))
     STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "5.0"))    # sell if drops N%
-    TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "10.0"))  # sell if gains N%
-    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "6"))   # max concurrent positions
+    TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "15.0"))  # sell if gains N% (raised 10→15 for 3:1 ratio)
+    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))   # max concurrent positions (reduced 6→4)
 
     # Tax
     TAX_RATE: float = float(os.getenv("TAX_RATE", "0.25"))
@@ -109,7 +109,7 @@ class Settings:
     ENABLE_WAL_CHECKPOINT: bool = os.getenv("ENABLE_WAL_CHECKPOINT", "true").lower() in ("true", "1", "yes")
 
     # Sentiment
-    SENTIMENT_MIN_SCORE: int = int(os.getenv("SENTIMENT_MIN_SCORE", "4"))
+    SENTIMENT_MIN_SCORE: int = int(os.getenv("SENTIMENT_MIN_SCORE", "6"))  # raised 4→6 for better quality
     SENTIMENT_EMERGENCY_SCORE: int = int(os.getenv("SENTIMENT_EMERGENCY_SCORE", "2"))
     NEWS_CACHE_TTL: int = int(os.getenv("NEWS_CACHE_TTL", "300"))  # 5 min default (was 2 min)
 

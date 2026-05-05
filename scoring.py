@@ -12,7 +12,7 @@ from indicators import get_current_indicators, get_market_conditions, get_stock_
 logger = logging.getLogger(__name__)
 
 import os as _os
-MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "45"))  # configurable via Render env var
+MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "65"))  # raised 45→65 for better quality entries
 
 
 def _safe(val, default=None):
@@ -163,11 +163,12 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     except Exception:
         breakdown["obv"] = "⚪ N/A"
 
-    # ── Momentum (0-5 points) ───────────────────────────────────────────
-    max_score += 5
+    # ── Momentum (0-8 points, raised from 5) ────────────────────────────
+    max_score += 8
     momentum = _safe(indicators.get("momentum_10"))
     if momentum is not None:
-        if momentum > 0:          score += 5;  breakdown["momentum"] = f"✅ Positive ({momentum:.2f})"
+        if momentum > 3:          score += 8;  breakdown["momentum"] = f"✅ Strong upward ({momentum:.2f})"
+        elif momentum > 0:        score += 5;  breakdown["momentum"] = f"✅ Positive ({momentum:.2f})"
         elif momentum > -2:       score += 2;  breakdown["momentum"] = f"⚠️ Slightly negative ({momentum:.2f})"
         else:                     score += 0;  breakdown["momentum"] = f"❌ Negative ({momentum:.2f})"
     else:
@@ -189,26 +190,31 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
 
 
 def score_market(market: dict) -> tuple[float, dict]:
-    """Score overall market conditions. Returns (0-100, breakdown)."""
+    """Score overall market conditions. Returns (0-100, breakdown).
+    Stricter than before — penalises bad conditions more heavily.
+    """
     score = 50  # neutral default
     breakdown = {}
 
     vix = market.get("vix")
     if vix is not None:
-        if vix < 15:      score += 20; breakdown["vix"] = f"✅ Very calm ({vix})"
-        elif vix < 20:    score += 10; breakdown["vix"] = f"✅ Calm ({vix})"
-        elif vix < 25:    score += 0;  breakdown["vix"] = f"⚠️ Elevated ({vix})"
-        elif vix < 30:    score -= 10; breakdown["vix"] = f"⚠️ High fear ({vix})"
-        else:             score -= 30; breakdown["vix"] = f"❌ Extreme fear ({vix})"
+        if vix < 15:      score += 25; breakdown["vix"] = f"✅ Very calm ({vix})"
+        elif vix < 18:    score += 15; breakdown["vix"] = f"✅ Calm ({vix})"
+        elif vix < 22:    score += 5;  breakdown["vix"] = f"⚠️ Slightly elevated ({vix})"
+        elif vix < 27:    score -= 15; breakdown["vix"] = f"⚠️ High fear ({vix})"
+        elif vix < 32:    score -= 25; breakdown["vix"] = f"❌ Very high fear ({vix})"
+        else:             score -= 40; breakdown["vix"] = f"❌ Extreme panic ({vix})"
 
     spy_up = market.get("spy_above_sma50")
-    if spy_up is True:    score += 15; breakdown["spy"] = "✅ SPY above SMA50 (uptrend)"
-    elif spy_up is False: score -= 15; breakdown["spy"] = "❌ SPY below SMA50 (downtrend)"
+    if spy_up is True:    score += 20; breakdown["spy"] = "✅ SPY above SMA50 (uptrend)"
+    elif spy_up is False: score -= 25; breakdown["spy"] = "❌ SPY below SMA50 (downtrend — avoid buys)"
 
     spy_rsi = market.get("spy_rsi")
     if spy_rsi is not None:
-        if spy_rsi < 70:  score += 5;  breakdown["spy_rsi"] = f"✅ SPY RSI ok ({spy_rsi:.1f})"
-        else:             score -= 10; breakdown["spy_rsi"] = f"❌ SPY overbought ({spy_rsi:.1f})"
+        if spy_rsi < 40:  score += 10; breakdown["spy_rsi"] = f"✅ SPY oversold — potential reversal ({spy_rsi:.1f})"
+        elif spy_rsi < 65: score += 5; breakdown["spy_rsi"] = f"✅ SPY RSI healthy ({spy_rsi:.1f})"
+        elif spy_rsi < 75: score -= 5; breakdown["spy_rsi"] = f"⚠️ SPY slightly overbought ({spy_rsi:.1f})"
+        else:             score -= 15; breakdown["spy_rsi"] = f"❌ SPY overbought ({spy_rsi:.1f})"
 
     return max(0, min(100, score)), breakdown
 
