@@ -128,11 +128,11 @@ WATCHLIST = [
     "ARM", "SMCI", "DELL", "HPQ", "HPE", "STX", "WDC",
 
     # קריפטו / פינטק גדולים
-    "COIN", "MSTR", "SQ",
+    "COIN", "MSTR",  # SQ (Block) delisted from this index — removed
 
     # ── פיננסים ──
     "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "V", "MA",
-    "BLK", "SCHW", "CB", "PGR", "MMC", "AON", "SPGI", "MCO",
+    "BLK", "SCHW", "CB", "PGR", "AON", "SPGI", "MCO",  # MMC removed — data issues
     "ICE", "CME", "COF", "USB", "TFC", "PNC", "BK", "STT",
     "BRK-B",  # Berkshire Hathaway
 
@@ -152,7 +152,7 @@ WATCHLIST = [
     "GIS", "SJM", "HRL", "MKC",  # K (Kellogg) נרכשה — הוסר
 
     # ── מדיה ובידור ──
-    "DIS", "CMCSA", "WBD", "PARA",
+    "DIS", "CMCSA", "WBD",  # PARA removed — data issues
 
     # ── תקשורת ──
     "T", "VZ", "TMUS",
@@ -183,7 +183,7 @@ WATCHLIST = [
     "BAM",  # Brookfield
 
     # ── ייעוץ / IT שירותים ──
-    "FI",   # Fiserv
+    # FI (Fiserv) removed — data issues
     "FIS",  # Fidelity National
 
     # ── מניות בינלאומיות הנסחרות בארה"ב ──
