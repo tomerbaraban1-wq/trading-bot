@@ -86,9 +86,20 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     above_20 = indicators.get("above_sma20")
     above_50 = indicators.get("above_sma50")
     above_200 = indicators.get("above_sma200")
-    if above_20: ma_score += 5
-    if above_50: ma_score += 5
-    if above_200: ma_score += 5
+    # Strong trend bonus: all 3 MAs aligned = momentum
+    if above_20 and above_50 and above_200:
+        ma_score += 18  # all aligned = strong uptrend
+    elif above_20 and above_50:
+        ma_score += 12
+    elif above_50 and above_200:
+        ma_score += 10
+    elif above_20:
+        ma_score += 5
+    elif above_50:
+        ma_score += 3
+    # Penalty for below all MAs
+    if not above_20 and not above_50:
+        ma_score -= 5
     score += ma_score
     trend_str = f"SMA20={'✅' if above_20 else '❌'} SMA50={'✅' if above_50 else '❌'} SMA200={'✅' if above_200 else '❌'}"
     breakdown["moving_averages"] = trend_str
@@ -235,10 +246,13 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     sent_score = max(0, min(100, (max(1, sentiment_score) - 1) / 9 * 100))
 
     # Weighted composite
+    # Weights: technicals 55%, sentiment 25%, market 20%
+    # Raised sentiment (25% vs 20%) — news is a strong leading indicator
+    # Kept market at 20% — SPY guard already blocks bad markets upstream
     composite = round(
-        tech_score * 0.60 +
+        tech_score * 0.55 +
         mkt_score  * 0.20 +
-        sent_score * 0.20,
+        sent_score * 0.25,
         1
     )
 

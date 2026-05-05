@@ -384,7 +384,7 @@ async def stop_loss_monitor():
                                 get_composite_score, ticker, 5
                             )
                             comp = score_result["composite_score"]
-                            if comp < 30:
+                            if comp < 35:  # raised 30→35: exit sooner on deteriorating signals
                                 logger.warning(
                                     f"[SMART SELL] {ticker}: score={comp}/100 — exiting"
                                 )
