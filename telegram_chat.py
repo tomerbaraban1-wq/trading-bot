@@ -498,16 +498,22 @@ def _handle_command(text: str, context: dict) -> str | None:
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
     profit_keywords = ["רווח", "הפסד", "כמה הרווחתי", "כמה הפסדתי", "p&l", "pnl"]
     if any(k in t for k in profit_keywords):
-        pnl      = context.get("open_pnl", 0)
-        realized = context.get("realized_pnl_net", 0)
-        emoji    = "📈" if pnl >= 0 else "📉"
-        lines = [
-            f"{emoji} <b>רווח/הפסד</b>",
-            f"━━━━━━━━━━━━━━━━",
-            f"💹 פתוח (לא ממומש): <b>${pnl:+.2f}</b>",
-        ]
+        positions = context.get("open_positions", [])
+        realized  = context.get("realized_pnl_net", 0)
+        total_pnl = context.get("open_pnl", 0)
+        total_emoji = "📈" if total_pnl >= 0 else "📉"
+
+        lines = ["💰 <b>רווח/הפסד</b>\n━━━━━━━━━━━━━━━━"]
+
+        # Per-stock breakdown
+        for p in positions:
+            e = "🟢" if p["pct"] >= 0 else "🔴"
+            lines.append(f"{e} <b>{p['ticker']}</b>: <b>${p['pnl']:+.2f}</b> ({p['pct']:+.1f}%)")
+
+        # Total
+        lines.append(f"━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ פתוח: <b>${total_pnl:+.2f}</b>")
         if realized != 0:
-            lines.append(f"💳 ממומש (נטו): <b>${realized:+.2f}</b>")
+            lines.append(f"💳 ממומש: <b>${realized:+.2f}</b>")
         return "\n".join(lines)
 
     # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
