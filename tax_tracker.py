@@ -70,5 +70,5 @@ def get_report() -> dict:
     return {
         **summary,
         "tax_rate": settings.TAX_RATE,
-        "effective_tax": summary["tax_reserved"] - balance["tax_credit"],
+        "effective_tax": max(summary["tax_reserved"] - balance["tax_credit"], 0.0),
     }

@@ -266,7 +266,7 @@ async def iceberg_buy(
         )
 
     avg_price   = total_cost / total_filled
-    is_partial  = total_filled < total_qty
+    is_partial  = total_filled < total_qty - 1e-9  # float tolerance: avoids spurious partial on rounding
     status      = "partial" if is_partial else "done"
 
     with _active_lock:
