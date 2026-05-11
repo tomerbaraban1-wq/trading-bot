@@ -456,6 +456,30 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd == "/status":
         return _simple_fallback(context)
 
+    # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
+    stocks_keywords = ["מניות", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי"]
+    if any(k in t for k in stocks_keywords):
+        positions = context.get("open_positions", [])
+        if not positions:
+            return "אין פוזיציות פתוחות כרגע 📭"
+        lines = [f"📂 <b>פוזיציות פתוחות ({len(positions)})</b>\n━━━━━━━━━━━━━━━━"]
+        for p in positions:
+            emoji   = "🟢" if p["pct"] >= 0 else "🔴"
+            stop    = p.get("atr_stop") or 0
+            held    = p.get("held_hours", 0)
+            held_str = f"{held:.0f} שעות" if held < 24 else f"{held/24:.1f} ימים"
+            invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
+            lines.append(
+                f"\n{emoji} <b>{p['ticker']}</b>\n"
+                f"   📦 {p['qty']} מניות\n"
+                f"   💵 הושקע: ${invested:,.2f}\n"
+                f"   📈 כניסה: ${p['entry']} → עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>\n"
+                f"   🛑 Stop Loss: ${stop}\n"
+                f"   ⏱ הוחזק: {held_str}"
+            )
+        return "\n".join(lines)
+
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
     profit_keywords = ["רווח", "הפסד", "כמה הרווחתי", "כמה הפסדתי", "p&l", "pnl"]
     if any(k in t for k in profit_keywords):
