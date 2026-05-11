@@ -415,7 +415,7 @@ def _simple_fallback(ctx: dict) -> str:
             held = p.get("held_hours", 0)
             held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
-                f"{emoji} <b>{p['ticker']}</b>\n"
+                f"{emoji} <b>{p['ticker']}</b> 📊\n"
                 f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
                 f"   📈 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
                 f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
@@ -483,7 +483,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
             total_pnl += p["pnl"]
             lines.append(
-                f"\n{emoji} <b>{p['ticker']}</b>\n"
+                f"\n{emoji} <b>{p['ticker']}</b> 📊\n"
                 f"   📦 {p['qty']} מניות\n"
                 f"   💵 הושקע: ${invested:,.2f}\n"
                 f"   📈 כניסה: ${p['entry']} → עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
