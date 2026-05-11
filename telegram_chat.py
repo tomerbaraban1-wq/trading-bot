@@ -227,68 +227,67 @@ def _llm_reply(user_message: str, context: dict) -> str:
     if not client:
         return _simple_fallback(context)
 
-    # Build rich position summary
+    # Build detailed position summary
     positions = context.get("open_positions", [])
     pos_lines = []
     for p in positions:
         emoji = "🟢" if p["pct"] >= 0 else "🔴"
+        invested = round(p["entry"] * p["qty"], 2)
+        stop = p.get("atr_stop") or 0
         pos_lines.append(
-            f"{emoji} {p['ticker']}: {p['qty']} מניות | כניסה ${p['entry']} | "
-            f"עכשיו ${p['current']} ({p['pct']:+.1f}%) | רווח/הפסד ${p['pnl']:+.2f} | "
-            f"שווי ${ p['value']:,.2f} | סטופ-לוס ${p['atr_stop']}"
+            f"{emoji} {p['ticker']}: {p['qty']} מניות | "
+            f"הושקע ${invested:,.2f} | "
+            f"כניסה ${p['entry']} | עכשיו ${p['current']} ({p['pct']:+.1f}%) | "
+            f"רווח/הפסד ${p['pnl']:+.2f} | שווי ${p['value']:,.2f} | "
+            f"סטופ-לוס ${stop}"
         )
     pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
 
     # News
     news_text = " | ".join(context.get("latest_news", [])[:3]) or "אין חדשות"
 
-    # Closed trades summary
+    # Closed trades
     closed = context.get("closed_trades", [])
     closed_text = json.dumps(closed[-5:], ensure_ascii=False) if closed else "אין עסקאות סגורות"
 
-    system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) יישארו באנגלית — שאר הטקסט בעברית בלבד.
+    system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) יישארו באנגלית.
 
-אתה עוזר אישי חכם של בוט מסחר אוטומטי בשם "TradingBot".
-תפקידך: לנתח כל שאלה של המשתמש ולענות בצורה הכי רלוונטית ומדויקת.
+אתה עוזר אישי חכם של בוט מסחר אוטומטי. תפקידך לענות על כל שאלה בצורה ברורה, מפורטת ומועילה.
 
-כללי תשובה:
-• ענה רק על מה שנשאל — אל תוסיף מידע מיותר
-• שאלה על מניה ספציפית? תן פרטים רק עליה
-• שאלה כללית על התיק? תן סיכום מלא
-• שאלה על אסטרטגיה? הסבר כיצד הבוט עובד
-• שאלה שאינה על מסחר? ענה בידידותיות
-• השתמש באימוג'ים מתאימים
-• תגובה קצרה ועניינית (3-6 שורות בדרך כלל)
+══ כללי תשובה ══
+• ענה ישירות על מה שנשאל
+• שאלה "איזה מניות יש לי / מה יש בתיק"? — רשום כל פוזיציה עם: שם, כמות, מחיר כניסה, מחיר עכשיו, רווח/הפסד בדולרים ובאחוזים, כמה הושקע, היכן ה-Stop Loss
+• שאלה "כמה כסף יש לי / מה המצב"? — תן סיכום: מזומן + ערך מניות + רווח/הפסד כולל
+• שאלה על מניה ספציפית? — פרט רק עליה
+• שאלה על אסטרטגיה / איך הבוט עובד? — הסבר בפשטות
+• שאלה שאינה על מסחר? — ענה בידידותיות
+• השתמש באימוג'ים, תשובה קצרה וברורה
 
-══════════════ מצב הבוט עכשיו ══════════════
-💰 מזומן: ${context.get('cash', 0):,.2f} | שווי מניות: ${context.get('total_invested', 0):,.2f}
-💼 תיק כולל: ${context.get('equity', 0):,.2f}
+══ מצב התיק עכשיו ══
+💰 מזומן פנוי: ${context.get('cash', 0):,.2f}
+💼 שווי מניות: ${context.get('total_invested', 0):,.2f}
+📊 תיק כולל: ${context.get('equity', 0):,.2f}
 📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
-💳 רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}
-🔢 פוזיציות פתוחות: {context.get('open_positions_count', 0)}/{context.get('max_positions', 6)}
-📊 אחוז הצלחה: {context.get('win_rate', 0)}% מתוך {context.get('total_closed', 0)} עסקאות
+💳 רווח ממומש (נטו): ${context.get('realized_pnl_net', 0):+,.2f}
+🔢 פוזיציות: {context.get('open_positions_count', 0)} פתוחות (מקסימום {context.get('max_positions', 4)})
+📊 אחוז הצלחה: {context.get('win_rate', 0)}% ({context.get('total_closed', 0)} עסקאות סגורות)
 
-📈 פוזיציות:
+══ פוזיציות פתוחות ══
 {pos_text}
 
-📰 חדשות אחרונות: {news_text}
-
-⚙️ הגדרות: ציון קנייה מינ' {context.get('min_buy_score', 60)} | Stop Loss {context.get('stop_loss_pct', 5)}% | Take Profit {context.get('take_profit_pct', 10)}%
-🛑 Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ תקין'}
+══ הגדרות בוט ══
+ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
+Stop Loss: {context.get('stop_loss_pct', 5)}% | Take Profit: {context.get('take_profit_pct', 15)}%
+🛑 Circuit Breaker: {'⚠️ פעיל — אין קניות!' if context.get('circuit_breaker') else '✅ תקין'}
 🕐 שוק: {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 📉 VIX: {context.get('vix') or 'N/A'}
 
-🕐 שעון ישראל עכשיו: {context.get('trading_hours', {}).get('now_israel', 'N/A')}
-📅 עונה: {context.get('trading_hours', {}).get('season', 'N/A')}
-⏰ שעות מסחר (ישראל): {context.get('trading_hours', {}).get('market_open_israel', '16:30')}–{context.get('trading_hours', {}).get('market_close_israel', '23:00')}
-🌅 פרי-מרקט: מ-{context.get('trading_hours', {}).get('premarket_israel', '12:00')}
-🔍 סריקות: {context.get('trading_hours', {}).get('bot_scan_interval', 'כל 5 דקות')}
-☀️ תדרוך בוקר: {context.get('trading_hours', {}).get('morning_briefing', '16:00')}
-📊 סיכום יומי: {context.get('trading_hours', {}).get('daily_summary', '23:05')}
-📈 דוח שבועי: {context.get('trading_hours', {}).get('weekly_report', 'ראשון 23:10')}
+══ שעות מסחר (ישראל) ══
+עכשיו: {context.get('trading_hours', {}).get('now_israel', 'N/A')} | {context.get('trading_hours', {}).get('season', '')}
+פתיחה: {context.get('trading_hours', {}).get('market_open_israel', '16:30')} | סגירה: {context.get('trading_hours', {}).get('market_close_israel', '23:00')}
 
-📋 עסקאות אחרונות: {closed_text}
-═══════════════════════════════════════════
+══ עסקאות אחרונות ══
+{closed_text}
 """
 
     try:
