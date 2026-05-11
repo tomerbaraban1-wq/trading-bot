@@ -65,18 +65,27 @@ def _fetch_one_feed(source_name: str, feed_url: str) -> list[dict]:
 
 def _fetch_all_feeds() -> list[dict]:
     """Fetch all RSS feeds concurrently — worst case 5s instead of 40s."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FuturesTimeout
     all_items: list[dict] = []
     with ThreadPoolExecutor(max_workers=8) as ex:
         futures = {
             ex.submit(_fetch_one_feed, name, url): name
             for name, url in RSS_FEEDS
         }
-        for fut in as_completed(futures, timeout=6):
-            try:
-                all_items.extend(fut.result())
-            except Exception:
-                pass
+        try:
+            for fut in as_completed(futures, timeout=7):
+                try:
+                    all_items.extend(fut.result())
+                except Exception:
+                    pass
+        except _FuturesTimeout:
+            # Some feeds timed out — collect results from completed ones
+            for fut in futures:
+                if fut.done():
+                    try:
+                        all_items.extend(fut.result())
+                    except Exception:
+                        pass
     return all_items
 
 
