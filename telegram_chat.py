@@ -359,15 +359,20 @@ Stop Loss: {context.get('stop_loss_pct', 5)}% | Take Profit: {context.get('take_
 
 def _simple_fallback(ctx: dict) -> str:
     """Fallback when LLM is unavailable — still shows full position details."""
-    cash    = ctx.get("cash", 0)
-    equity  = ctx.get("equity", 0)
-    pnl     = ctx.get("open_pnl", 0)
+    cash     = ctx.get("cash", 0)
+    equity   = ctx.get("equity", 0)
+    pnl      = ctx.get("open_pnl", 0)
     realized = ctx.get("realized_pnl_net", 0)
     positions = ctx.get("open_positions", [])
+    total_invested = ctx.get("total_invested", 0)
+
+    pnl_note = " (הפוזיציות חדשות — עדיין לא זז המחיר)" if pnl == 0 and positions else ""
 
     lines = [f"📊 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
-    lines.append(f"💰 מזומן: <b>${cash:,.2f}</b>  |  💼 תיק: <b>${equity:,.2f}</b>")
-    lines.append(f"📈 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>  |  ממומש: <b>${realized:+.2f}</b>")
+    lines.append(f"💼 <b>שווי תיק כולל: ${equity:,.2f}</b>")
+    lines.append(f"   💰 מזומן פנוי: ${cash:,.2f}  |  📈 מניות: ${total_invested:,.2f}")
+    lines.append(f"   💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
+    lines.append(f"   💳 רווח ממומש: <b>${realized:+.2f}</b>")
 
     if positions:
         lines.append("\n<b>פוזיציות פתוחות:</b>")
