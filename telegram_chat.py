@@ -474,13 +474,14 @@ def _handle_command(text: str, context: dict) -> str | None:
         if not positions:
             return "אין פוזיציות פתוחות כרגע 📭"
         lines = [f"📂 <b>פוזיציות פתוחות ({len(positions)})</b>\n━━━━━━━━━━━━━━━━"]
+        total_pnl = 0.0
         for p in positions:
-            emoji   = "🟢" if p["pct"] >= 0 else "🔴"
-            stop    = p.get("atr_stop") or 0
-            held    = p.get("held_hours", 0)
-            held_str = _fmt_held(held)
+            emoji    = "🟢" if p["pct"] >= 0 else "🔴"
+            stop     = p.get("atr_stop") or 0
+            held     = p.get("held_hours", 0)
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
-            held_line = f"\n   ⏱ הוחזק: {held_str}" if held >= 0.5 else ""
+            held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
+            total_pnl += p["pnl"]
             lines.append(
                 f"\n{emoji} <b>{p['ticker']}</b>\n"
                 f"   📦 {p['qty']} מניות\n"
@@ -490,6 +491,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"   🛑 Stop Loss: ${stop}"
                 f"{held_line}"
             )
+        total_emoji = "📈" if total_pnl >= 0 else "📉"
+        lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ רווח/הפסד: <b>${total_pnl:+.2f}</b>")
         return "\n".join(lines)
 
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
