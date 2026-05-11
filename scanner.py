@@ -203,7 +203,7 @@ WATCHLIST = [
     "TTE",   # TotalEnergies (~$140B)
     "RIO",   # Rio Tinto (~$100B)
     "SONY",  # Sony (~$100B)
-    "MUFG",  # Mitsubishi UFJ Financial (~$150B)
+    # "MUFG",  # Mitsubishi UFJ Financial — removed: yfinance timeouts on ADR data
     "HDB",   # HDFC Bank India (~$150B)
     "SIEGY", # Siemens (~$150B)
     "LVMUY", # LVMH — יוקרה (~$350B)
