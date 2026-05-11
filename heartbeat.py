@@ -181,8 +181,18 @@ async def _close_position(
     lim_sell = limit_sell_price(cur_price)
     try:
         order = await asyncio.wait_for(
-            asyncio.to_thread(broker.submit_sell, ticker), timeout=15
+            asyncio.to_thread(broker.submit_sell, ticker), timeout=30  # raised 15→30s
         )
+    except asyncio.TimeoutError:
+        # Retry once — yfinance can be slow on first call
+        logger.warning(f"[SELL] {ticker}: first attempt timed out, retrying...")
+        try:
+            order = await asyncio.wait_for(
+                asyncio.to_thread(broker.submit_sell, ticker), timeout=30
+            )
+        except Exception as retry_err:
+            _create_background_task(notify_error("stop_loss_fail", ticker, f"timeout+retry: {retry_err}"))
+            return False
     except Exception as sell_err:
         _create_background_task(notify_error("stop_loss_fail", ticker, str(sell_err)))
         return False
