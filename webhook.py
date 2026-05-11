@@ -1327,8 +1327,8 @@ async def test_telegram():
         return {
             "status": "error",
             "message": "חסרים פרטי טלגרם ב-Render",
-            "TELEGRAM_BOT_TOKEN": token_hint,
-            "TELEGRAM_CHAT_ID":   chat_hint,
+            "token_configured": token_set,
+            "chat_configured":  chat_set,
             "fix": "הוסף את המשתנים ב-Render → Environment",
         }
 
@@ -1338,11 +1338,11 @@ async def test_telegram():
         "📡 מוכן לשלוח התראות."
     )
     return {
-        "status": "ok" if ok else "failed",
-        "sent": ok,
-        "TELEGRAM_BOT_TOKEN": token_hint,
-        "TELEGRAM_CHAT_ID":   chat_hint,
-        "message": "הודעת בדיקה נשלחה בהצלחה ✅" if ok else "❌ שליחה נכשלה — בדוק לוגים",
+        "status":            "ok" if ok else "failed",
+        "sent":              ok,
+        "token_configured":  True,
+        "chat_configured":   True,
+        "message":           "הודעת בדיקה נשלחה בהצלחה ✅" if ok else "❌ שליחה נכשלה — בדוק לוגים",
     }
 
 
