@@ -45,6 +45,7 @@ def _get_client() -> OpenAI | None:
 
 def _build_context() -> dict:
     """Gather FULL live trading context for the LLM — positions, market, news, stats."""
+    from datetime import datetime, timezone as _tz
     try:
         status = budget.get_budget_status()
         open_trades = database.get_open_trades()
@@ -54,12 +55,9 @@ def _build_context() -> dict:
         status, open_trades, history = {}, [], []
 
     # ── Positions: merge DB trade log + live broker positions ─────────
-    # DB trade_log has entry prices; broker has live prices.
-    # After Render restart, SQLite may be wiped — fall back to broker only.
     positions_summary = []
 
     if open_trades:
-        # Primary: use SQLite trade records (have entry price)
         for t in open_trades:
             ticker = t.get("ticker")
             try:
@@ -70,15 +68,28 @@ def _build_context() -> dict:
                 pct = (cur - entry) / entry * 100 if entry else 0
                 pnl = (cur - entry) * qty
                 val = cur * qty
+                # Calculate how long position has been held
+                held_hours = 0.0
+                entry_time_str = t.get("entry_time")
+                if entry_time_str:
+                    try:
+                        entry_dt = datetime.strptime(str(entry_time_str)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+                        held_hours = round((datetime.now(_tz.utc) - entry_dt).total_seconds() / 3600, 1)
+                    except Exception:
+                        pass
                 positions_summary.append({
-                    "ticker":   ticker,
-                    "qty":      round(qty, 4),
-                    "entry":    round(entry, 2),
-                    "current":  round(cur, 2),
-                    "pct":      round(pct, 2),
-                    "pnl":      round(pnl, 2),
-                    "value":    round(val, 2),
-                    "atr_stop": round(t.get("atr_stop_price") or 0, 2),
+                    "ticker":      ticker,
+                    "qty":         round(qty, 4),
+                    "entry":       round(entry, 2),
+                    "current":     round(cur, 2),
+                    "pct":         round(pct, 2),
+                    "pnl":         round(pnl, 2),
+                    "value":       round(val, 2),
+                    "invested":    round(entry * qty, 2),
+                    "atr_stop":    round(t.get("atr_stop_price") or 0, 2),
+                    "held_hours":  held_hours,
+                    "entry_time":  str(entry_time_str)[:16] if entry_time_str else "",
+                    "sentiment":   t.get("sentiment_score"),
                 })
             except Exception:
                 pass
@@ -232,14 +243,15 @@ def _llm_reply(user_message: str, context: dict) -> str:
     pos_lines = []
     for p in positions:
         emoji = "🟢" if p["pct"] >= 0 else "🔴"
-        invested = round(p["entry"] * p["qty"], 2)
         stop = p.get("atr_stop") or 0
+        held = p.get("held_hours", 0)
+        held_str = f"{held:.1f} שעות" if held < 24 else f"{held/24:.1f} ימים"
         pos_lines.append(
             f"{emoji} {p['ticker']}: {p['qty']} מניות | "
-            f"הושקע ${invested:,.2f} | "
+            f"הושקע ${p.get('invested', round(p['entry']*p['qty'],2)):,.2f} | "
             f"כניסה ${p['entry']} | עכשיו ${p['current']} ({p['pct']:+.1f}%) | "
             f"רווח/הפסד ${p['pnl']:+.2f} | שווי ${p['value']:,.2f} | "
-            f"סטופ-לוס ${stop}"
+            f"סטופ-לוס ${stop} | הוחזק {held_str}"
         )
     pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
 
@@ -344,12 +356,14 @@ def _simple_fallback(ctx: dict) -> str:
         lines.append("\n<b>פוזיציות פתוחות:</b>")
         for p in positions:
             emoji = "🟢" if p["pct"] >= 0 else "🔴"
-            invested = round(p["entry"] * p["qty"], 2)
+            invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             stop = p.get("atr_stop") or 0
+            held = p.get("held_hours", 0)
+            held_str = f"{held:.0f}ש'" if held < 24 else f"{held/24:.1f}י'"
             lines.append(
-                f"{emoji} <b>{p['ticker']}</b>\n"
-                f"   📦 כמות: {p['qty']} מניות  |  💵 הושקע: ${invested:,.2f}\n"
-                f"   📈 כניסה: ${p['entry']}  →  עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"{emoji} <b>{p['ticker']}</b>  ({held_str})\n"
+                f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
+                f"   📈 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
                 f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
                 + (f"  |  🛑 Stop: ${stop}" if stop else "")
             )
@@ -361,10 +375,44 @@ def _simple_fallback(ctx: dict) -> str:
     return "\n".join(lines)
 
 
+async def _send_typing(chat_id: str) -> None:
+    """Send 'typing...' action to Telegram so user sees the bot is working."""
+    try:
+        import aiohttp as _aiohttp
+        url = f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendChatAction"
+        async with _aiohttp.ClientSession() as s:
+            await s.post(url, json={"chat_id": chat_id, "action": "typing"},
+                         timeout=_aiohttp.ClientTimeout(total=3))
+    except Exception:
+        pass  # typing indicator is best-effort
+
+
+def _handle_command(text: str, context: dict) -> str | None:
+    """Handle quick /commands without LLM. Returns reply or None if not a command."""
+    cmd = text.strip().lower().split()[0] if text.strip() else ""
+
+    if cmd in ("/start", "/help", "עזרה"):
+        return (
+            "👋 <b>שלום! אני בוט המסחר שלך.</b>\n\n"
+            "אתה יכול לשאול אותי כל שאלה בעברית חופשית, למשל:\n"
+            "• <i>איזה מניות יש לי?</i>\n"
+            "• <i>כמה כסף יש לי?</i>\n"
+            "• <i>מה הרווח שלי?</i>\n"
+            "• <i>מתי השוק נפתח?</i>\n"
+            "• <i>מה הבוט עשה היום?</i>\n\n"
+            "📊 /status — מצב מהיר\n"
+            "❓ /help — הודעה זו"
+        )
+
+    if cmd == "/status":
+        return _simple_fallback(context)
+
+    return None  # not a command — let LLM handle it
+
+
 async def handle_telegram_update(update: dict) -> dict:
     """
     Handle an incoming Telegram update.
-
     Returns a dict with status info (used for diagnostics).
     """
     message = update.get("message") or update.get("edited_message") or {}
@@ -387,12 +435,27 @@ async def handle_telegram_update(update: dict) -> dict:
 
     logger.info(f"[CHAT] Incoming: {text[:100]}")
 
+    # Send typing indicator immediately so user knows bot is working
+    await _send_typing(chat_id)
+
     # Generate reply — run in thread to avoid blocking the event loop during LLM call
     try:
-        reply = await asyncio.to_thread(_generate_reply, text)
+        context = await asyncio.to_thread(_build_context)
+
+        # Check for quick commands first (no LLM needed)
+        reply = _handle_command(text, context)
+
+        if reply is None:
+            # Full LLM reply
+            client = _get_client()
+            if client:
+                reply = await asyncio.to_thread(_llm_reply, text, context)
+            else:
+                reply = _simple_fallback(context)
+
     except Exception as exc:
         logger.error(f"[CHAT] Reply generation failed: {exc}")
-        reply = "מצטער, נתקלתי בשגיאה בעיבוד השאלה. נסה שוב."
+        reply = "מצטער, נתקלתי בשגיאה. נסה שוב."
 
     # Send reply
     try:
