@@ -298,6 +298,9 @@ def _llm_reply(user_message: str, context: dict) -> str:
 ❓ "מה המצב" / "תסביר מצב":
 → תן סיכום קצר של הכל: תיק, מניות, רווח, שוק
 
+❓ "מי הברוקר" / "איזה ברוקר" / "דרך מי הוא קונה":
+→ ענה: הברוקר הוא {context.get('broker', 'tv_paper')} — זהו ברוקר נייר (paper trading) שמדמה מסחר אמיתי עם כסף וירטואלי. הקניות מתבצעות דרך yfinance עם מחירים אמיתיים מהשוק
+
 ❓ "איך הבוט עובד" / "מה האסטרטגיה":
 → הסבר בפשטות: סורק כל 5 דקות, קונה מניות עם ציון ≥60/100, מוכר ב-Stop Loss או Take Profit
 
@@ -316,6 +319,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 {pos_text}
 
 ══ הגדרות בוט ══
+🏦 ברוקר: {context.get('broker', 'tv_paper')} (paper trading — כסף וירטואלי)
 ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
 Stop Loss: {context.get('stop_loss_pct', 5)}% | Take Profit: {context.get('take_profit_pct', 15)}%
 🛑 Circuit Breaker: {'⚠️ פעיל — אין קניות!' if context.get('circuit_breaker') else '✅ תקין'}
