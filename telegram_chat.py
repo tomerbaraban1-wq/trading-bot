@@ -468,7 +468,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         return _simple_fallback(context)
 
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
-    stocks_keywords = ["מניות", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי"]
+    stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה"]
     if any(k in t for k in stocks_keywords):
         positions = context.get("open_positions", [])
         if not positions:
