@@ -135,14 +135,11 @@ async def notify_trade_open(
 ) -> None:
     """Rich BUY notification with position sizing and scoring context."""
     qty_str = f"{qty:.4f}" if qty != int(qty) else str(int(qty))
-    iceberg_line = (
-        f"\n🧊 פיצול הזמנה: {n_slices} חלקים"
-        if is_iceberg else ""
-    )
+    iceberg_line = f"\n🧊 פיצול הזמנה: {n_slices} חלקים" if is_iceberg else ""
     id_line = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
     await send_message(
-        f"🟢 <b>קנייה</b>\n"
-        f"📈 מניה: <b>{ticker}</b>\n"
+        f"🟢 <b>קנייה — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"📦 כמות: {qty_str} מניות\n"
         f"💵 מחיר: ${price:.2f}\n"
         f"💰 סה״כ: ${notional:,.2f}\n"
@@ -174,13 +171,14 @@ async def notify_trade_close(
     id_line     = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
 
     await send_message(
-        f"{emoji} <b>מכירה</b>\n"
-        f"📈 מניה: <b>{ticker}</b>\n"
+        f"{emoji} <b>מכירה — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"📦 כמות: {qty} מניות\n"
-        f"💵 מחיר כניסה: ${entry_price:.2f}\n"
-        f"💵 מחיר יציאה: ${exit_price:.2f}\n"
+        f"💵 כניסה: ${entry_price:.2f}\n"
+        f"💵 יציאה: ${exit_price:.2f}\n"
         f"📊 שינוי: {pct:+.2f}%\n"
-        f"⏱ זמן החזקה: {dur_str}\n"
+        f"⏱ זמן: {dur_str}\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
         f"💳 נטו: ${pnl_net:+.2f}\n"
         f"🧾 מס: ${tax_reserved:.2f}"
@@ -386,8 +384,8 @@ async def notify_sell(
     win   = pnl_gross >= 0
     emoji = "💰" if win else "🔴"
     await send_message(
-        f"{emoji} <b>מכירה</b>\n"
-        f"📈 מניה: <b>{ticker}</b>\n"
+        f"{emoji} <b>מכירה — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
         f"💵 מחיר יציאה: ${price:.2f}\n"
         f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
         f"📌 סיבה: {reason}"
