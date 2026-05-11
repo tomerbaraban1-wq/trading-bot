@@ -469,14 +469,15 @@ def _handle_command(text: str, context: dict) -> str | None:
             held    = p.get("held_hours", 0)
             held_str = f"{held:.0f} שעות" if held < 24 else f"{held/24:.1f} ימים"
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
+            held_line = f"\n   ⏱ הוחזק: {held_str}" if held >= 0.5 else ""
             lines.append(
                 f"\n{emoji} <b>{p['ticker']}</b>\n"
                 f"   📦 {p['qty']} מניות\n"
                 f"   💵 הושקע: ${invested:,.2f}\n"
                 f"   📈 כניסה: ${p['entry']} → עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
                 f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>\n"
-                f"   🛑 Stop Loss: ${stop}\n"
-                f"   ⏱ הוחזק: {held_str}"
+                f"   🛑 Stop Loss: ${stop}"
+                f"{held_line}"
             )
         return "\n".join(lines)
 
