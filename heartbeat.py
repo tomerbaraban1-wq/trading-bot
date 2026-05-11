@@ -704,11 +704,11 @@ async def morning_briefing_loop():
     NYSE DST transitions, early closes, and holidays automatically.
     """
     import datetime as _dt
-    await asyncio.sleep(60)
+    await asyncio.sleep(10)   # short initial delay (was 60s — caused missed briefings on restart)
     _briefing_sent_date = None   # track so we only send once per day
     while True:
         try:
-            # Ask Alpaca when the market next opens
+            # Ask broker when the market next opens
             clock = await asyncio.wait_for(
                 asyncio.to_thread(broker.get_clock), timeout=10
             )
@@ -733,14 +733,24 @@ async def morning_briefing_loop():
             briefing_time = next_open_dt - _dt.timedelta(minutes=30)
             today_str = now_utc.strftime("%Y-%m-%d")
 
-            # Already sent today or market already open
-            if _briefing_sent_date == today_str or is_open:
+            # Already sent today — skip
+            if _briefing_sent_date == today_str:
                 await asyncio.sleep(5 * 60)
                 continue
 
-            if now_utc < briefing_time:
+            # Catch-up window: send if we are within 25 minutes PAST briefing_time
+            # (handles restarts during the briefing window or just after market open)
+            catch_up_deadline = briefing_time + _dt.timedelta(minutes=25)
+            if briefing_time <= now_utc <= catch_up_deadline:
+                pass  # in the send window — fall through to send
+            elif now_utc < briefing_time:
+                # Too early — wait
                 wait_sec = (briefing_time - now_utc).total_seconds()
                 await asyncio.sleep(min(wait_sec, 5 * 60))
+                continue
+            else:
+                # Past the catch-up window — skip until tomorrow
+                await asyncio.sleep(5 * 60)
                 continue
 
             from news_service import get_general_headlines
