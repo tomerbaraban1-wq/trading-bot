@@ -144,8 +144,8 @@ def _get_account_equity() -> tuple[float, float]:
     """
     account   = broker.get_account()
     positions = broker.get_positions()
-    cash      = float(account["cash"])
-    pos_value = sum(float(p["market_value"]) for p in positions)
+    cash      = float(account.get("cash") or 0)
+    pos_value = sum(float(p.get("market_value") or 0) for p in positions)
     equity    = cash + pos_value
     return equity, cash
 

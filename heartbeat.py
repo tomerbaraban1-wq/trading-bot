@@ -398,7 +398,9 @@ async def stop_loss_monitor():
                             score_result = await asyncio.to_thread(
                                 get_composite_score, ticker, 5
                             )
-                            comp = score_result["composite_score"]
+                            comp = score_result.get("composite_score")
+                            if comp is None:
+                                raise ValueError("composite_score missing from result")
                             if comp < 35:  # raised 30→35: exit sooner on deteriorating signals
                                 logger.warning(
                                     f"[SMART SELL] {ticker}: score={comp}/100 — exiting"

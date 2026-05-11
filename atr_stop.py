@@ -54,7 +54,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MULTIPLIER:  float = float(os.getenv("ATR_STOP_MULTIPLIER", "2.0"))
+MULTIPLIER:  float = max(0.1, float(os.getenv("ATR_STOP_MULTIPLIER", "2.0")))
 MIN_STOP_PCT: float = float(os.getenv("ATR_STOP_MIN_PCT",   "1.5"))  # %
 MAX_STOP_PCT: float = float(os.getenv("ATR_STOP_MAX_PCT",   "8.0"))  # %
 ATR_PERIOD:  int   = int(os.getenv("ATR_STOP_PERIOD",       "14"))
