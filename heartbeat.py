@@ -180,12 +180,12 @@ async def _close_position(
     ticker   = trade["ticker"]
     lim_sell = limit_sell_price(cur_price)
     try:
+        # Pass cur_price to avoid redundant yfinance fetch inside submit_sell
         order = await asyncio.wait_for(
-            asyncio.to_thread(broker.submit_sell, ticker), timeout=30  # raised 15→30s
+            asyncio.to_thread(broker.submit_sell, ticker, None, cur_price), timeout=20
         )
     except asyncio.TimeoutError:
-        # Retry once — yfinance can be slow on first call
-        logger.warning(f"[SELL] {ticker}: first attempt timed out, retrying...")
+        logger.warning(f"[SELL] {ticker}: timed out, retrying without price hint...")
         try:
             order = await asyncio.wait_for(
                 asyncio.to_thread(broker.submit_sell, ticker), timeout=30

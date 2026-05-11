@@ -442,7 +442,11 @@ class TVPaperBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
+        """
+        price: optional — pass the already-fetched price to avoid a redundant yfinance call.
+        If not provided, fetches live from yfinance.
+        """
         ticker = ticker.upper()
 
         pos = TVPaperBroker._positions.get(ticker)
@@ -459,7 +463,11 @@ class TVPaperBroker(BrokerBase):
                 raise ValueError(f"qty must be positive, got {qty}")
             sell_qty = qty
 
-        current_price = self._get_price(ticker)  # raises if price = 0
+        # Use the provided price to avoid redundant yfinance network call
+        if price and price > 0:
+            current_price = float(price)
+        else:
+            current_price = self._get_price(ticker)  # raises if price = 0
         proceeds = current_price * sell_qty
 
         # Atomic state mutation under lock

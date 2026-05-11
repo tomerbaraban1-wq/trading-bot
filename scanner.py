@@ -131,7 +131,7 @@ WATCHLIST = [
     "COIN", "MSTR",  # SQ (Block) delisted from this index — removed
 
     # ── פיננסים ──
-    "JPM", "BAC", "WFC", "C", "GS", "MS", "AXP", "V", "MA",
+    "JPM", "WFC", "C", "GS", "MS", "AXP", "V", "MA",  # BAC removed — yfinance timeouts
     "BLK", "SCHW", "CB", "PGR", "AON", "SPGI", "MCO",  # MMC removed — data issues
     "ICE", "CME", "COF", "USB", "TFC", "PNC", "BK", "STT",
     "BRK-B",  # Berkshire Hathaway
