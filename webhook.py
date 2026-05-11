@@ -333,7 +333,9 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     # Log trade
     actual_price = order.get("price") or payload.price
     filled_qty = float(order.get("filled_qty", max_qty))   # use actual fill, handle partial iceberg
-    trade_id = log_trade_open(payload, sentiment, order, filled_qty)
+    from slippage import estimate as _slip_est
+    _slip_meta = _slip_est(payload.price, filled_qty, "buy", ticker)
+    trade_id = log_trade_open(payload, sentiment, order, filled_qty, slippage_meta=_slip_meta)
 
     # Record actual slippage (signal price vs fill price, fire-and-forget)
     from slippage import record as _slippage_record
