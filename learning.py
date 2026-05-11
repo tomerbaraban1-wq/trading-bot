@@ -1,7 +1,12 @@
 import logging
+import time as _time
 from database import get_loss_trades, get_learning_entries, get_win_trades
 
 logger = logging.getLogger(__name__)
+
+# Throttle: update thresholds at most once per hour (not on every scan)
+_last_threshold_update: float = 0.0
+_THRESHOLD_UPDATE_INTERVAL: float = 3600.0   # 1 hour
 
 # Dynamic thresholds — updated automatically based on trade history
 _dynamic_thresholds = {
@@ -20,7 +25,13 @@ def get_dynamic_thresholds() -> dict:
 
 
 def _update_thresholds():
-    """Analyze trade history and auto-adjust thresholds."""
+    """Analyze trade history and auto-adjust thresholds (at most once per hour)."""
+    global _last_threshold_update
+    now = _time.time()
+    if now - _last_threshold_update < _THRESHOLD_UPDATE_INTERVAL:
+        return  # throttled — don't hammer DB on every scan
+    _last_threshold_update = now
+
     losses = get_loss_trades(limit=30)
     wins = get_win_trades(limit=30)
 

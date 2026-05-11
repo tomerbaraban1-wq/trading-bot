@@ -80,8 +80,8 @@ def refresh_large_cap_list() -> None:
         except Exception:
             pass
 
-    # Parallel market-cap checks — 30 workers, should finish in ~60s
-    with ThreadPoolExecutor(max_workers=30) as ex:
+    # Parallel market-cap checks — 10 workers (was 30, reduced to save RAM on Render free tier)
+    with ThreadPoolExecutor(max_workers=10) as ex:
         list(ex.map(_check, all_tickers))
 
     with _dynamic_list_lock:

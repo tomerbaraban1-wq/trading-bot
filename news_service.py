@@ -49,79 +49,75 @@ def _cache_set(key: str, headlines: list[str]) -> None:
         _cache_time[key] = time.time()
 
 
+def _fetch_one_feed(source_name: str, feed_url: str) -> list[dict]:
+    """Fetch and parse a single RSS feed. Returns [] on any failure."""
+    try:
+        resp = requests.get(
+            feed_url, timeout=5,
+            headers={"User-Agent": "Mozilla/5.0 TradingBot/1.0"},
+        )
+        if resp.status_code != 200:
+            return []
+        return _parse_rss(resp.content, source_name)
+    except Exception:
+        return []
+
+
+def _fetch_all_feeds() -> list[dict]:
+    """Fetch all RSS feeds concurrently — worst case 5s instead of 40s."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    all_items: list[dict] = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {
+            ex.submit(_fetch_one_feed, name, url): name
+            for name, url in RSS_FEEDS
+        }
+        for fut in as_completed(futures, timeout=6):
+            try:
+                all_items.extend(fut.result())
+            except Exception:
+                pass
+    return all_items
+
+
+def _dedup(headlines: list[str]) -> list[str]:
+    seen, unique = set(), []
+    for h in headlines:
+        key = h.strip().lower()[:50]
+        if key not in seen:
+            seen.add(key)
+            unique.append(h)
+    return unique
+
+
 def get_headlines(ticker: str, limit: int = 5) -> list[str]:
-    """Get top N news headlines for a ticker from RSS feeds."""
+    """Get top N news headlines for a ticker — all feeds fetched in parallel."""
     cache_key = ticker.upper()
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached[:limit]
 
-    all_headlines = []
-    # Use word-boundary regex so ticker "ON" doesn't match every headline
-    # containing the word "on", "F" doesn't match "of", etc.
     pattern = re.compile(rf"\b{re.escape(ticker)}\b", re.IGNORECASE)
-
-    for source_name, feed_url in RSS_FEEDS:
-        try:
-            resp = requests.get(
-                feed_url,
-                timeout=5,   # reduced from 10s — 8 feeds × 5s = 40s max
-                headers={"User-Agent": "Mozilla/5.0 TradingBot/1.0"},
-            )
-            if resp.status_code != 200:
-                continue
-            items = _parse_rss(resp.content, source_name)
-            for item in items:
-                text = item["headline"] + " " + item.get("summary", "")
-                if pattern.search(text):
-                    all_headlines.append(item["headline"])
-        except requests.exceptions.RequestException:
-            continue
-
-    # Deduplication
-    seen = set()
-    unique = []
-    for h in all_headlines:
-        key = h.strip().lower()[:50]
-        if key not in seen:
-            seen.add(key)
-            unique.append(h)
-
+    items = _fetch_all_feeds()
+    matched = [
+        item["headline"] for item in items
+        if pattern.search(item["headline"] + " " + item.get("summary", ""))
+    ]
+    unique = _dedup(matched)
     _cache_set(cache_key, unique)
     return unique[:limit]
 
 
 def get_general_headlines(limit: int = 10) -> list[str]:
-    """Get general market headlines (no ticker filter)."""
+    """Get general market headlines — all feeds fetched in parallel."""
     cache_key = "__GENERAL__"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached[:limit]
 
-    all_headlines = []
-    for source_name, feed_url in RSS_FEEDS:
-        try:
-            resp = requests.get(
-                feed_url,
-                timeout=5,   # reduced from 10s
-                headers={"User-Agent": "Mozilla/5.0 TradingBot/1.0"},
-            )
-            if resp.status_code != 200:
-                continue
-            items = _parse_rss(resp.content, source_name)
-            all_headlines.extend([item["headline"] for item in items[:5]])
-        except requests.exceptions.RequestException:
-            continue
-
-    # Dedup
-    seen = set()
-    unique = []
-    for h in all_headlines:
-        key = h.strip().lower()[:50]
-        if key not in seen:
-            seen.add(key)
-            unique.append(h)
-
+    items = _fetch_all_feeds()
+    headlines = [item["headline"] for item in items]
+    unique = _dedup(headlines)
     _cache_set(cache_key, unique)
     return unique[:limit]
 

@@ -236,24 +236,24 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     Full composite score combining technicals + market + sentiment.
     Returns dict with final score and full breakdown.
     """
-    # Technical score (55% weight)
+    # Technical score (60% weight)
     tech_score, tech_breakdown = score_technicals(ticker)
 
-    # Market conditions score (20% weight)
+    # Market conditions score (25% weight)
     market = get_market_conditions()
     mkt_score, mkt_breakdown = score_market(market)
 
-    # Sentiment score — convert 1-10 to 0-100 (20% weight)
+    # Sentiment score — convert 1-10 to 0-100 (15% weight)
     sent_score = max(0, min(100, (max(1, sentiment_score) - 1) / 9 * 100))
 
     # Weighted composite
-    # Weights: technicals 55%, sentiment 25%, market 20%
-    # Raised sentiment (25% vs 20%) — news is a strong leading indicator
-    # Kept market at 20% — SPY guard already blocks bad markets upstream
+    # Weights: technicals 60%, market 25%, sentiment 15%
+    # Market raised to 25%: VIX/SPY is most reliable macro filter
+    # Sentiment lowered to 15%: LLM news score is volatile and slow to update
     composite = round(
-        tech_score * 0.55 +
-        mkt_score  * 0.20 +
-        sent_score * 0.25,
+        tech_score * 0.60 +
+        mkt_score  * 0.25 +
+        sent_score * 0.15,
         1
     )
 
@@ -270,7 +270,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         "min_score": MIN_BUY_SCORE,
         "decision": decision,
         "should_buy": composite >= MIN_BUY_SCORE,
-        "weights": {"technicals": "55%", "market": "20%", "sentiment": "25%"},
+        "weights": {"technicals": "60%", "market": "25%", "sentiment": "15%"},
         "scores": {
             "technicals": tech_score,
             "market": mkt_score,

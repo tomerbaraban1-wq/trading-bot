@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 # Lazy-init OpenAI/Groq client
 _client = None
 
+# Context cache — avoid hammering broker API on every Telegram message
+_context_cache: tuple[float, dict] = (0.0, {})
+_CONTEXT_CACHE_TTL = 30   # seconds
+
 
 def _get_client() -> OpenAI | None:
     global _client
@@ -44,7 +48,12 @@ def _get_client() -> OpenAI | None:
 
 
 def _build_context() -> dict:
-    """Gather FULL live trading context for the LLM — positions, market, news, stats."""
+    """Gather FULL live trading context for the LLM — cached 30s to avoid broker spam."""
+    import time as _t
+    global _context_cache
+    if _t.time() - _context_cache[0] < _CONTEXT_CACHE_TTL and _context_cache[1]:
+        return _context_cache[1]
+
     from datetime import datetime, timezone as _tz
     try:
         status = budget.get_budget_status()
@@ -185,7 +194,7 @@ def _build_context() -> dict:
     total_val = sum(p["value"] for p in positions_summary)
     win_rate = round(wins / len(closed) * 100, 1) if closed else 0
 
-    return {
+    _result = {
         # Portfolio
         "cash":                 round(status.get("cash_available", 0), 2),
         "equity":               round(status.get("equity", 0), 2),
@@ -216,6 +225,8 @@ def _build_context() -> dict:
         # Trading hours
         "trading_hours":        trading_hours,
     }
+    _context_cache = (_t.time(), _result)   # type: ignore[assignment]
+    return _result
 
 
 def _generate_reply(user_message: str) -> str:
