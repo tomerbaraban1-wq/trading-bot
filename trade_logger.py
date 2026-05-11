@@ -63,7 +63,8 @@ def log_trade_open(
     -------
     trade_id : int  (SQLite primary key)
     """
-    actual_price = float(order_result.get("price") or payload.price)
+    _broker_price = order_result.get("price")
+    actual_price  = float(_broker_price if _broker_price and _broker_price > 0 else payload.price)
 
     trade = {
         "ticker":               payload.ticker.upper(),

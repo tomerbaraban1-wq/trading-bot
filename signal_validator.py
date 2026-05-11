@@ -35,7 +35,8 @@ def validate_signal(ticker: str, action: str) -> tuple[bool, str]:
         if not asset:
             return False, f"Asset {ticker} not found or not tradable"
     except Exception as e:
-        logger.warning(f"Could not verify asset {ticker}: {e}")
+        logger.warning(f"Could not verify asset {ticker}: {e} — proceeding (fail-open)")
+        # Fail-open: don't block trading on a data-fetch error
 
     # Record this signal
     _record_signal(ticker, action)

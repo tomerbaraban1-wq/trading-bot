@@ -302,17 +302,22 @@ def _score_stock(ticker: str, ind: dict) -> tuple[float, str]:
             reasons.append("MACD שלילי")
 
     # --- Bollinger Bands scoring ---
-    # get_current_indicators returns bb_position as "lower"/"middle"/"upper"/"unknown"
-    bb_pos_str = ind.get("bb_position", "unknown")
-    if bb_pos_str == "lower":
-        score += 2
-        reasons.append("BB תחתון✅")
-    elif bb_pos_str == "middle":
-        score += 1
-        reasons.append("BB אמצע")
-    elif bb_pos_str == "upper":
-        score -= 1
-        reasons.append("BB עליון❌")
+    # get_current_indicators returns bb_position as float 0.0 (lower) → 1.0 (upper)
+    bb_pos = ind.get("bb_position")
+    if bb_pos is not None:
+        try:
+            bb_pos = float(bb_pos)
+            if bb_pos < 0.35:
+                score += 2
+                reasons.append("BB תחתון✅")
+            elif bb_pos < 0.65:
+                score += 1
+                reasons.append("BB אמצע")
+            else:
+                score -= 1
+                reasons.append("BB עליון❌")
+        except (TypeError, ValueError):
+            pass
 
     # --- Volume ratio scoring ---
     volume_ratio = ind.get("volume_ratio")

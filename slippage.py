@@ -126,6 +126,7 @@ def estimate(market_price: float, qty: float, side: str, ticker: str = "") -> di
     Full slippage estimate for a trade.
     Logs the breakdown and returns a metadata dict.
     """
+    side = side.lower()  # normalize: accept "BUY", "Buy", "buy"
     offset_pct = _compute_offset_pct(ticker) if ticker else MIN_SLIP_PCT
 
     if side == "buy":

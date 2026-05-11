@@ -34,9 +34,23 @@ def _update_thresholds():
         # If most losses had sentiment <= 5, raise the bar
         if avg_loss_sentiment <= 5:
             new_min = min(7, round(avg_loss_sentiment) + 1)
-            if new_min != _dynamic_thresholds["min_sentiment"]:
+            if new_min > _dynamic_thresholds["min_sentiment"]:
                 logger.info(f"LEARNING: Raising min_sentiment {_dynamic_thresholds['min_sentiment']} → {new_min} (avg loss sentiment was {avg_loss_sentiment:.1f})")
                 _dynamic_thresholds["min_sentiment"] = new_min
+
+    # Relaxation: if wins are clustering at sentiment < current threshold, loosen it
+    # Prevents the threshold from permanently locking all trades after a bad streak
+    win_sentiments = [t["sentiment_score"] for t in wins if t.get("sentiment_score") is not None]
+    if win_sentiments and len(wins) >= 3:
+        avg_win_sentiment = sum(win_sentiments) / len(win_sentiments)
+        # Relax threshold if profitable trades are happening well below the current bar
+        relaxed = max(4, round(avg_win_sentiment) - 1)
+        if relaxed < _dynamic_thresholds["min_sentiment"]:
+            logger.info(
+                f"LEARNING: Relaxing min_sentiment {_dynamic_thresholds['min_sentiment']} → {relaxed} "
+                f"(wins avg sentiment={avg_win_sentiment:.1f} — threshold too strict)"
+            )
+            _dynamic_thresholds["min_sentiment"] = relaxed
 
     # --- Auto-adjust RSI threshold ---
     loss_rsis = [t["rsi"] for t in losses if t.get("rsi") is not None]

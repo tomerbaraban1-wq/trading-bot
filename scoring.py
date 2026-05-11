@@ -195,8 +195,9 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     else:
         breakdown["volatility"] = "⚪ N/A"
 
-    # Normalize to 0-100
-    final_score = round((score / max_score) * 100, 1) if max_score > 0 else 0
+    # Normalize to 0-100 (clamped both ends — MA bonus can push above max_score,
+    # and the MA penalty can push below zero in extreme bearish conditions)
+    final_score = round(min(100.0, max(0.0, (score / max_score) * 100)), 1) if max_score > 0 else 0
     return final_score, breakdown
 
 
@@ -235,7 +236,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     Full composite score combining technicals + market + sentiment.
     Returns dict with final score and full breakdown.
     """
-    # Technical score (60% weight)
+    # Technical score (55% weight)
     tech_score, tech_breakdown = score_technicals(ticker)
 
     # Market conditions score (20% weight)
@@ -269,7 +270,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         "min_score": MIN_BUY_SCORE,
         "decision": decision,
         "should_buy": composite >= MIN_BUY_SCORE,
-        "weights": {"technicals": "60%", "market": "20%", "sentiment": "20%"},
+        "weights": {"technicals": "55%", "market": "20%", "sentiment": "25%"},
         "scores": {
             "technicals": tech_score,
             "market": mkt_score,

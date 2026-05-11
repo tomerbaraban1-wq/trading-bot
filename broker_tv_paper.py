@@ -498,7 +498,7 @@ class TVPaperBroker(BrokerBase):
         import datetime
         extended = os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
 
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.timezone.utc)
         # Skip weekends
         if now.weekday() >= 5:
             return False
@@ -517,8 +517,8 @@ class TVPaperBroker(BrokerBase):
             pre_open      = now.replace(hour=9,  minute=0,  second=0, microsecond=0)
             after_close   = now.replace(hour=1,  minute=0,  second=0, microsecond=0) + datetime.timedelta(days=1)
 
-        # Regular market hours — always active
-        if regular_open <= now <= regular_close:
+        # Regular market hours — always active (exclusive of close time)
+        if regular_open <= now < regular_close:
             return True
 
         # Extended hours — only if enabled
@@ -548,7 +548,7 @@ class TVPaperBroker(BrokerBase):
         Used by morning_briefing_loop to schedule pre-market briefings.
         """
         import datetime
-        now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
         is_open = self.is_market_open()
 
         # Determine EDT/EST

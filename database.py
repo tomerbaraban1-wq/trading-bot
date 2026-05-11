@@ -423,8 +423,9 @@ def get_last_heartbeat() -> dict | None:
 
 def cleanup_old_heartbeats(days: int = 7):
     conn = get_connection()
-    # Use utcnow() to match SQLite CURRENT_TIMESTAMP which is always UTC
-    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    # Use UTC to match SQLite CURRENT_TIMESTAMP which is always UTC
+    from datetime import timezone as _tz
+    cutoff = (datetime.now(_tz.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     result = conn.execute("DELETE FROM heartbeat_log WHERE timestamp < ?", (cutoff,))
     conn.commit()
     if result.rowcount > 0:
@@ -437,7 +438,8 @@ def cleanup_old_data(days: int = 30):
     Keeps the last `days` days of data.  Prevents unbounded table growth.
     """
     conn = get_connection()
-    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    from datetime import timezone as _tz
+    cutoff = (datetime.now(_tz.utc) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     total = 0
 
     for table, col in [

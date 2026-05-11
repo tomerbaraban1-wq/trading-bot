@@ -16,6 +16,7 @@ Security:
   - Ignore all other chats (prevents abuse if bot username leaks)
 """
 
+import asyncio
 import json
 import logging
 from openai import OpenAI
@@ -368,9 +369,9 @@ async def handle_telegram_update(update: dict) -> dict:
 
     logger.info(f"[CHAT] Incoming: {text[:100]}")
 
-    # Generate reply
+    # Generate reply — run in thread to avoid blocking the event loop during LLM call
     try:
-        reply = _generate_reply(text)
+        reply = await asyncio.to_thread(_generate_reply, text)
     except Exception as exc:
         logger.error(f"[CHAT] Reply generation failed: {exc}")
         reply = "מצטער, נתקלתי בשגיאה בעיבוד השאלה. נסה שוב."

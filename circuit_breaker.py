@@ -31,8 +31,9 @@ def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _load_daily_pnl_from_db() -> float:
-    """Load today's realized PnL from database (survives restarts)."""
+def _load_daily_pnl_from_db() -> float | None:
+    """Load today's realized PnL from database (survives restarts).
+    Returns None on DB failure so callers can distinguish 'no losses' from 'DB error'."""
     try:
         from database import get_trade_history
         today = _today_utc()
@@ -43,8 +44,9 @@ def _load_daily_pnl_from_db() -> float:
             if t.get("exit_time") and str(t["exit_time"])[:10] == today
             and t.get("status") in ("closed", "emergency_exit", "stop_loss", "take_profit", "smart_sell", "time_exit", "stale_restart")
         )
-    except Exception:
-        return 0.0
+    except Exception as exc:
+        logger.warning(f"Circuit Breaker: DB load failed ({exc}) — preserving current state")
+        return None  # signal failure: caller must not clear existing tripped state
 
 
 def _reset_if_new_day():
@@ -53,21 +55,33 @@ def _reset_if_new_day():
     if _state["trade_date"] != today:
         # Load today's PnL from DB so circuit breaker survives restarts
         daily_pnl = _load_daily_pnl_from_db()
-        _state["tripped"] = False
-        _state["daily_pnl"] = daily_pnl
-        _state["trade_date"] = today
-        _state["trip_reason"] = ""
-        logger.info(f"Circuit Breaker: initialized for {today} | daily_pnl=${daily_pnl:.2f}")
 
-        # Re-check if already tripped based on DB data
-        max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
-        if daily_pnl <= -max_loss:
-            _state["tripped"] = True
-            _state["trip_reason"] = (
-                f"Daily loss ${abs(daily_pnl):.2f} exceeded "
-                f"limit ${max_loss:.2f} ({MAX_DAILY_LOSS_PCT}% of ${settings.MAX_BUDGET:,.0f})"
+        if daily_pnl is None:
+            # DB query failed — update the date but preserve existing tripped/pnl state
+            # so we never silently un-trip a live circuit breaker on a DB glitch
+            logger.warning(
+                f"Circuit Breaker: DB unavailable on day reset — "
+                f"keeping tripped={_state['tripped']}, pnl=${_state['daily_pnl']:.2f}"
             )
-            logger.warning(f"🚨 CIRCUIT BREAKER: tripped on startup from DB data — {_state['trip_reason']}")
+            _state["trade_date"] = today  # advance the date to avoid infinite retry
+            return
+
+        max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
+        # Determine new tripped state BEFORE writing it (atomic decision)
+        should_trip = daily_pnl <= -max_loss
+        trip_reason = (
+            f"Daily loss ${abs(daily_pnl):.2f} exceeded "
+            f"limit ${max_loss:.2f} ({MAX_DAILY_LOSS_PCT}% of ${settings.MAX_BUDGET:,.0f})"
+        ) if should_trip else ""
+
+        _state["daily_pnl"]   = daily_pnl
+        _state["trade_date"]  = today
+        _state["tripped"]     = should_trip
+        _state["trip_reason"] = trip_reason
+
+        logger.info(f"Circuit Breaker: initialized for {today} | daily_pnl=${daily_pnl:.2f}")
+        if should_trip:
+            logger.warning(f"🚨 CIRCUIT BREAKER: tripped on startup from DB data — {trip_reason}")
 
 
 def record_trade_result(pnl_gross: float):

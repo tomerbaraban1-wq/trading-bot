@@ -211,7 +211,7 @@ def get_current_indicators(symbol: str) -> dict | None:
     stoch_oversold = stoch_k < 20 if stoch_k is not None else None
     stoch_overbought = stoch_k > 80 if stoch_k is not None else None
 
-    return {
+    result = {
         # Core
         "close": round(close, 2),
         # RSI
@@ -249,7 +249,7 @@ def get_current_indicators(symbol: str) -> dict | None:
         "daily_return": safe(last.get("daily_return")),
     }
 
-    # Cache the result
+    # Cache the result — prevents redundant yfinance downloads within same scan cycle
     _indicators_cache[symbol] = (result, now)
     return result
 

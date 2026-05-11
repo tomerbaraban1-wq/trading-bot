@@ -972,7 +972,7 @@ async def emergency_exit(ticker: str, request: Request):
             "status": "emergency_exit",
             "ticker": ticker,
             "pnl_gross": round(pnl_gross, 2),
-            "order_id": order["order_id"],
+            "order_id": order.get("order_id", ""),
         }
     except HTTPException:
         raise

@@ -79,8 +79,23 @@ async def heartbeat_loop():
     while True:
         try:
             await asyncio.sleep(settings.HEARTBEAT_INTERVAL_MINUTES * 60)
-            status = await asyncio.to_thread(budget.get_budget_status)
-            open_trades = database.get_open_trades()
+
+            # Timeout guards prevent heartbeat from hanging indefinitely on slow I/O
+            try:
+                status = await asyncio.wait_for(
+                    asyncio.to_thread(budget.get_budget_status), timeout=20
+                )
+            except asyncio.TimeoutError:
+                logger.warning("HEARTBEAT: budget.get_budget_status timed out — using empty status")
+                status = {}
+
+            try:
+                open_trades = await asyncio.wait_for(
+                    asyncio.to_thread(database.get_open_trades), timeout=10
+                )
+            except asyncio.TimeoutError:
+                logger.warning("HEARTBEAT: database.get_open_trades timed out — skipping this cycle")
+                continue
 
             database.save_heartbeat(
                 open_positions=len(open_trades),
@@ -414,6 +429,7 @@ async def auto_invest_loop():
     await asyncio.sleep(60)  # wait 1 min after startup
     while True:
         try:
+            import os as _os
             import random
             import shadow as _shadow
             from scanner import get_watchlist as _get_watchlist
@@ -439,7 +455,7 @@ async def auto_invest_loop():
             # SPY trend guard — skip if overall market is in downtrend
             try:
                 from indicators import get_market_conditions
-                _mkt = get_market_conditions()
+                _mkt = await asyncio.to_thread(get_market_conditions)
                 if _mkt.get("spy_above_sma50") is False:
                     logger.info("AUTO-INVEST: SPY below SMA50 (downtrend) — skipping buys")
                     await asyncio.sleep(5 * 60)
@@ -479,8 +495,9 @@ async def auto_invest_loop():
                     await _asyncio.sleep(5 * 60)
                     continue
 
-                # Take 20 per cycle — rotates through full list over ~30 min
-                SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "30"))  # was 20
+                # Take 10 per cycle — rotates through full list over ~30 min
+                # Reduced from 30→10 for Render free tier (512MB memory limit)
+                SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "10"))
                 candidates = [
                     t for t in shuffled[:SCAN_PER_CYCLE]
                     if not database.get_open_trade_by_ticker(t)
@@ -738,13 +755,13 @@ async def morning_briefing_loop():
                     from openai import OpenAI as _OAI
                     _cli = _OAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
                     _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
-                    _resp = _cli.chat.completions.create(
-                        model=settings.LLM_MODEL,
-                        messages=[{
-                            "role": "user",
-                            "content": f"תרגם את הכותרות הבאות לעברית קצרה (עד 10 מילים כל אחת). החזר רק את הכותרות המתורגמות, ממוספרות:\n{_raw}"
-                        }],
-                        max_tokens=300, temperature=0.3,
+                    _prompt = f"תרגם את הכותרות הבאות לעברית קצרה (עד 10 מילים כל אחת). החזר רק את הכותרות המתורגמות, ממוספרות:\n{_raw}"
+                    _resp = await asyncio.to_thread(
+                        lambda: _cli.chat.completions.create(
+                            model=settings.LLM_MODEL,
+                            messages=[{"role": "user", "content": _prompt}],
+                            max_tokens=300, temperature=0.3,
+                        )
                     )
                     _lines = _resp.choices[0].message.content.strip().split("\n")
                     _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
@@ -800,7 +817,7 @@ async def position_alert_loop():
     await asyncio.sleep(180)
     while True:
         try:
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
             for trade in open_trades:
                 if trade["action"] != "buy":
                     continue
@@ -851,7 +868,7 @@ async def news_refresh_loop():
             # Refresh general market headlines
             await asyncio.to_thread(get_general_headlines, 10)
             # Refresh per-ticker headlines for open positions + watchlist
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
             # Only refresh news for open positions (not watchlist) to save memory
             tickers = list({t["ticker"] for t in open_trades})[:5]
             for ticker in tickers:
@@ -930,9 +947,10 @@ async def daily_summary_loop():
     Accounts for EDT (UTC-4, summer) and EST (UTC-5, winter) automatically.
     """
     import datetime
+    _utc = datetime.timezone.utc
     while True:
         try:
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(_utc)
             # Determine if US is on EDT (Mar-Nov) or EST (Nov-Mar)
             # Market closes at 20:00 UTC in EDT, 21:00 UTC in EST
             is_edt = 3 <= now.month <= 10
@@ -942,17 +960,17 @@ async def daily_summary_loop():
                 target += datetime.timedelta(days=1)
 
             # Check every minute instead of sleeping for hours
-            while datetime.datetime.utcnow() < target:
+            while datetime.datetime.now(_utc) < target:
                 await asyncio.sleep(60)
 
             # Skip weekends — no trading, nothing to summarise
-            if datetime.datetime.utcnow().weekday() >= 5:  # 5=Sat, 6=Sun
+            if datetime.datetime.now(_utc).weekday() >= 5:  # 5=Sat, 6=Sun
                 logger.debug("Daily summary: skipping weekend")
                 await asyncio.sleep(60)
                 continue
 
             # Build summary from today's trades
-            today = datetime.datetime.utcnow().date()
+            today = datetime.datetime.now(_utc).date()
             all_trades = database.get_trade_history(limit=200)
 
             # Closed today (sells)
@@ -1064,9 +1082,10 @@ async def portfolio_update_loop():
 async def weekly_report_loop():
     """Background task: compute & send weekly performance report every Sunday at 20:10 UTC."""
     import datetime
+    _utc = datetime.timezone.utc
     while True:
         try:
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(_utc)
 
             # Target: next Sunday at 20:10 UTC
             days_until_sunday = (6 - now.weekday()) % 7   # weekday(): Mon=0 … Sun=6
@@ -1084,7 +1103,7 @@ async def weekly_report_loop():
             logger.info(f"Weekly report scheduled in {wait_seconds/3600:.1f}h (Sunday 20:10 UTC)")
 
             # Check every minute instead of sleeping for days
-            while datetime.datetime.utcnow() < target:
+            while datetime.datetime.now(_utc) < target:
                 await asyncio.sleep(60)
 
             # Compute 4-week report

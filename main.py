@@ -56,7 +56,8 @@ async def lifespan(app: FastAPI):
     # Log durability mode
     durability_mode = "HARDENED" if settings.HARDENED_DURABILITY else "NORMAL"
     logger.info("=== Trading Bot Started ===")
-    logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {settings.ALPACA_BASE_URL} | DB Mode: {durability_mode}")
+    _broker_info = settings.ACTIVE_BROKER if settings.ACTIVE_BROKER else settings.ALPACA_BASE_URL
+    logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {_broker_info} | DB Mode: {durability_mode}")
 
     # ── Auto-register Telegram webhook ───────────────────────────────────────
     # Registers /telegram/webhook with Telegram so the bot can receive messages.

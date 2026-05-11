@@ -162,11 +162,12 @@ def _get_volume_data(ticker: str) -> tuple[float | None, float | None, float | N
                 f"only {len(vol_series)} bars — need {MA_PERIOD + 1}"
             )
 
-        # Current bar = most recent completed bar
-        current_vol = float(vol_series.iloc[-1])
+        # Use iloc[-2]: the last COMPLETED bar (iloc[-1] is still forming during market hours)
+        # Comparing a partial bar to a completed-bar MA systematically understates volume.
+        current_vol = float(vol_series.iloc[-2])
 
-        # MA over the preceding MA_PERIOD bars (exclude current bar)
-        ma_vol = float(vol_series.iloc[-(MA_PERIOD + 1):-1].mean())
+        # MA over the MA_PERIOD bars before the completed bar (exclude forming bar)
+        ma_vol = float(vol_series.iloc[-(MA_PERIOD + 2):-2].mean())
 
         if ma_vol <= 0:
             raise ValueError(f"MA volume = {ma_vol} (invalid)")

@@ -103,6 +103,9 @@ def get_regime(ticker: str) -> tuple[str, float, dict]:
                 f"only {len(hist)} bars — need {ADX_PERIOD + 2}"
             )
         adx = _compute_adx(hist)
+        import math as _math
+        if _math.isnan(adx) or _math.isinf(adx):
+            raise ValueError(f"ADX={adx} is NaN/Inf — insufficient or zero-range data")
         if adx < 0 or adx > 100:
             raise ValueError(f"ADX={adx:.2f} out of range")
 

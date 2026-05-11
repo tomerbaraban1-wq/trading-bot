@@ -314,7 +314,7 @@ def get_budget_status() -> dict:
     }
 
 
-def calculate_position_size(price: float) -> int:
+def calculate_position_size(price: float) -> float:
     """Backward-compat alias."""
     qty, _ = compute_position_size(price)
     return qty
