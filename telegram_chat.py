@@ -393,7 +393,8 @@ def _simple_fallback(ctx: dict) -> str:
     lines.append(f"💼 <b>שווי תיק כולל: ${equity:,.2f}</b>")
     lines.append(f"   💰 מזומן פנוי: ${cash:,.2f}  |  📈 מניות: ${total_invested:,.2f}")
     lines.append(f"   💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
-    lines.append(f"   💳 רווח ממומש: <b>${realized:+.2f}</b>")
+    if realized != 0:
+        lines.append(f"   💳 רווח ממומש: <b>${realized:+.2f}</b>")
 
     if positions:
         lines.append("\n<b>פוזיציות פתוחות:</b>")
