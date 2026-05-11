@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 # Lazy-init OpenAI/Groq client
 _client = None
 
+
+def _fmt_held(hours: float) -> str:
+    """Format holding time: minutes / hours / days."""
+    if hours < 1:
+        mins = int(hours * 60)
+        return f"{mins} דקות" if mins > 0 else "כמה שניות"
+    if hours < 24:
+        return f"{hours:.1f} שעות"
+    return f"{hours/24:.1f} ימים"
+
 # Context cache — avoid hammering broker API on every Telegram message
 _context_cache: tuple[float, dict] = (0.0, {})
 _CONTEXT_CACHE_TTL = 30   # seconds
@@ -256,7 +266,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
         emoji = "🟢" if p["pct"] >= 0 else "🔴"
         stop = p.get("atr_stop") or 0
         held = p.get("held_hours", 0)
-        held_str = f"{held:.1f} שעות" if held < 24 else f"{held/24:.1f} ימים"
+        held_str = _fmt_held(held)
         invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
         pos_lines.append(
             f"{emoji} <b>{p['ticker']}</b>\n"
@@ -403,7 +413,7 @@ def _simple_fallback(ctx: dict) -> str:
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             stop = p.get("atr_stop") or 0
             held = p.get("held_hours", 0)
-            held_str = f"{held:.0f}ש'" if held < 24 else f"{held/24:.1f}י'"
+            held_str = _fmt_held(held)
             lines.append(
                 f"{emoji} <b>{p['ticker']}</b>  ({held_str})\n"
                 f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
@@ -467,7 +477,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             emoji   = "🟢" if p["pct"] >= 0 else "🔴"
             stop    = p.get("atr_stop") or 0
             held    = p.get("held_hours", 0)
-            held_str = f"{held:.0f} שעות" if held < 24 else f"{held/24:.1f} ימים"
+            held_str = _fmt_held(held)
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             held_line = f"\n   ⏱ הוחזק: {held_str}" if held >= 0.5 else ""
             lines.append(
