@@ -82,26 +82,66 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logger.warning(f"Telegram webhook auto-register failed (non-critical): {_e}")
 
-    # ── Startup state restore log ─────────────────────────────────────────────
-    # Show what we're resuming from (SQLite persists across restarts; broker API
-    # provides live cash/equity).  This is purely informational — no state is
-    # lost because every trade is already in the DB and budget comes from Alpaca.
+    # ── Startup state restore + reconciliation ───────────────────────────────
+    # Detects and fixes the case where broker has positions but SQLite is empty.
+    # This happens when Render redeploys and wipes the ephemeral SQLite file,
+    # but the Postgres-backed broker state (TVPaperBroker) still holds positions.
+    # Without reconciliation those positions have no stop-loss protection.
     try:
-        from database import get_open_trades
+        from database import get_open_trades, save_trade
         import broker as _broker
         open_trades = get_open_trades()
-        if open_trades:
-            tickers = [t["ticker"] for t in open_trades]
-            logger.info(f"RESTORED {len(open_trades)} open position(s): {tickers}")
-        else:
-            logger.info("RESTORED: no open positions — clean slate")
 
         acct = _broker.get_account()
         cash = float(acct.get("cash", 0))
         equity = float(acct.get("equity", 0))
         logger.info(f"BROKER: cash=${cash:,.2f} | equity=${equity:,.2f}")
+
+        if open_trades:
+            tickers = [t["ticker"] for t in open_trades]
+            logger.info(f"RESTORED {len(open_trades)} open position(s): {tickers}")
+        else:
+            # SQLite is empty — check if broker has positions we need to recover
+            broker_positions = _broker.get_positions()
+            if broker_positions:
+                logger.warning(
+                    f"RECONCILE: SQLite is empty but broker has {len(broker_positions)} position(s) — re-creating records"
+                )
+                from models import WebhookPayload, TradeAction
+                for pos in broker_positions:
+                    ticker    = pos.get("ticker", "").upper()
+                    qty       = float(pos.get("qty", 0))
+                    entry     = float(pos.get("avg_entry_price", 0))
+                    if not ticker or qty <= 0 or entry <= 0:
+                        continue
+                    try:
+                        trade = {
+                            "ticker":         ticker,
+                            "action":         "buy",
+                            "qty":            qty,
+                            "entry_price":    entry,
+                            "trailing_stop_pct": None,
+                            "rsi": None, "macd": None, "macd_signal": None,
+                            "bb_position": None, "volume_ratio": None,
+                            "sentiment_score": 5,
+                            "sentiment_reasoning": "Recovered from broker on restart",
+                        }
+                        trade_id = save_trade(trade)
+                        # Set ATR stop immediately
+                        from atr_stop import compute_initial_stop
+                        from database import update_trade_stop
+                        stop_price, stop_meta = compute_initial_stop(ticker, entry)
+                        update_trade_stop(trade_id, stop_price, entry)
+                        logger.info(
+                            f"RECONCILE: restored {ticker} x{qty} @ ${entry:.2f} "
+                            f"(trade_id={trade_id}, stop=${stop_price:.2f})"
+                        )
+                    except Exception as _re:
+                        logger.warning(f"RECONCILE: failed to restore {ticker}: {_re}")
+            else:
+                logger.info("RESTORED: no open positions — clean slate")
     except Exception as _e:
-        logger.warning(f"Startup state log failed (non-critical): {_e}")
+        logger.warning(f"Startup reconciliation failed (non-critical): {_e}")
     # ─────────────────────────────────────────────────────────────────────────
 
     from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
