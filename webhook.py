@@ -1369,6 +1369,74 @@ async def telegram_webhook(update: dict):
         return {"status": "error", "reason": str(e)}
 
 
+@router.get("/telegram/briefing")
+async def send_morning_briefing_now(secret: str = ""):
+    """
+    Force-send the morning briefing right now (manual trigger).
+    /telegram/briefing?secret=YOUR_WEBHOOK_SECRET
+    """
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    try:
+        from news_service import get_general_headlines
+        from scanner import get_watchlist as _get_wl
+        from sentiment import score_sentiment
+        from scoring import get_composite_score
+        from telegram_bot import send_message as _send
+        from openai import OpenAI as _OAI
+
+        headlines = await asyncio.to_thread(get_general_headlines, 5)
+
+        # Translate to Hebrew
+        if headlines and settings.GROQ_API_KEY:
+            try:
+                _cli = _OAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+                _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
+                _prompt = f"תרגם את הכותרות הבאות לעברית קצרה (עד 10 מילים כל אחת). החזר רק את הכותרות המתורגמות, ממוספרות:\n{_raw}"
+                _resp = await asyncio.to_thread(
+                    lambda: _cli.chat.completions.create(
+                        model=settings.LLM_MODEL,
+                        messages=[{"role": "user", "content": _prompt}],
+                        max_tokens=300, temperature=0.3,
+                    )
+                )
+                _lines = _resp.choices[0].message.content.strip().split("\n")
+                _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
+                headlines = _translated[:5] if _translated else headlines
+            except Exception:
+                pass
+
+        news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות"
+
+        # Score top candidates
+        WATCHLIST = _get_wl()
+        top = []
+        for ticker in WATCHLIST[:8]:
+            try:
+                sent = await asyncio.wait_for(asyncio.to_thread(score_sentiment, ticker), timeout=20)
+                comp = await asyncio.wait_for(asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=20)
+                top.append((ticker, comp["composite_score"], sent.score))
+            except Exception:
+                continue
+        top.sort(key=lambda x: x[1], reverse=True)
+
+        candidates = ""
+        for ticker, score, sent in top[:3]:
+            candidates += f"\n📊 <b>{ticker}</b> — ציון {score:.0f}/100 | סנטימנט {sent}/10"
+
+        await _send(
+            f"☀️ <b>תדרוך בוקר (נשלח ידנית)</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📰 <b>חדשות מובילות:</b>\n{news_text}\n\n"
+            f"🎯 <b>מועמדים מובילים:</b>{candidates if candidates else chr(10) + 'אין מועמדים כרגע'}"
+        )
+        return {"status": "sent", "headlines": len(headlines), "candidates": len(top)}
+    except Exception as e:
+        logger.error(f"Manual briefing failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/telegram/setup")
 async def telegram_setup_webhook(secret: str = ""):
     """
