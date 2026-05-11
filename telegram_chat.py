@@ -284,14 +284,19 @@ def _llm_reply(user_message: str, context: dict) -> str:
 → רשום כל מניה: שם, כמות, מחיר כניסה, מחיר עכשיו, רווח/הפסד ($ ו-%), כמה הושקע, stop loss
 
 ❓ "מה שווי התיק" / "כמה שווה התיק" / "מה ערך התיק":
-→ ענה: סה"כ תיק = ${context.get('equity', 0):,.2f} (מזומן ${context.get('cash', 0):,.2f} + מניות ${context.get('total_invested', 0):,.2f})
-→ הוסף: רווח/הפסד פתוח = ${context.get('open_pnl', 0):+,.2f}
+→ ענה בשורות נפרדות:
+💼 שווי תיק כולל: ${context.get('equity', 0):,.2f}
+💰 מזומן: ${context.get('cash', 0):,.2f}
+📈 מניות: ${context.get('total_invested', 0):,.2f}
+💹 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
 
 ❓ "כמה כסף יש לי" / "כמה מזומן":
-→ ענה: מזומן פנוי = ${context.get('cash', 0):,.2f}
+→ ענה: 💰 מזומן פנוי: ${context.get('cash', 0):,.2f}
 
 ❓ "מה הרווח שלי" / "כמה הרווחתי" / "מה ההפסד":
-→ ענה: רווח/הפסד פתוח = ${context.get('open_pnl', 0):+,.2f} | ממומש = ${context.get('realized_pnl_net', 0):+,.2f}
+→ ענה בשורות נפרדות:
+📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
+💳 רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}
 
 ❓ שאלה על מניה ספציפית (לדוגמה "מה קורה עם AAPL"):
 → פרט רק את הנתונים על אותה מניה
