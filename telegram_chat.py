@@ -345,10 +345,14 @@ def _simple_fallback(ctx: dict) -> str:
         lines.append("\n<b>פוזיציות פתוחות:</b>")
         for p in positions:
             emoji = "🟢" if p["pct"] >= 0 else "🔴"
+            invested = round(p["entry"] * p["qty"], 2)
+            stop = p.get("atr_stop") or 0
             lines.append(
-                f"{emoji} <b>{p['ticker']}</b> — {p['qty']} מניות\n"
-                f"   כניסה ${p['entry']} → עכשיו ${p['current']} "
-                f"({p['pct']:+.1f}%) | רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+                f"{emoji} <b>{p['ticker']}</b>\n"
+                f"   📦 כמות: {p['qty']} מניות  |  💵 הושקע: ${invested:,.2f}\n"
+                f"   📈 כניסה: ${p['entry']}  →  עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+                + (f"  |  🛑 Stop: ${stop}" if stop else "")
             )
     else:
         lines.append("\nאין פוזיציות פתוחות כרגע.")
