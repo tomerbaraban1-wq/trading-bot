@@ -238,8 +238,9 @@ app.include_router(router)
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
+    import asyncio as _aio
     html_path = Path(__file__).parent / "dashboard.html"
-    return html_path.read_text(encoding="utf-8")
+    return await _aio.to_thread(html_path.read_text, encoding="utf-8")
 
 
 @app.get("/inject.js")

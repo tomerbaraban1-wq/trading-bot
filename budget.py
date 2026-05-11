@@ -289,10 +289,14 @@ def get_budget_status() -> dict:
             "error":             str(e),
         }
 
-    pos_value  = sum(float(p["market_value"])    for p in positions)
-    open_pnl   = sum(float(p["unrealized_pl"])   for p in positions)
-    cash       = float(account["cash"])
-    equity     = cash + pos_value
+    try:
+        pos_value = sum(float(p.get("market_value",  0) or 0) for p in positions)
+        open_pnl  = sum(float(p.get("unrealized_pl", 0) or 0) for p in positions)
+        cash      = float(account.get("cash", 0) or 0)
+        equity    = cash + pos_value
+    except Exception as e:
+        logger.error(f"get_budget_status arithmetic error: {e}")
+        pos_value, open_pnl, cash, equity = 0.0, 0.0, 0.0, 0.0
 
     from database import get_tax_summary
     tax = get_tax_summary()

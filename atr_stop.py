@@ -86,6 +86,8 @@ def compute_initial_stop(ticker: str, entry_price: float) -> tuple[float, dict]:
       metadata    : dict with full breakdown for logging/audit
     """
     ticker = ticker.upper()
+    if entry_price <= 0:
+        raise ValueError(f"entry_price must be > 0, got {entry_price}")
     atr    = _fetch_atr(ticker, entry_price)
 
     raw_stop_dist = atr * MULTIPLIER
