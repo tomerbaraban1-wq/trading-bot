@@ -330,17 +330,32 @@ def _llm_reply(user_message: str, context: dict) -> str:
 
 
 def _simple_fallback(ctx: dict) -> str:
-    """Minimal fallback when LLM is unavailable."""
-    n = ctx.get("open_positions_count", 0)
-    cash = ctx.get("cash", 0)
-    equity = ctx.get("equity", 0)
-    pnl = ctx.get("open_pnl", 0)
-    return (
-        f"📊 <b>מצב התיק</b>\n"
-        f"💵 מזומן: ${cash:,.2f} | 💼 תיק: ${equity:,.2f}\n"
-        f"📈 פוזיציות: {n} | 💰 רווח/הפסד: ${pnl:+.2f}\n\n"
-        "⚡ הבוט זמין לשאלות — שלח כל שאלה ואענה!"
-    )
+    """Fallback when LLM is unavailable — still shows full position details."""
+    cash    = ctx.get("cash", 0)
+    equity  = ctx.get("equity", 0)
+    pnl     = ctx.get("open_pnl", 0)
+    realized = ctx.get("realized_pnl_net", 0)
+    positions = ctx.get("open_positions", [])
+
+    lines = [f"📊 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
+    lines.append(f"💰 מזומן: <b>${cash:,.2f}</b>  |  💼 תיק: <b>${equity:,.2f}</b>")
+    lines.append(f"📈 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>  |  ממומש: <b>${realized:+.2f}</b>")
+
+    if positions:
+        lines.append("\n<b>פוזיציות פתוחות:</b>")
+        for p in positions:
+            emoji = "🟢" if p["pct"] >= 0 else "🔴"
+            lines.append(
+                f"{emoji} <b>{p['ticker']}</b> — {p['qty']} מניות\n"
+                f"   כניסה ${p['entry']} → עכשיו ${p['current']} "
+                f"({p['pct']:+.1f}%) | רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+            )
+    else:
+        lines.append("\nאין פוזיציות פתוחות כרגע.")
+
+    lines.append("\n━━━━━━━━━━━━━━━━")
+    lines.append("⚡ הבוט זמין לשאלות — שלח כל שאלה ואענה!")
+    return "\n".join(lines)
 
 
 async def handle_telegram_update(update: dict) -> dict:
