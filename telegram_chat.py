@@ -461,12 +461,14 @@ def _handle_command(text: str, context: dict) -> str | None:
         pnl      = context.get("open_pnl", 0)
         realized = context.get("realized_pnl_net", 0)
         emoji    = "📈" if pnl >= 0 else "📉"
-        return (
-            f"{emoji} <b>רווח/הפסד</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"💹 פתוח (לא ממומש): <b>${pnl:+.2f}</b>\n"
-            f"💳 ממומש (נטו): <b>${realized:+.2f}</b>"
-        )
+        lines = [
+            f"{emoji} <b>רווח/הפסד</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"💹 פתוח (לא ממומש): <b>${pnl:+.2f}</b>",
+        ]
+        if realized != 0:
+            lines.append(f"💳 ממומש (נטו): <b>${realized:+.2f}</b>")
+        return "\n".join(lines)
 
     # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
     portfolio_keywords = ["שווי", "ערך התיק", "שווה", "תיק", "portfolio"]
