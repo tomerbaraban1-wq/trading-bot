@@ -431,18 +431,23 @@ async def _send_typing(chat_id: str) -> None:
 
 
 def _handle_command(text: str, context: dict) -> str | None:
-    """Handle quick /commands without LLM. Returns reply or None if not a command."""
-    cmd = text.strip().lower().split()[0] if text.strip() else ""
+    """
+    Handle common questions directly — guaranteed formatting, no LLM needed.
+    Returns reply string or None (→ fall through to LLM).
+    """
+    t = text.strip().lower()
+    cmd = t.split()[0] if t else ""
 
+    # ── /commands ──────────────────────────────────────────────────────────
     if cmd in ("/start", "/help", "עזרה"):
         return (
             "👋 <b>שלום! אני בוט המסחר שלך.</b>\n\n"
-            "אתה יכול לשאול אותי כל שאלה בעברית חופשית, למשל:\n"
-            "• <i>איזה מניות יש לי?</i>\n"
-            "• <i>כמה כסף יש לי?</i>\n"
-            "• <i>מה הרווח שלי?</i>\n"
-            "• <i>מתי השוק נפתח?</i>\n"
-            "• <i>מה הבוט עשה היום?</i>\n\n"
+            "שאל אותי כל שאלה בעברית חופשית:\n"
+            "• איזה מניות יש לי?\n"
+            "• כמה כסף יש לי?\n"
+            "• מה הרווח שלי?\n"
+            "• מה שווי התיק?\n"
+            "• מתי השוק נפתח?\n\n"
             "📊 /status — מצב מהיר\n"
             "❓ /help — הודעה זו"
         )
@@ -450,7 +455,44 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd == "/status":
         return _simple_fallback(context)
 
-    return None  # not a command — let LLM handle it
+    # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
+    profit_keywords = ["רווח", "הפסד", "כמה הרווחתי", "כמה הפסדתי", "p&l", "pnl"]
+    if any(k in t for k in profit_keywords):
+        pnl      = context.get("open_pnl", 0)
+        realized = context.get("realized_pnl_net", 0)
+        emoji    = "📈" if pnl >= 0 else "📉"
+        return (
+            f"{emoji} <b>רווח/הפסד</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💹 פתוח (לא ממומש): <b>${pnl:+.2f}</b>\n"
+            f"💳 ממומש (נטו): <b>${realized:+.2f}</b>"
+        )
+
+    # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
+    portfolio_keywords = ["שווי", "ערך התיק", "שווה", "תיק", "portfolio"]
+    if any(k in t for k in portfolio_keywords) and "מניות" not in t:
+        cash      = context.get("cash", 0)
+        equity    = context.get("equity", 0)
+        invested  = context.get("total_invested", 0)
+        pnl       = context.get("open_pnl", 0)
+        realized  = context.get("realized_pnl_net", 0)
+        return (
+            f"💼 <b>שווי התיק</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📊 סה״כ: <b>${equity:,.2f}</b>\n"
+            f"💰 מזומן: ${cash:,.2f}\n"
+            f"📈 מניות: ${invested:,.2f}\n"
+            f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>\n"
+            f"💳 ממומש: ${realized:+.2f}"
+        )
+
+    # ── שאלות מזומן ────────────────────────────────────────────────────────
+    cash_keywords = ["כמה כסף", "כמה מזומן", "מזומן", "cash"]
+    if any(k in t for k in cash_keywords):
+        cash = context.get("cash", 0)
+        return f"💰 <b>מזומן פנוי: ${cash:,.2f}</b>"
+
+    return None  # let LLM handle everything else
 
 
 async def handle_telegram_update(update: dict) -> dict:
