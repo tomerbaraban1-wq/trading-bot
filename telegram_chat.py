@@ -413,13 +413,14 @@ def _simple_fallback(ctx: dict) -> str:
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             stop = p.get("atr_stop") or 0
             held = p.get("held_hours", 0)
-            held_str = _fmt_held(held)
+            held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
-                f"{emoji} <b>{p['ticker']}</b>  ({held_str})\n"
+                f"{emoji} <b>{p['ticker']}</b>\n"
                 f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
                 f"   📈 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
                 f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
                 + (f"  |  🛑 Stop: ${stop}" if stop else "")
+                + held_line
             )
     else:
         lines.append("\nאין פוזיציות פתוחות כרגע.")
