@@ -257,12 +257,13 @@ def _llm_reply(user_message: str, context: dict) -> str:
         stop = p.get("atr_stop") or 0
         held = p.get("held_hours", 0)
         held_str = f"{held:.1f} שעות" if held < 24 else f"{held/24:.1f} ימים"
+        invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
         pos_lines.append(
-            f"{emoji} {p['ticker']}: {p['qty']} מניות | "
-            f"הושקע ${p.get('invested', round(p['entry']*p['qty'],2)):,.2f} | "
-            f"כניסה ${p['entry']} | עכשיו ${p['current']} ({p['pct']:+.1f}%) | "
-            f"רווח/הפסד ${p['pnl']:+.2f} | שווי ${p['value']:,.2f} | "
-            f"סטופ-לוס ${stop} | הוחזק {held_str}"
+            f"{emoji} <b>{p['ticker']}</b>\n"
+            f"   📦 {p['qty']} מניות  |  💵 הושקע ${invested:,.2f}\n"
+            f"   📈 כניסה ${p['entry']} → עכשיו ${p['current']} ({p['pct']:+.1f}%)\n"
+            f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>  |  🛑 Stop: ${stop}\n"
+            f"   ⏱ הוחזק: {held_str}"
         )
     pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
 
