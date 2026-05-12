@@ -33,6 +33,16 @@ logger = logging.getLogger(__name__)
 _client = None
 
 
+def _fmt_pnl(amount: float, show_label: bool = True) -> str:
+    """Format P&L: amount$  רווח/הפסד"""
+    abs_amt = abs(amount)
+    label = "רווח 🟢" if amount >= 0 else "הפסד 🔴"
+    formatted = f"<b>{abs_amt:,.2f}$</b>"
+    if show_label:
+        return f"{formatted}  {label}"
+    return formatted
+
+
 def _fmt_held(hours: float) -> str:
     """Format holding time: minutes / hours / days."""
     if hours < 1:
@@ -272,7 +282,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
             f"{emoji} <b>{p['ticker']}</b>\n"
             f"   📦 {p['qty']} מניות  |  💵 הושקע ${invested:,.2f}\n"
             f"   📈 כניסה ${p['entry']} → עכשיו ${p['current']} ({p['pct']:+.1f}%)\n"
-            f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>  |  🛑 Stop: ${stop}\n"
+            f"   💰 {_fmt_pnl(p['pnl'])}  |  🛑 Stop: ${stop}\n"
             f"   ⏱ הוחזק: {held_str}"
         )
     pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
@@ -406,8 +416,7 @@ def _simple_fallback(ctx: dict) -> str:
     if total_invested > 0:
         lines.append(f"📊 מושקע במניות: ${total_invested:,.2f}")
     if pnl != 0:
-        pnl_icon = "🟢" if pnl > 0 else "🔴"
-        lines.append(f"{pnl_icon} רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
+        lines.append(f"💹 {_fmt_pnl(pnl)}{pnl_note}")
     if realized != 0:
         lines.append(f"🏆 רווח ממומש: <b>${realized:+.2f}</b>")
 
@@ -419,7 +428,7 @@ def _simple_fallback(ctx: dict) -> str:
             held = p.get("held_hours", 0)
             profit = p["pnl"] >= 0
             status_icon = "🟢📈" if profit else "🔴📉"
-            pnl_label   = f"{'🟢' if profit else '🔴'} רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+            pnl_label   = f"💰 {_fmt_pnl(p['pnl'])}"
             held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
@@ -578,12 +587,12 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"\n{status} <b>{p['ticker']}</b>\n"
                 f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
                 f"   📌 ${p['entry']} ➜ ${p['current']} ({p['pct']:+.1f}%)\n"
-                f"   {pnl_icon} רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+                f"   💰 {_fmt_pnl(p['pnl'])}"
                 + (f"  |  🛡️ Stop: ${stop}" if stop else "")
                 + held_line
             )
         total_icon = "🏆" if total_pnl >= 0 else "📉"
-        lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_icon} סה״כ: <b>${total_pnl:+.2f}</b>")
+        lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_icon} סה״כ: {_fmt_pnl(total_pnl)}")
         return "\n".join(lines)
 
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
@@ -599,12 +608,12 @@ def _handle_command(text: str, context: dict) -> str | None:
         # Per-stock breakdown
         for p in positions:
             e = "🟢" if p["pct"] >= 0 else "🔴"
-            lines.append(f"{e} <b>{p['ticker']}</b>: <b>${p['pnl']:+.2f}</b> ({p['pct']:+.1f}%)")
+            lines.append(f"{e} <b>{p['ticker']}</b>: {_fmt_pnl(p['pnl'])} ({p['pct']:+.1f}%)")
 
         # Total
-        lines.append(f"━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ פתוח: <b>${total_pnl:+.2f}</b>")
+        lines.append(f"━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ פתוח: {_fmt_pnl(total_pnl)}")
         if realized != 0:
-            lines.append(f"💳 ממומש: <b>${realized:+.2f}</b>")
+            lines.append(f"💳 ממומש: {_fmt_pnl(realized)}")
         return "\n".join(lines)
 
     # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
@@ -625,9 +634,9 @@ def _handle_command(text: str, context: dict) -> str | None:
         if invested > 0:
             lines.append(f"📈 מניות: ${invested:,.2f}")
         if pnl != 0:
-            lines.append(f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>")
+            lines.append(f"💹 {_fmt_pnl(pnl)}")
         if realized != 0:
-            lines.append(f"💳 ממומש: ${realized:+.2f}")
+            lines.append(f"🏆 ממומש: {_fmt_pnl(realized)}")
         return "\n".join(lines)
 
     # ── שאלות מזומן ────────────────────────────────────────────────────────
