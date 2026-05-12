@@ -399,10 +399,36 @@ async def stop_loss_monitor():
                     except Exception:
                         _atr_tp_pct = settings.TAKE_PROFIT_PCT
 
-                    if plpc >= _atr_tp_pct:
+                    # Stage 1: Partial TP — sell 50% at first target, let rest run
+                    _stage1_pct = max(2.0, _atr_tp_pct * 0.5)   # 50% of full TP
+                    _stage1_done = bool(trade.get("high_watermark") and
+                                        trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage1_pct / 100 + 0.001))
+                    if not _stage1_done and plpc >= _stage1_pct:
+                        # Sell half the position
+                        _half_qty = round(trade["qty"] * 0.5, 6)
+                        if _half_qty > 0:
+                            try:
+                                _half_order = await asyncio.wait_for(
+                                    asyncio.to_thread(broker.submit_sell, ticker, _half_qty, cur_price),
+                                    timeout=30
+                                )
+                                _half_pnl = (cur_price - trade["entry_price"]) * _half_qty
+                                logger.info(f"[PARTIAL TP] {ticker}: sold 50% ({_half_qty} shares) "
+                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f}")
+                                await send_message(
+                                    f"💰 <b>Partial Take Profit — {ticker}</b>\n"
+                                    f"מכרתי 50% מהפוזיציה\n"
+                                    f"📊 {_half_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
+                                    f"💵 רווח ממומש: <b>${_half_pnl:+.2f}</b>\n"
+                                    f"השאר ממשיך לרוץ עם Trailing Stop ✅"
+                                )
+                            except Exception as _pe:
+                                logger.warning(f"[PARTIAL TP] {ticker}: half-sell failed: {_pe}")
+
+                    elif plpc >= _atr_tp_pct:
                         logger.info(
                             f"[TAKE PROFIT] {ticker}: {plpc:.2f}% ≥ {_atr_tp_pct:.1f}% "
-                            f"(ATR-based TP)"
+                            f"(ATR-based full TP)"
                         )
                         await _close_position(
                             trade, cur_price, "take_profit",
@@ -545,9 +571,34 @@ async def auto_invest_loop():
                 MAX_OPEN_POSITIONS = settings.MAX_OPEN_POSITIONS
                 open_count = len(database.get_open_trades())
                 if open_count >= MAX_OPEN_POSITIONS:
-                    logger.info(f"AUTO-INVEST: max positions reached ({open_count}/{MAX_OPEN_POSITIONS}), skipping scan")
-                    await _asyncio.sleep(5 * 60)
-                    continue
+                    # Auto-rebalance: check if any open position scores very low
+                    # If so, sell it to make room for a better opportunity
+                    _rebalance_threshold = int(_os.getenv("REBALANCE_EXIT_SCORE", "30"))
+                    _rebalanced = False
+                    try:
+                        _open = database.get_open_trades()
+                        for _t in _open:
+                            _tsym = _t["ticker"]
+                            _tscore = await _asyncio.wait_for(
+                                _asyncio.to_thread(get_composite_score, _tsym, 5), timeout=20
+                            )
+                            if _tscore.get("composite_score", 100) < _rebalance_threshold:
+                                _pos = await _asyncio.to_thread(broker.get_position, _tsym)
+                                if _pos:
+                                    _cprice = float(_pos.get("current_price", _t["entry_price"]))
+                                    logger.info(f"AUTO-REBALANCE: selling weak {_tsym} "
+                                                f"(score={_tscore['composite_score']}) to make room")
+                                    await _close_position(_t, _cprice, "smart_sell",
+                                                          f"Auto-rebalance (score={_tscore['composite_score']})")
+                                    _rebalanced = True
+                                    break
+                    except Exception as _re:
+                        logger.debug(f"Auto-rebalance check failed: {_re}")
+
+                    if not _rebalanced:
+                        logger.info(f"AUTO-INVEST: max positions reached ({open_count}/{MAX_OPEN_POSITIONS}), skipping scan")
+                        await _asyncio.sleep(5 * 60)
+                        continue
 
                 # Smart scan: put high-momentum stocks first, then random rotation
                 SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "10"))

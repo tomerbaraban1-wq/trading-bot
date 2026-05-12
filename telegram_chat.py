@@ -513,19 +513,20 @@ def _handle_command(text: str, context: dict) -> str | None:
         if not trade:
             return f"❌ אין פוזיציה פתוחה עבור <b>{ticker_to_sell}</b>"
         import broker as _br
+        import os as _os
         try:
             pos = _br.get_position(ticker_to_sell)
             cur = float(pos.get("current_price", trade["entry_price"])) if pos else trade["entry_price"]
             pnl = (cur - trade["entry_price"]) * trade["qty"]
             pct = (cur - trade["entry_price"]) / trade["entry_price"] * 100
+            base_url = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
             return (
                 f"⚠️ <b>אישור מכירה — {ticker_to_sell}</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"💵 מחיר עכשיו: ${cur:.2f}\n"
                 f"{'🟢' if pnl >= 0 else '🔴'} רווח/הפסד: <b>${pnl:+.2f}</b> ({pct:+.1f}%)\n\n"
-                f"למכירה מיידית:\n"
-                f"https://tradebot-yc8p.onrender.com/emergency-exit/{ticker_to_sell}"
-                f"?secret={settings.WEBHOOK_SECRET}"
+                f"למכירה — פתח בדפדפן ועם secret:\n"
+                f"<code>{base_url}/emergency-exit/{ticker_to_sell}?secret=YOUR_SECRET</code>"
             )
         except Exception as e:
             return f"❌ שגיאה בבדיקת {ticker_to_sell}: {e}"
@@ -607,7 +608,34 @@ def _handle_command(text: str, context: dict) -> str | None:
     cash_keywords = ["כמה כסף", "כמה מזומן", "מזומן", "cash"]
     if any(k in t for k in cash_keywords):
         cash = context.get("cash", 0)
-        return f"💰 <b>מזומן פנוי: ${cash:,.2f}</b>"
+        equity = context.get("equity", 0)
+        invested = context.get("total_invested", 0)
+        pct_invested = round(invested / equity * 100, 1) if equity > 0 else 0
+        lines = [f"💵 <b>מזומן פנוי: ${cash:,.2f}</b>"]
+        if pct_invested > 0:
+            lines.append(f"📊 {pct_invested}% מהתיק מושקע")
+        if cash == 0:
+            lines.append("⚠️ אין מזומן — ממתין למכירה לפני קנייה חדשה")
+        return "\n".join(lines)
+
+    # ── שאלות ביצועים ──────────────────────────────────────────────────────
+    perf_keywords = ["ביצועים", "סטטיסטיקה", "כמה עסקאות", "win rate", "אחוז הצלחה"]
+    if any(k in t for k in perf_keywords):
+        closed = context.get("closed_trades", [])
+        total  = len(closed)
+        wins   = sum(1 for x in closed if x.get("pnl", 0) > 0)
+        wr     = round(wins / total * 100, 1) if total > 0 else 0
+        total_pnl = sum(x.get("pnl", 0) for x in closed)
+        if total == 0:
+            return "📊 <b>עדיין אין עסקאות סגורות</b>\nהבוט צריך לפחות 10 עסקאות לסטטיסטיקה"
+        return (
+            f"📊 <b>ביצועים</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🔢 עסקאות סגורות: {total}\n"
+            f"✅ זכיות: {wins}  |  ❌ הפסדים: {total - wins}\n"
+            f"🎯 אחוז הצלחה: <b>{wr}%</b>\n"
+            f"💰 רווח כולל: <b>${total_pnl:+.2f}</b>"
+        )
 
     return None  # let LLM handle everything else
 
