@@ -82,11 +82,12 @@ async def send_message(text: str) -> bool:
     Send a message to Telegram AND Discord (if configured).
     Returns True if at least one channel succeeded.
     """
-    # Send to Discord in parallel (fire-and-forget)
+    # Send to Discord in parallel (tracked task — won't be silently dropped)
     try:
         from discord_bot import send_discord as _send_discord
         import asyncio as _asyncio
-        _asyncio.ensure_future(_send_discord(text))
+        task = _asyncio.create_task(_send_discord(text))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     except Exception:
         pass
 

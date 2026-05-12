@@ -26,6 +26,7 @@ _DISCORD_API = "https://discord.com/api/v10"
 _community_sentiment: dict[str, tuple[float, float]] = {}  # ticker → (score, timestamp)
 _COMMUNITY_TTL = 1800  # 30 min
 _all_messages_cache: tuple[list, float] = ([], 0.0)  # (messages, timestamp)
+_cache_lock: "asyncio.Lock | None" = None   # lazy-init (needs running loop)
 
 
 def _enabled() -> bool:
@@ -37,11 +38,14 @@ async def _fetch_all_server_messages(limit_per_channel: int = 30) -> list[dict]:
     Fetch recent messages from ALL text channels in the SKIL server.
     Cached 30 minutes to avoid rate limits.
     """
-    import time
-    global _all_messages_cache
+    import asyncio, time
+    global _all_messages_cache, _cache_lock
+    if _cache_lock is None:
+        _cache_lock = asyncio.Lock()
     now = time.time()
-    if _all_messages_cache[0] and now - _all_messages_cache[1] < _COMMUNITY_TTL:
-        return _all_messages_cache[0]
+    async with _cache_lock:
+        if _all_messages_cache[0] and now - _all_messages_cache[1] < _COMMUNITY_TTL:
+            return _all_messages_cache[0]
 
     if not DISCORD_BOT_TOKEN or not DISCORD_GUILD_ID:
         return []

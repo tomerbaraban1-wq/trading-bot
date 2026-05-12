@@ -204,6 +204,7 @@ async def lifespan(app: FastAPI):
         heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
         keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
         portfolio_update_task, news_refresh_task, morning_briefing_task, position_alert_task,
+        backtest_task,
     ] if t is not None]
 
     # Cancel all background tasks

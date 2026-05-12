@@ -259,7 +259,7 @@ def _analyze_ticker(ticker: str, lookback_days: int) -> list[dict]:
         above_sma50 = row.get("close", 0) > row.get("sma_50", 0) if row.get("sma_50") else None
 
         conditions = {}
-        if rsi and not np.isnan(rsi):
+        if rsi is not None and not np.isnan(rsi):
             if rsi < 30:      conditions["rsi"] = "oversold"
             elif rsi < 50:    conditions["rsi"] = "below_mid"
             elif rsi < 65:    conditions["rsi"] = "healthy"
