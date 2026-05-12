@@ -399,37 +399,34 @@ def _simple_fallback(ctx: dict) -> str:
 
     pnl_note = " (הפוזיציות חדשות — עדיין לא זז המחיר)" if pnl == 0 and positions else ""
 
-    lines = [f"📊 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
-    lines.append(f"💼 <b>שווי תיק כולל: ${equity:,.2f}</b>")
-    row = []
+    lines = [f"🏦 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
+    lines.append(f"💎 <b>שווי כולל: ${equity:,.2f}</b>")
     if cash > 0:
-        row.append(f"💰 מזומן: ${cash:,.2f}")
+        lines.append(f"💵 מזומן פנוי: ${cash:,.2f}")
     if total_invested > 0:
-        row.append(f"📈 מניות: ${total_invested:,.2f}")
-    if row:
-        lines.append("   " + "  |  ".join(row))
+        lines.append(f"📊 מושקע במניות: ${total_invested:,.2f}")
     if pnl != 0:
-        lines.append(f"   💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
+        pnl_icon = "🟢" if pnl > 0 else "🔴"
+        lines.append(f"{pnl_icon} רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
     if realized != 0:
-        lines.append(f"   💳 רווח ממומש: <b>${realized:+.2f}</b>")
+        lines.append(f"🏆 רווח ממומש: <b>${realized:+.2f}</b>")
 
     if positions:
-        lines.append("\n<b>פוזיציות פתוחות:</b>")
+        lines.append(f"\n📂 <b>פוזיציות ({len(positions)}):</b>")
         for p in positions:
-            emoji = "🟢" if p["pct"] >= 0 else "🔴"
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             stop = p.get("atr_stop") or 0
             held = p.get("held_hours", 0)
             profit = p["pnl"] >= 0
-            dir_emoji = "📈" if profit else "📉"
-            pnl_tag   = "רווח 💚" if profit else "הפסד ❤️"
-            held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
+            status_icon = "🟢📈" if profit else "🔴📉"
+            pnl_label   = f"{'🟢' if profit else '🔴'} רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+            held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
-                f"{dir_emoji} <b>{p['ticker']}</b> 📊  — {pnl_tag}\n"
-                f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
-                f"   🔢 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
-                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
-                + (f"  |  🛑 Stop: ${stop}" if stop else "")
+                f"\n{status_icon} <b>{p['ticker']}</b>\n"
+                f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
+                f"   📌 כניסה: ${p['entry']} ➜ עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   {pnl_label}"
+                + (f"  |  🛡️ Stop: ${stop}" if stop else "")
                 + held_line
             )
     else:
@@ -487,22 +484,23 @@ def _handle_command(text: str, context: dict) -> str | None:
         total_pnl = 0.0
         for p in positions:
             profit    = p["pnl"] >= 0
-            dir_emoji = "📈" if profit else "📉"
-            pnl_tag   = "רווח 💚" if profit else "הפסד ❤️"
+            status    = "🟢📈" if profit else "🔴📉"
+            pnl_icon  = "🟢" if profit else "🔴"
             stop      = p.get("atr_stop") or 0
             held      = p.get("held_hours", 0)
             invested  = p.get("invested") or round(p["entry"] * p["qty"], 2)
-            held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
+            held_line = f"\n   ⏳ {_fmt_held(held)}" if held >= 0.5 else ""
             total_pnl += p["pnl"]
             lines.append(
-                f"\n{dir_emoji} <b>{p['ticker']}</b> 📊  — {pnl_tag}\n"
-                f"   📦 {p['qty']} מניות  |  💵 הושקע: ${invested:,.2f}\n"
-                f"   🔢 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
-                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>  |  🛑 Stop: ${stop}"
-                f"{held_line}"
+                f"\n{status} <b>{p['ticker']}</b>\n"
+                f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
+                f"   📌 ${p['entry']} ➜ ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   {pnl_icon} רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
+                + (f"  |  🛡️ Stop: ${stop}" if stop else "")
+                + held_line
             )
-        total_emoji = "📈" if total_pnl >= 0 else "📉"
-        lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ רווח/הפסד: <b>${total_pnl:+.2f}</b>")
+        total_icon = "🏆" if total_pnl >= 0 else "📉"
+        lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_icon} סה״כ: <b>${total_pnl:+.2f}</b>")
         return "\n".join(lines)
 
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
