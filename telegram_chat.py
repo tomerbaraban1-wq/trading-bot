@@ -461,18 +461,46 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/start", "/help", "עזרה"):
         return (
             "👋 <b>שלום! אני בוט המסחר שלך.</b>\n\n"
-            "שאל אותי כל שאלה בעברית חופשית:\n"
+            "<b>שאל בעברית חופשית:</b>\n"
             "• איזה מניות יש לי?\n"
             "• כמה כסף יש לי?\n"
             "• מה הרווח שלי?\n"
             "• מה שווי התיק?\n"
             "• מתי השוק נפתח?\n\n"
+            "<b>פקודות מהירות:</b>\n"
             "📊 /status — מצב מהיר\n"
+            "⏸️ /pause — עצור קניות חדשות\n"
+            "▶️ /resume — חדש קניות\n"
+            "📋 /log — לוג סריקות\n"
             "❓ /help — הודעה זו"
         )
 
     if cmd == "/status":
         return _simple_fallback(context)
+
+    if cmd in ("/pause", "עצור", "עצור קניות", "pause"):
+        import os as _os
+        _os.environ["BOT_PAUSED"] = "true"
+        return (
+            "⏸️ <b>הבוט עצר קניות חדשות</b>\n"
+            "הפוזיציות הקיימות ממשיכות להיות מנוטרות.\n"
+            "לחידוש: שלח <b>/resume</b>"
+        )
+
+    if cmd in ("/resume", "המשך", "חדש", "resume"):
+        import os as _os
+        _os.environ.pop("BOT_PAUSED", None)
+        return (
+            "▶️ <b>הבוט חזר לפעולה</b>\n"
+            "סורק מניות וקונה כרגיל ✅"
+        )
+
+    if cmd in ("/log", "לוג", "log"):
+        return (
+            "📋 <b>לוג סריקות אחרונות</b>\n"
+            "כדי לראות את הלוגים המלאים:\n"
+            "Render → tradebot → <b>Logs</b>"
+        )
 
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה"]

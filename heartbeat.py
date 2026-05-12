@@ -386,15 +386,27 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
-                    # ── 2. Take Profit (fixed ceiling) ────────────────────────
-                    if plpc >= settings.TAKE_PROFIT_PCT:
+                    # ── 2. Take Profit — ATR-based (4× ATR) or fixed ceiling ──
+                    # ATR-based TP is achievable for low-vol stocks (MO ~2%, V ~4%)
+                    # Fixed TP is the safety cap for high-vol stocks
+                    try:
+                        from atr_stop import _fetch_atr
+                        _atr_val = await asyncio.to_thread(_fetch_atr, ticker, trade["entry_price"])
+                        _atr_tp_pct = min(
+                            settings.TAKE_PROFIT_PCT,                    # cap at fixed TP
+                            max(3.0, (_atr_val / trade["entry_price"]) * 100 * 4)  # 4×ATR, min 3%
+                        )
+                    except Exception:
+                        _atr_tp_pct = settings.TAKE_PROFIT_PCT
+
+                    if plpc >= _atr_tp_pct:
                         logger.info(
-                            f"[TAKE PROFIT] {ticker}: {plpc:.2f}% "
-                            f"≥ {settings.TAKE_PROFIT_PCT}%"
+                            f"[TAKE PROFIT] {ticker}: {plpc:.2f}% ≥ {_atr_tp_pct:.1f}% "
+                            f"(ATR-based TP)"
                         )
                         await _close_position(
                             trade, cur_price, "take_profit",
-                            f"Take Profit ({plpc:.1f}%)"
+                            f"Take Profit ({plpc:.1f}% ≥ {_atr_tp_pct:.1f}%)"
                         )
                         continue
 
@@ -474,6 +486,12 @@ async def auto_invest_loop():
             from scoring import get_composite_score
             from budget import get_budget_status, check_can_buy
             import asyncio as _asyncio
+
+            # /pause command check — user can pause buying via Telegram
+            if _os.getenv("BOT_PAUSED", "").lower() == "true":
+                logger.info("AUTO-INVEST: Bot paused by user — skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
 
             # Only trade during market hours (wrapped — may call broker API)
             if not await asyncio.to_thread(broker.is_market_open):
