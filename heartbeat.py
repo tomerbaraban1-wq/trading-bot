@@ -657,6 +657,17 @@ async def auto_invest_loop():
                         await _asyncio.sleep(5 * 60)
                         continue
 
+                # Sector rotation: prioritize stocks from leading sectors
+                try:
+                    from sector_rotation import prioritize_by_sector, get_leading_sectors
+                    _sectors = await _asyncio.to_thread(get_leading_sectors)
+                    if _sectors:
+                        _top_sector = _sectors[0]
+                        logger.info(f"[SECTOR] Leading: {_top_sector['name']} ({_top_sector['return_pct']:+.1f}%)")
+                    shuffled = await _asyncio.to_thread(prioritize_by_sector, shuffled)
+                except Exception:
+                    pass  # fail-open: proceed with random order
+
                 # Smart scan: put high-momentum stocks first, then random rotation
                 SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "10"))
                 # Momentum pre-filter: quick 1-day % change check (cheap, no full scoring)

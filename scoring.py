@@ -505,6 +505,15 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         1
     )
 
+    # ── Sector Rotation Bonus ─────────────────────────────────────────────
+    try:
+        from sector_rotation import get_sector_multiplier
+        _smult = get_sector_multiplier(ticker)
+        if _smult > 1.0:    composite = min(100, composite + 5)
+        elif _smult < 1.0:  composite = max(0,   composite - 4)
+    except Exception:
+        pass
+
     # ── Relative Strength vs SPY ──────────────────────────────────────────
     # Stocks outperforming the market get a bonus — buy market leaders, not laggards
     rs_bonus = 0

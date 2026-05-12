@@ -478,9 +478,10 @@ def _handle_command(text: str, context: dict) -> str | None:
             "• מתי השוק נפתח?\n\n"
             "<b>פקודות מהירות:</b>\n"
             "📊 /status — מצב מהיר\n"
-            "⏸️ /pause — עצור קניות חדשות\n"
+            "📈 /sectors — דירוג סקטורים\n"
+            "🌍 /market — מצב שוק\n"
+            "⏸️ /pause — עצור קניות\n"
             "▶️ /resume — חדש קניות\n"
-            "📋 /log — לוג סריקות\n"
             "❓ /help — הודעה זו"
         )
 
@@ -503,6 +504,22 @@ def _handle_command(text: str, context: dict) -> str | None:
             "▶️ <b>הבוט חזר לפעולה</b>\n"
             "סורק מניות וקונה כרגיל ✅"
         )
+
+    if cmd in ("/sectors", "סקטורים", "sectors", "מגזרים"):
+        try:
+            from sector_rotation import get_leading_sectors
+            sectors = get_leading_sectors()
+            if not sectors:
+                return "❌ לא הצלחתי לקבל נתוני סקטורים"
+            lines = ["📊 <b>סקטורים — דירוג מומנטום (20 יום)</b>\n━━━━━━━━━━━━━━━━"]
+            medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","1️⃣1️⃣"]
+            for s in sectors:
+                m = medals[s["rank"]-1] if s["rank"] <= len(medals) else "▪️"
+                bar = "▓" * max(1, int((s["return_pct"] + 10) / 2)) if s["return_pct"] > -10 else "░"
+                lines.append(f"{m} <b>{s['name']}</b>: {s['return_pct']:+.1f}%")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
 
     if cmd in ("/market", "שוק", "market", "מצב שוק"):
         try:
