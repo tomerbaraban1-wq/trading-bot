@@ -336,6 +336,13 @@ async def stop_loss_monitor():
                                 f"${atr_stop:.2f} → ${new_stop:.2f} "
                                 f"(price=${cur_price:.2f} | wm=${new_wm:.2f})"
                             )
+                            # Notify Telegram when stop is raised significantly (≥0.5%)
+                            if atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
+                                _create_background_task(send_message(
+                                    f"🛡️ <b>Stop Loss הועלה — {ticker}</b>\n"
+                                    f"   ${atr_stop:.2f} ➜ <b>${new_stop:.2f}</b>\n"
+                                    f"   💵 מחיר: ${cur_price:.2f}  |  🏆 High: ${new_wm:.2f}"
+                                ))
                         atr_stop = new_stop
                         high_wm  = new_wm
 
@@ -822,6 +829,19 @@ async def auto_invest_loop():
                         _create_background_task(notify_error("order_failed", ticker, str(e)))
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
+
+                # Send scan summary to Telegram (only if something notable happened)
+                if bought > 0 or len(candidates) > 0:
+                    try:
+                        _scan_lines = [f"🔍 <b>סיכום סריקה</b>"]
+                        if bought > 0:
+                            _scan_lines.append(f"✅ נקנו {bought} מניות")
+                        else:
+                            _scan_lines.append(f"⏭️ לא נמצאו הזדמנויות ({len(candidates)} מניות נסרקו)")
+                        _scan_lines.append(f"💵 מזומן: ${remaining:.2f}")
+                        _create_background_task(send_message("\n".join(_scan_lines)))
+                    except Exception:
+                        pass
 
         except asyncio.CancelledError:
             raise
