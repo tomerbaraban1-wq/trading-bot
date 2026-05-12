@@ -34,10 +34,10 @@ _client = None
 
 
 def _fmt_pnl(amount: float, show_label: bool = True) -> str:
-    """Format P&L: amount$  רווח/הפסד"""
-    abs_amt = abs(amount)
+    """Format P&L: $+27.08 רווח / $-3.20 הפסד"""
     label = "רווח 🟢" if amount >= 0 else "הפסד 🔴"
-    formatted = f"<b>{abs_amt:,.2f}$</b>"
+    sign  = "+" if amount >= 0 else "-"
+    formatted = f"<b>${sign}{abs(amount):,.2f}</b>"
     if show_label:
         return f"{formatted}  {label}"
     return formatted
