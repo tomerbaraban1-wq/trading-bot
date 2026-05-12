@@ -442,9 +442,9 @@ def _simple_fallback(ctx: dict) -> str:
     pnl_note = " (הפוזיציות חדשות — עדיין לא זז המחיר)" if pnl == 0 and positions else ""
 
     lines = [f"🏦 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
-    lines.append(f"💎 <b>שווי כולל: ${equity:,.2f}</b>")
+    lines.append(f"💎 <b>שווי כולל: {_fmt_price(equity)}</b>")
     if cash > 0:
-        lines.append(f"💵 מזומן פנוי: ${cash:,.2f}")
+        lines.append(f"💵 מזומן פנוי: {_fmt_price(cash)}")
     if total_invested > 0:
         lines.append(f"📊 מושקע במניות: ${total_invested:,.2f}")
     if pnl != 0:
@@ -676,10 +676,10 @@ def _handle_command(text: str, context: dict) -> str | None:
         lines = [
             f"💼 <b>שווי התיק</b>",
             f"━━━━━━━━━━━━━━━━",
-            f"📊 סה״כ: <b>${equity:,.2f}</b>",
+            f"📊 סה״כ: <b>{_fmt_price(equity)}</b>",
         ]
         if cash > 0:
-            lines.append(f"💰 מזומן: ${cash:,.2f}")
+            lines.append(f"💰 מזומן: {_fmt_price(cash)}")
         if invested > 0:
             lines.append(f"📈 מניות: {_fmt_price(invested)}")
         if pnl != 0:
@@ -695,7 +695,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         equity = context.get("equity", 0)
         invested = context.get("total_invested", 0)
         pct_invested = round(invested / equity * 100, 1) if equity > 0 else 0
-        lines = [f"💵 <b>מזומן פנוי: ${cash:,.2f}</b>"]
+        lines = [f"💵 <b>מזומן פנוי: {_fmt_price(cash)}</b>"]
         if pct_invested > 0:
             lines.append(f"📊 {pct_invested}% מהתיק מושקע")
         if cash == 0:
