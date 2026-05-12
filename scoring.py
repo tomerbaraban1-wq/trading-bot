@@ -87,6 +87,8 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     above_20 = indicators.get("above_sma20")
     above_50 = indicators.get("above_sma50")
     above_200 = indicators.get("above_sma200")
+    sma_50  = indicators.get("sma_50")
+    sma_200 = indicators.get("sma_200")
     # Strong trend bonus: all 3 MAs aligned = momentum
     if above_20 and above_50 and above_200:
         ma_score += 18  # all aligned = strong uptrend
@@ -102,6 +104,18 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     if not above_20 and not above_50:
         ma_score -= 5
     score += ma_score
+
+    # Golden Cross bonus (+8): SMA50 > SMA200 = long-term bull signal
+    # Death Cross penalty (-8): SMA50 < SMA200 = long-term bear signal
+    max_score += 8
+    if sma_50 and sma_200:
+        if sma_50 > sma_200:
+            score += 8;  breakdown["golden_cross"] = f"✅ Golden Cross (SMA50 > SMA200)"
+        else:
+            score -= 4;  breakdown["golden_cross"] = f"❌ Death Cross (SMA50 < SMA200)"
+    else:
+        breakdown["golden_cross"] = "⚪ N/A"
+
     trend_str = f"SMA20={'✅' if above_20 else '❌'} SMA50={'✅' if above_50 else '❌'} SMA200={'✅' if above_200 else '❌'}"
     breakdown["moving_averages"] = trend_str
 
@@ -228,6 +242,15 @@ def score_market(market: dict) -> tuple[float, dict]:
         elif spy_rsi < 65: score += 5; breakdown["spy_rsi"] = f"✅ SPY RSI healthy ({spy_rsi:.1f})"
         elif spy_rsi < 75: score -= 5; breakdown["spy_rsi"] = f"⚠️ SPY slightly overbought ({spy_rsi:.1f})"
         else:             score -= 15; breakdown["spy_rsi"] = f"❌ SPY overbought ({spy_rsi:.1f})"
+
+    # Fear & Greed Index — CNN market sentiment
+    fg = market.get("fear_greed")
+    if fg is not None:
+        if fg <= 25:      score += 15; breakdown["fear_greed"] = f"✅ Extreme Fear ({fg}) — contrarian BUY signal"
+        elif fg <= 45:    score += 8;  breakdown["fear_greed"] = f"✅ Fear ({fg}) — good entry"
+        elif fg <= 55:    score += 3;  breakdown["fear_greed"] = f"⚪ Neutral ({fg})"
+        elif fg <= 75:    score -= 5;  breakdown["fear_greed"] = f"⚠️ Greed ({fg}) — caution"
+        else:             score -= 15; breakdown["fear_greed"] = f"❌ Extreme Greed ({fg}) — avoid new buys"
 
     return max(0, min(100, score)), breakdown
 

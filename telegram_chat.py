@@ -495,6 +495,32 @@ def _handle_command(text: str, context: dict) -> str | None:
             "סורק מניות וקונה כרגיל ✅"
         )
 
+    if cmd in ("/market", "שוק", "market", "מצב שוק"):
+        try:
+            from indicators import get_market_conditions, get_fear_greed
+            mkt = get_market_conditions()
+            vix = mkt.get("vix")
+            fg  = mkt.get("fear_greed") or get_fear_greed()
+            spy = "📈 עולה" if mkt.get("spy_above_sma50") else "📉 יורד"
+            vix_str = f"🌡️ VIX: {vix:.1f}" if vix else "🌡️ VIX: N/A"
+            fg_label = ""
+            if fg is not None:
+                if fg <= 25:   fg_label = f"😨 פחד קיצוני ({fg})"
+                elif fg <= 45: fg_label = f"😟 פחד ({fg})"
+                elif fg <= 55: fg_label = f"😐 ניטרלי ({fg})"
+                elif fg <= 75: fg_label = f"😏 חמדנות ({fg})"
+                else:          fg_label = f"🤑 חמדנות קיצונית ({fg})"
+            return (
+                f"🌍 <b>מצב השוק</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 SPY: {spy}\n"
+                f"{vix_str}\n"
+                + (f"💭 Fear & Greed: {fg_label}\n" if fg_label else "")
+                + f"{'✅ אפשר לקנות' if mkt.get('spy_above_sma50') and (vix or 20) < 28 else '⚠️ שוק לא אידיאלי לקנייה'}"
+            )
+        except Exception as e:
+            return f"❌ לא הצלחתי לקבל מצב שוק: {e}"
+
     if cmd in ("/log", "לוג", "log"):
         return (
             "📋 <b>לוג סריקות אחרונות</b>\n"

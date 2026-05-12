@@ -262,6 +262,38 @@ def get_current_indicators(symbol: str) -> dict | None:
 
 _market_cache: dict = {"data": None, "ts": 0}
 _MARKET_CACHE_TTL = 300  # 5 minutes — reuse same SPY data across all tickers in a scan
+_fear_greed_cache: dict = {"value": None, "ts": 0}
+_FEAR_GREED_TTL = 3600   # 1 hour
+
+
+def get_fear_greed() -> int | None:
+    """
+    Fetch CNN Fear & Greed Index (0=Extreme Fear, 100=Extreme Greed).
+    Cached 1 hour. Returns None on failure.
+    """
+    import time as _t
+    now = _t.time()
+    if _fear_greed_cache["value"] is not None and now - _fear_greed_cache["ts"] < _FEAR_GREED_TTL:
+        return _fear_greed_cache["value"]
+    try:
+        import requests as _req
+        resp = _req.get(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            timeout=8,
+            headers={"User-Agent": "Mozilla/5.0 TradingBot/1.0"},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            score = data.get("fear_and_greed", {}).get("score")
+            if score is not None:
+                val = round(float(score))
+                _fear_greed_cache["value"] = val
+                _fear_greed_cache["ts"] = now
+                logger.debug(f"[FEAR&GREED] score={val}")
+                return val
+    except Exception as e:
+        logger.debug(f"[FEAR&GREED] fetch failed: {e}")
+    return None
 
 
 def get_market_conditions() -> dict:
@@ -288,6 +320,11 @@ def get_market_conditions() -> dict:
         if spy:
             result["spy_above_sma50"] = spy.get("above_sma50")
             result["spy_rsi"] = spy.get("rsi")
+
+        # Fear & Greed Index
+        fg = get_fear_greed()
+        if fg is not None:
+            result["fear_greed"] = fg
     except Exception as e:
         logger.warning(f"Market conditions error: {e}")
 
