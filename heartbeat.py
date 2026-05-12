@@ -522,6 +522,18 @@ async def auto_invest_loop():
                     if remaining < 10:
                         break
                     try:
+                        # Earnings blackout check — skip if earnings report is within 3 days
+                        try:
+                            from earnings import check_earnings_risk
+                            earn_risky, earn_reason, earn_days = await _asyncio.wait_for(
+                                _asyncio.to_thread(check_earnings_risk, ticker), timeout=10
+                            )
+                            if earn_risky:
+                                logger.info(f"AUTO-INVEST: {ticker} EARNINGS BLACKOUT — {earn_reason}")
+                                continue
+                        except Exception:
+                            pass  # fail-open: proceed if earnings check fails
+
                         # Score with timeout protection
                         sentiment = await _asyncio.wait_for(
                             _asyncio.to_thread(score_sentiment, ticker), timeout=30

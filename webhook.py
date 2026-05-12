@@ -1165,6 +1165,27 @@ async def shadow_trades(limit: int = 50):
     return {"count": len(trades), "trades": trades}
 
 
+@router.get("/earnings")
+async def earnings_check(ticker: str):
+    """
+    Check earnings risk and historical impact for a ticker.
+    ?ticker=AAPL
+    Returns: next earnings date, blackout status, beat rate, avg move on earnings day.
+    """
+    from earnings import check_earnings_risk, get_earnings_impact, get_earnings_score
+    risky, reason, days = await asyncio.to_thread(check_earnings_risk, ticker.upper())
+    impact = await asyncio.to_thread(get_earnings_impact, ticker.upper())
+    score  = await asyncio.to_thread(get_earnings_score, ticker.upper())
+    return {
+        "ticker":           ticker.upper(),
+        "blackout":         risky,
+        "reason":           reason,
+        "days_until":       days,
+        "earnings_score":   score,
+        **impact,
+    }
+
+
 @router.get("/regime")
 async def market_regime_check(ticker: str):
     """
