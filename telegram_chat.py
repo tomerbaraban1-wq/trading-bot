@@ -306,7 +306,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 ❓ "מה הרווח שלי" / "כמה הרווחתי" / "מה ההפסד":
 → ענה בשורות נפרדות:
 📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
-💳 רווח ממומש: ${context.get('realized_pnl_net', 0):+,.2f}
+{"💳 רווח ממומש: $" + f"{context.get('realized_pnl_net',0):+,.2f}" if context.get('realized_pnl_net',0) != 0 else "(אין עדיין רווח ממומש)"}
 
 ❓ שאלה על מניה ספציפית (לדוגמה "מה קורה עם AAPL"):
 → פרט רק את הנתונים על אותה מניה
@@ -527,15 +527,17 @@ def _handle_command(text: str, context: dict) -> str | None:
         invested  = context.get("total_invested", 0)
         pnl       = context.get("open_pnl", 0)
         realized  = context.get("realized_pnl_net", 0)
-        return (
-            f"💼 <b>שווי התיק</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"📊 סה״כ: <b>${equity:,.2f}</b>\n"
-            f"💰 מזומן: ${cash:,.2f}\n"
-            f"📈 מניות: ${invested:,.2f}\n"
-            f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>\n"
-            f"💳 ממומש: ${realized:+.2f}"
-        )
+        lines = [
+            f"💼 <b>שווי התיק</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"📊 סה״כ: <b>${equity:,.2f}</b>",
+            f"💰 מזומן: ${cash:,.2f}",
+            f"📈 מניות: ${invested:,.2f}",
+            f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>",
+        ]
+        if realized != 0:
+            lines.append(f"💳 ממומש: ${realized:+.2f}")
+        return "\n".join(lines)
 
     # ── שאלות מזומן ────────────────────────────────────────────────────────
     cash_keywords = ["כמה כסף", "כמה מזומן", "מזומן", "cash"]
