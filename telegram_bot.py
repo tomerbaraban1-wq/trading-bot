@@ -79,10 +79,17 @@ def _mark_sent(error_key: str) -> None:
 
 async def send_message(text: str) -> bool:
     """
-    Send a Telegram message with up to 3 retries on failure.
-    Returns True on success, False if all retries failed.
-    Silently no-ops when bot token / chat ID are not configured.
+    Send a message to Telegram AND Discord (if configured).
+    Returns True if at least one channel succeeded.
     """
+    # Send to Discord in parallel (fire-and-forget)
+    try:
+        from discord_bot import send_discord as _send_discord
+        import asyncio as _asyncio
+        _asyncio.ensure_future(_send_discord(text))
+    except Exception:
+        pass
+
     if not _enabled():
         return False
 
