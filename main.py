@@ -100,6 +100,22 @@ async def lifespan(app: FastAPI):
         if open_trades:
             tickers = [t["ticker"] for t in open_trades]
             logger.info(f"RESTORED {len(open_trades)} open position(s): {tickers}")
+
+            # Cross-check: close SQLite records that no longer exist in the broker
+            # (prevents stop-loss monitor from trying to sell non-existent positions)
+            try:
+                from database import close_trade as _close_trade
+                broker_positions = _broker.get_positions()
+                broker_tickers = {p.get("ticker", "").upper() for p in broker_positions}
+                for t in open_trades:
+                    if t["ticker"].upper() not in broker_tickers:
+                        logger.warning(
+                            f"RECONCILE: {t['ticker']} is open in SQLite but NOT in broker — "
+                            f"closing as stale_restart"
+                        )
+                        _close_trade(t["id"], t["entry_price"], 0.0, 0.0, 0.0, 0.0, "stale_restart")
+            except Exception as _ce:
+                logger.warning(f"Cross-check reconciliation failed (non-critical): {_ce}")
         else:
             # SQLite is empty — check if broker has positions we need to recover
             broker_positions = _broker.get_positions()

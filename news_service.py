@@ -72,16 +72,18 @@ def _fetch_all_feeds() -> list[dict]:
             ex.submit(_fetch_one_feed, name, url): name
             for name, url in RSS_FEEDS
         }
+        processed = set()
         try:
             for fut in as_completed(futures, timeout=7):
+                processed.add(fut)
                 try:
                     all_items.extend(fut.result())
                 except Exception:
                     pass
         except _FuturesTimeout:
-            # Some feeds timed out — collect results from completed ones
+            # Some feeds timed out — collect results from completed ones (skip already processed)
             for fut in futures:
-                if fut.done():
+                if fut.done() and fut not in processed:
                     try:
                         all_items.extend(fut.result())
                     except Exception:
