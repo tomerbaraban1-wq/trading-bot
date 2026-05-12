@@ -106,14 +106,22 @@ async def lifespan(app: FastAPI):
             try:
                 from database import close_trade as _close_trade
                 broker_positions = _broker.get_positions()
-                broker_tickers = {p.get("ticker", "").upper() for p in broker_positions}
-                for t in open_trades:
-                    if t["ticker"].upper() not in broker_tickers:
-                        logger.warning(
-                            f"RECONCILE: {t['ticker']} is open in SQLite but NOT in broker — "
-                            f"closing as stale_restart"
-                        )
-                        _close_trade(t["id"], t["entry_price"], 0.0, 0.0, 0.0, 0.0, "stale_restart")
+                # Guard: if broker returns empty list (API error / transient failure),
+                # skip cross-check entirely to avoid closing ALL valid positions
+                if not broker_positions:
+                    logger.warning(
+                        "RECONCILE: broker returned 0 positions — skipping cross-check "
+                        "(could be API error; not closing valid SQLite records)"
+                    )
+                else:
+                    broker_tickers = {p.get("ticker", "").upper() for p in broker_positions}
+                    for t in open_trades:
+                        if t["ticker"].upper() not in broker_tickers:
+                            logger.warning(
+                                f"RECONCILE: {t['ticker']} is open in SQLite but NOT in broker — "
+                                f"closing as stale_restart"
+                            )
+                            _close_trade(t["id"], t["entry_price"], 0.0, 0.0, 0.0, 0.0, "stale_restart")
             except Exception as _ce:
                 logger.warning(f"Cross-check reconciliation failed (non-critical): {_ce}")
         else:
