@@ -25,6 +25,9 @@ _smart_sell_lock = asyncio.Lock()  # Protect race condition on dict access
 # Track background tasks to prevent fire-and-forget errors
 _background_tasks = set()
 
+# Smart sell: track consecutive low-score cycles per ticker (confirmation buffer)
+_smart_sell_low_count: dict[str, int] = {}
+
 def _create_background_task(coro):
     """Create a background task and track it to prevent garbage collection."""
     task = asyncio.create_task(coro)
@@ -412,14 +415,34 @@ async def stop_loss_monitor():
                         comp = score_result.get("composite_score")
                         if comp is None:
                             raise ValueError("composite_score missing from result")
-                        if comp < 35:  # raised 30→35: exit sooner on deteriorating signals
-                            logger.warning(
-                                f"[SMART SELL] {ticker}: score={comp}/100 — exiting"
-                            )
-                            await _close_position(
-                                trade, cur_price, "smart_sell",
-                                f"Smart Sell (score={comp}/100)"
-                            )
+
+                        # Profit-adjusted threshold: tighter exit when sitting on gains
+                        smart_threshold = 35
+                        if plpc >= 8.0:
+                            smart_threshold = 45   # lock in large gains aggressively
+                        elif plpc >= 4.0:
+                            smart_threshold = 40   # moderate protection of profits
+
+                        if comp < smart_threshold:
+                            # Require 2 consecutive low scores before selling (noise filter)
+                            _smart_sell_low_count[ticker] = _smart_sell_low_count.get(ticker, 0) + 1
+                            if _smart_sell_low_count[ticker] >= 2:
+                                logger.warning(
+                                    f"[SMART SELL] {ticker}: score={comp}/100 "
+                                    f"(threshold={smart_threshold}, confirmed) — exiting"
+                                )
+                                _smart_sell_low_count.pop(ticker, None)
+                                await _close_position(
+                                    trade, cur_price, "smart_sell",
+                                    f"Smart Sell (score={comp}/100)"
+                                )
+                            else:
+                                logger.info(
+                                    f"[SMART SELL] {ticker}: score={comp} < {smart_threshold} "
+                                    f"— waiting for confirmation (1/2)"
+                                )
+                        else:
+                            _smart_sell_low_count.pop(ticker, None)   # reset on recovery
                     except Exception as se:
                         logger.warning(f"Smart sell check error for {ticker}: {se}")
                         _create_background_task(

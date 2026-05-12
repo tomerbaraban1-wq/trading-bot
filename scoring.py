@@ -41,10 +41,11 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     rsi = _safe(indicators.get("rsi"))
     max_score += 15
     if rsi is not None:
-        if 40 <= rsi <= 60:      score += 15; breakdown["rsi"] = f"✅ Neutral zone ({rsi:.1f})"
-        elif 30 <= rsi < 40:     score += 12; breakdown["rsi"] = f"✅ Slight oversold ({rsi:.1f})"
-        elif 60 < rsi <= 70:     score += 8;  breakdown["rsi"] = f"⚠️ Slight overbought ({rsi:.1f})"
-        elif rsi < 30:           score += 5;  breakdown["rsi"] = f"⚠️ Very oversold ({rsi:.1f})"
+        if 35 <= rsi <= 55:      score += 15; breakdown["rsi"] = f"✅ Ideal zone ({rsi:.1f})"
+        elif 55 < rsi <= 65:     score += 12; breakdown["rsi"] = f"✅ Healthy uptrend ({rsi:.1f})"
+        elif 25 <= rsi < 35:     score += 10; breakdown["rsi"] = f"✅ Oversold ({rsi:.1f})"
+        elif 65 < rsi <= 72:     score += 7;  breakdown["rsi"] = f"⚠️ Extended ({rsi:.1f})"
+        elif rsi < 25:           score += 4;  breakdown["rsi"] = f"⚠️ Very oversold ({rsi:.1f})"
         else:                    score += 0;  breakdown["rsi"] = f"❌ Overbought ({rsi:.1f})"
     else:
         breakdown["rsi"] = "⚪ N/A"
@@ -246,14 +247,21 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     # Sentiment score — convert 1-10 to 0-100 (15% weight)
     sent_score = max(0, min(100, (max(1, sentiment_score) - 1) / 9 * 100))
 
-    # Weighted composite
-    # Weights: technicals 60%, market 25%, sentiment 15%
-    # Market raised to 25%: VIX/SPY is most reliable macro filter
-    # Sentiment lowered to 15%: LLM news score is volatile and slow to update
+    # VIX-adaptive weights — market filter gets heavier in fear environments
+    vix = market.get("vix") or 20
+    if vix < 16:
+        w_tech, w_mkt, w_sent = 0.65, 0.20, 0.15   # calm: trust technicals
+    elif vix < 22:
+        w_tech, w_mkt, w_sent = 0.60, 0.25, 0.15   # normal
+    elif vix < 28:
+        w_tech, w_mkt, w_sent = 0.50, 0.35, 0.15   # elevated fear
+    else:
+        w_tech, w_mkt, w_sent = 0.40, 0.45, 0.15   # high fear: macro dominates
+
     composite = round(
-        tech_score * 0.60 +
-        mkt_score  * 0.25 +
-        sent_score * 0.15,
+        tech_score * w_tech +
+        mkt_score  * w_mkt +
+        sent_score * w_sent,
         1
     )
 
