@@ -1173,6 +1173,32 @@ async def shadow_trades(limit: int = 50):
     return {"count": len(trades), "trades": trades}
 
 
+@router.get("/backtest")
+async def run_backtest_endpoint(secret: str = "", tickers: str = ""):
+    """
+    Run historical backtest to learn which indicator conditions predicted profit.
+    /backtest?secret=YOUR_SECRET&tickers=AAPL,MSFT,NVDA (optional — defaults to top 20 watchlist)
+    """
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    from backtest_learner import run_backtest, apply_insights
+    from scanner import get_watchlist
+
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()] if tickers else get_watchlist()[:20]
+
+    result = await asyncio.to_thread(run_backtest, ticker_list)
+    insights = apply_insights()
+    return {**result.to_dict(), "score_update": insights}
+
+
+@router.get("/backtest/insights")
+async def backtest_insights():
+    """Return latest backtest insights (no auth needed — read-only summary)."""
+    from backtest_learner import get_insights
+    return get_insights()
+
+
 @router.get("/earnings")
 async def earnings_check(ticker: str):
     """

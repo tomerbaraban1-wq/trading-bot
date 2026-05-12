@@ -555,15 +555,9 @@ async def auto_invest_loop():
             except Exception:
                 pass   # fail-open: proceed if market data unavailable
 
-            # Trading hours / liquidity / FOMC blackout guard
+            # High-impact economic event guard (CPI / NFP) — check BEFORE
+            # is_ok_to_trade() so we can send a Telegram notification on these days.
             from trading_hours import is_ok_to_trade, is_high_impact_day
-            hours_ok, hours_reason = is_ok_to_trade()
-            if not hours_ok:
-                logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
-                await asyncio.sleep(5 * 60)
-                continue
-
-            # High-impact economic event guard (CPI / NFP)
             _econ_impact, _econ_event = is_high_impact_day()
             if _econ_impact:
                 logger.warning(f"AUTO-INVEST: High-impact day — {_econ_event} — skipping buys")
@@ -575,6 +569,13 @@ async def auto_invest_loop():
                         f"Existing positions and sell orders are not affected."
                     )
                 )
+                await asyncio.sleep(5 * 60)
+                continue
+
+            # Trading hours / liquidity / FOMC blackout guard
+            hours_ok, hours_reason = is_ok_to_trade()
+            if not hours_ok:
+                logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
 
@@ -1273,6 +1274,40 @@ async def portfolio_update_loop():
             logger.error(f"Portfolio update error: {e}")
 
         await asyncio.sleep(60 * 60)   # שלח כל שעה
+
+
+async def backtest_learning_loop():
+    """Weekly: run historical backtest and update MIN_BUY_SCORE automatically."""
+    import datetime as _dt
+    _utc = _dt.timezone.utc
+    await asyncio.sleep(300)  # 5 min after startup
+    while True:
+        try:
+            now = _dt.datetime.now(_utc)
+            days_to_sun = (6 - now.weekday()) % 7 or 7
+            target = (now + _dt.timedelta(days=days_to_sun)).replace(
+                hour=19, minute=0, second=0, microsecond=0)
+            while _dt.datetime.now(_utc) < target:
+                await asyncio.sleep(300)
+
+            logger.info("[BACKTEST] Starting weekly historical learning...")
+            from backtest_learner import run_backtest, apply_insights
+            from scanner import get_watchlist as _gwl
+            result = await asyncio.to_thread(run_backtest, _gwl()[:25])
+            update = apply_insights()
+            await send_message(
+                f"🎓 <b>למידה מהיסטוריה</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 {result.tickers_analyzed} מניות | {result.total_signals} סיגנלים\n"
+                f"✅ WR היסטורי: <b>{result.overall_win_rate:.1f}%</b> | תשואה: {result.avg_return:+.2f}%\n"
+                f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
+                + (f"🔄 עודכן: {update['old_score']} → <b>{update['new_score']}</b>" if update.get('applied') else "✅ ציון נוכחי אופטימלי")
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Backtest learning error: {e}")
+            await asyncio.sleep(3600)
 
 
 async def weekly_report_loop():
