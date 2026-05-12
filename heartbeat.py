@@ -549,13 +549,33 @@ async def auto_invest_loop():
                     await _asyncio.sleep(5 * 60)
                     continue
 
-                # Take 10 per cycle — rotates through full list over ~30 min
-                # Reduced from 30→10 for Render free tier (512MB memory limit)
+                # Smart scan: put high-momentum stocks first, then random rotation
                 SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "10"))
-                candidates = [
-                    t for t in shuffled[:SCAN_PER_CYCLE]
-                    if not database.get_open_trade_by_ticker(t)
-                ]
+                # Momentum pre-filter: quick 1-day % change check (cheap, no full scoring)
+                _momentum_tickers = []
+                _normal_tickers = []
+                try:
+                    import yfinance as _yf
+                    _sample = [t for t in shuffled[:30] if not database.get_open_trade_by_ticker(t)]
+                    if _sample:
+                        _prices = _yf.download(_sample, period="2d", progress=False, auto_adjust=True)
+                        if not _prices.empty and "Close" in _prices.columns:
+                            _close = _prices["Close"]
+                            for _t in _sample:
+                                try:
+                                    _chg = float((_close[_t].iloc[-1] - _close[_t].iloc[-2]) / _close[_t].iloc[-2] * 100)
+                                    if _chg > 0.5:   # positive momentum
+                                        _momentum_tickers.append(_t)
+                                    else:
+                                        _normal_tickers.append(_t)
+                                except Exception:
+                                    _normal_tickers.append(_t)
+                except Exception:
+                    _normal_tickers = [t for t in shuffled[:SCAN_PER_CYCLE] if not database.get_open_trade_by_ticker(t)]
+
+                # Momentum stocks first, then fill with normal rotation
+                _prioritized = _momentum_tickers + _normal_tickers
+                candidates = _prioritized[:SCAN_PER_CYCLE]
 
                 bought = 0
 
@@ -920,6 +940,20 @@ async def position_alert_loop():
                             f"💵 מחיר: ${cur:.2f}  (כניסה: ${entry:.2f})\n"
                             f"💰 רווח/הפסד לא ממומש: <b>${unreal:+.2f}</b>"
                         )
+
+                    # Stop-loss proximity alert — warn when within 1.5% of stop
+                    atr_stop = trade.get("atr_stop_price")
+                    _stop_key = f"stop_{ticker}"
+                    if atr_stop and atr_stop > 0:
+                        dist_pct = (cur - atr_stop) / cur * 100
+                        if dist_pct <= 1.5 and _position_alert_sent.get(_stop_key) != round(dist_pct, 0):
+                            _position_alert_sent[_stop_key] = round(dist_pct, 0)
+                            await send_message(
+                                f"🚨 <b>התראת Stop Loss קרוב — {ticker}</b>\n"
+                                f"💵 מחיר עכשיו: ${cur:.2f}\n"
+                                f"🛡️ Stop Loss: ${atr_stop:.2f}\n"
+                                f"⚡ מרחק: <b>{dist_pct:.1f}%</b> בלבד!"
+                            )
                 except Exception:
                     continue
         except asyncio.CancelledError:

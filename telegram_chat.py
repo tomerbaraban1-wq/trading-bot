@@ -502,6 +502,34 @@ def _handle_command(text: str, context: dict) -> str | None:
             "Render → tradebot → <b>Logs</b>"
         )
 
+    # /sell TICKER — force sell a position
+    if cmd == "/sell" or (cmd == "מכור" and len(t.split()) > 1):
+        parts = t.split()
+        ticker_to_sell = parts[1].upper() if len(parts) > 1 else ""
+        if not ticker_to_sell:
+            return "שימוש: /sell AAPL — לדוגמה"
+        import database as _db
+        trade = _db.get_open_trade_by_ticker(ticker_to_sell)
+        if not trade:
+            return f"❌ אין פוזיציה פתוחה עבור <b>{ticker_to_sell}</b>"
+        import broker as _br
+        try:
+            pos = _br.get_position(ticker_to_sell)
+            cur = float(pos.get("current_price", trade["entry_price"])) if pos else trade["entry_price"]
+            pnl = (cur - trade["entry_price"]) * trade["qty"]
+            pct = (cur - trade["entry_price"]) / trade["entry_price"] * 100
+            return (
+                f"⚠️ <b>אישור מכירה — {ticker_to_sell}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💵 מחיר עכשיו: ${cur:.2f}\n"
+                f"{'🟢' if pnl >= 0 else '🔴'} רווח/הפסד: <b>${pnl:+.2f}</b> ({pct:+.1f}%)\n\n"
+                f"למכירה מיידית:\n"
+                f"https://tradebot-yc8p.onrender.com/emergency-exit/{ticker_to_sell}"
+                f"?secret={settings.WEBHOOK_SECRET}"
+            )
+        except Exception as e:
+            return f"❌ שגיאה בבדיקת {ticker_to_sell}: {e}"
+
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה"]
     if any(k in t for k in stocks_keywords):
