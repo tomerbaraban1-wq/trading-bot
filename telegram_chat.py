@@ -66,10 +66,9 @@ def _fmt_price(usd: float) -> str:
 
 
 def _fmt_pnl(amount: float, show_label: bool = True) -> str:
-    """Format P&L correctly in Hebrew RTL context"""
+    """Format P&L correctly in Hebrew RTL context, with ILS."""
     label = "רווח 🟢" if amount >= 0 else "הפסד 🔴"
-    # Use absolute value + label to avoid RTL sign rendering issues
-    formatted = f"<b>${abs(amount):,.2f}</b>"
+    formatted = f"<b>{_fmt_price(abs(amount))}</b>"
     if show_label:
         return f"{label}  {formatted}"
     return formatted
