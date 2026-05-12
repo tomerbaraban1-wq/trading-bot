@@ -298,12 +298,12 @@ def _fetch_atr(ticker: str, fallback_price: float) -> float:
     Falls back to MAX_STOP_PCT × price / (multiplier) on error
     so the stop is always set even when yfinance is down.
     """
-    # Check cache
+    # Check cache — read AND staleness check inside lock to prevent race
     now = time.time()
     with _atr_lock:
         entry = _atr_cache.get(ticker)
-    if entry and now - entry[1] < CACHE_TTL:
-        return entry[0]
+        if entry and now - entry[1] < CACHE_TTL:
+            return entry[0]
 
     try:
         hist = yf.Ticker(ticker).history(period="60d", auto_adjust=True)

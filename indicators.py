@@ -152,6 +152,8 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 _indicators_cache: dict = {}   # symbol -> (data, timestamp)
 _IND_CACHE_TTL = 300           # 5 minutes — reuse same data within scan cycle
 _IND_CACHE_MAX = 100           # max entries to prevent memory growth
+import threading as _threading
+_IND_CACHE_LOCK = _threading.Lock()   # protects eviction from concurrent iteration crash
 
 
 def get_current_indicators(symbol: str) -> dict | None:
@@ -161,14 +163,17 @@ def get_current_indicators(symbol: str) -> dict | None:
     """
     import time as _time
     now = _time.time()
-    cached = _indicators_cache.get(symbol)
-    if cached and now - cached[1] < _IND_CACHE_TTL:
-        return cached[0]
-
-    # Evict oldest entries if cache is full
-    if len(_indicators_cache) >= _IND_CACHE_MAX:
-        oldest = min(_indicators_cache.items(), key=lambda x: x[1][1])
-        del _indicators_cache[oldest[0]]
+    with _IND_CACHE_LOCK:
+        cached = _indicators_cache.get(symbol)
+        if cached and now - cached[1] < _IND_CACHE_TTL:
+            return cached[0]
+        # Evict oldest entries if cache is full (under lock to prevent dict-changed-size error)
+        if len(_indicators_cache) >= _IND_CACHE_MAX:
+            try:
+                oldest = min(_indicators_cache.items(), key=lambda x: x[1][1])
+                del _indicators_cache[oldest[0]]
+            except (ValueError, KeyError):
+                pass
 
     df = get_stock_data(symbol, period="3mo")  # 3mo instead of 6mo — faster
     if df.empty:
@@ -250,7 +255,8 @@ def get_current_indicators(symbol: str) -> dict | None:
     }
 
     # Cache the result — prevents redundant yfinance downloads within same scan cycle
-    _indicators_cache[symbol] = (result, now)
+    with _IND_CACHE_LOCK:
+        _indicators_cache[symbol] = (result, now)
     return result
 
 

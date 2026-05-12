@@ -281,7 +281,7 @@ async def inject_js():
             media_type="application/javascript"
         )
 
-    code = js_path.read_text(encoding="utf-8")
+    code = await asyncio.to_thread(js_path.read_text, encoding="utf-8")
     return Response(content=code, media_type="application/javascript")
 
 
@@ -330,7 +330,8 @@ def start_tunnel():
                 if line:
                     logger.info(f"tunnel: {line}")
                 if "TUNNEL_URL=" in line:
-                    TUNNEL_URL = line.split("=", 1)[1]
+                    with TUNNEL_URL_LOCK:
+                        TUNNEL_URL = line.split("=", 1)[1]
                     logger.info(f"Webhook URL: {TUNNEL_URL}/webhook")
 
         # Also check url file as fallback
@@ -340,7 +341,8 @@ def start_tunnel():
             for _ in range(30):
                 _t.sleep(1)
                 if url_file.exists():
-                    TUNNEL_URL = url_file.read_text().strip()
+                    with TUNNEL_URL_LOCK:
+                        TUNNEL_URL = url_file.read_text().strip()
                     logger.info(f"Tunnel URL from file: {TUNNEL_URL}")
                     break
 

@@ -17,12 +17,9 @@ DUPLICATE_WINDOW = 300  # 5 minutes
 def validate_signal(ticker: str, action: str) -> tuple[bool, str]:
     """
     Validate an incoming signal. Returns (is_valid, reason).
+    Duplicate check and record are atomic — prevents TOCTOU race.
     """
-    # Check duplicate
-    if _is_duplicate(ticker, action):
-        return False, f"Duplicate signal: {ticker} {action} (within {DUPLICATE_WINDOW}s)"
-
-    # Trading hours / liquidity / FOMC blackout guard (BUY only)
+    # Trading hours / liquidity / FOMC blackout guard (BUY only) — fast, no I/O
     if action.lower() == "buy":
         ok, hours_reason = is_ok_to_trade()
         if not ok:
@@ -36,10 +33,23 @@ def validate_signal(ticker: str, action: str) -> tuple[bool, str]:
             return False, f"Asset {ticker} not found or not tradable"
     except Exception as e:
         logger.warning(f"Could not verify asset {ticker}: {e} — proceeding (fail-open)")
-        # Fail-open: don't block trading on a data-fetch error
 
-    # Record this signal
-    _record_signal(ticker, action)
+    # Atomic duplicate check + record under single lock acquisition
+    key = f"{ticker.upper()}:{action.lower()}"
+    now = time.time()
+    with _signals_lock:
+        # Clean old entries
+        while _recent_signals:
+            oldest_key, oldest_time = next(iter(_recent_signals.items()))
+            if now - oldest_time > DUPLICATE_WINDOW:
+                _recent_signals.pop(oldest_key)
+            else:
+                break
+        # Check and record atomically
+        if key in _recent_signals and (now - _recent_signals[key]) < DUPLICATE_WINDOW:
+            return False, f"Duplicate signal: {ticker} {action} (within {DUPLICATE_WINDOW}s)"
+        _recent_signals[key] = now   # record immediately while still holding lock
+
     return True, "Signal valid"
 
 

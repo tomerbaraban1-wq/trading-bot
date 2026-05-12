@@ -137,7 +137,7 @@ async def sentiment_monitor():
         try:
             await asyncio.sleep(15 * 60)  # 15 minutes
 
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
             if not open_trades:
                 continue
 
@@ -253,7 +253,7 @@ async def stop_loss_monitor():
         try:
             await asyncio.sleep(60)
 
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
             if not open_trades:
                 continue
 
@@ -397,31 +397,32 @@ async def stop_loss_monitor():
 
                     # ── 3. Smart Sell (score collapse, max once per 5 min) ────
                     import time as _time
-                    # Use lock to prevent race condition on dict access
+                    # Hold lock ONLY to read/update timestamp — release before expensive I/O
                     async with _smart_sell_lock:
                         last = _smart_sell_last_check.get(ticker, 0)
                         if _time.time() - last < 300:
                             continue  # Skip check if run too recently
                         _smart_sell_last_check[ticker] = _time.time()
-                        try:
-                            from scoring import get_composite_score
-                            score_result = await asyncio.to_thread(
-                                get_composite_score, ticker, 5
+                    # Lock released — now do expensive scoring outside the lock
+                    try:
+                        from scoring import get_composite_score
+                        score_result = await asyncio.to_thread(
+                            get_composite_score, ticker, 5
+                        )
+                        comp = score_result.get("composite_score")
+                        if comp is None:
+                            raise ValueError("composite_score missing from result")
+                        if comp < 35:  # raised 30→35: exit sooner on deteriorating signals
+                            logger.warning(
+                                f"[SMART SELL] {ticker}: score={comp}/100 — exiting"
                             )
-                            comp = score_result.get("composite_score")
-                            if comp is None:
-                                raise ValueError("composite_score missing from result")
-                            if comp < 35:  # raised 30→35: exit sooner on deteriorating signals
-                                logger.warning(
-                                    f"[SMART SELL] {ticker}: score={comp}/100 — exiting"
-                                )
-                                await _close_position(
-                                    trade, cur_price, "smart_sell",
-                                    f"Smart Sell (score={comp}/100)"
-                                )
-                        except Exception as se:
-                            logger.warning(f"Smart sell check error for {ticker}: {se}")
-                            _create_background_task(
+                            await _close_position(
+                                trade, cur_price, "smart_sell",
+                                f"Smart Sell (score={comp}/100)"
+                            )
+                    except Exception as se:
+                        logger.warning(f"Smart sell check error for {ticker}: {se}")
+                        _create_background_task(
                                 notify_error("stop_loss_fail", ticker, f"Smart sell: {se}")
                             )
 
@@ -1024,7 +1025,7 @@ async def daily_summary_loop():
             total_tax = sum(t.get("tax_reserved") or 0 for t in closed_today)
             total_net = sum(t.get("pnl_net") or 0 for t in closed_today)
 
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
             status = await asyncio.to_thread(budget.get_budget_status)
             equity = status.get("positions_value", 0) + status.get("cash_available", 0)
 
@@ -1067,7 +1068,7 @@ async def portfolio_update_loop():
                 await asyncio.sleep(15 * 60)   # check again in 15 min
                 continue
 
-            open_trades = database.get_open_trades()
+            open_trades = await asyncio.to_thread(database.get_open_trades)
 
             if not open_trades:
                 # Don't spam "no positions" every hour — skip silently
