@@ -265,6 +265,33 @@ def _fetch_earnings_data(ticker: str) -> dict:
     return result
 
 
+def check_dividend_opportunity(ticker: str) -> dict:
+    """
+    Check if a dividend payment is coming soon (within 7 days).
+    Buying before ex-dividend date captures the dividend.
+    Returns: {"has_dividend": bool, "days_to_ex": int, "dividend_yield": float}
+    """
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        ex_date = info.get("exDividendDate")
+        div_yield = float(info.get("dividendYield") or 0) * 100
+        if ex_date:
+            from datetime import datetime, timezone
+            ex_dt = datetime.fromtimestamp(ex_date, tz=timezone.utc)
+            days = (ex_dt.date() - datetime.now(timezone.utc).date()).days
+            return {
+                "has_dividend": True,
+                "days_to_ex": days,
+                "dividend_yield": round(div_yield, 2),
+                "ex_date": str(ex_dt.date()),
+                "capture_opportunity": 0 < days <= 7 and div_yield >= 1.0,
+            }
+    except Exception:
+        pass
+    return {"has_dividend": False, "days_to_ex": None, "dividend_yield": 0}
+
+
 def get_status() -> dict:
     """Return cache stats for /status endpoint."""
     with _cache_lock:

@@ -438,6 +438,14 @@ def score_market(market: dict) -> tuple[float, dict]:
         elif spy_rsi < 75: score -= 5; breakdown["spy_rsi"] = f"⚠️ SPY slightly overbought ({spy_rsi:.1f})"
         else:             score -= 15; breakdown["spy_rsi"] = f"❌ SPY overbought ({spy_rsi:.1f})"
 
+    # Put/Call Ratio — options market sentiment (contrarian indicator)
+    pcr = market.get("put_call_ratio")
+    if pcr is not None:
+        if pcr >= 1.2:    score += 12; breakdown["pcr"] = f"✅ Extreme puts ({pcr:.2f}) — contrarian BUY"
+        elif pcr >= 1.0:  score += 6;  breakdown["pcr"] = f"✅ Bearish sentiment ({pcr:.2f}) — good entry"
+        elif pcr <= 0.7:  score -= 8;  breakdown["pcr"] = f"❌ Complacency ({pcr:.2f}) — market too bullish"
+        elif pcr <= 0.85: score -= 3;  breakdown["pcr"] = f"⚠️ Low fear ({pcr:.2f})"
+
     # Fear & Greed Index — CNN market sentiment
     fg = market.get("fear_greed")
     if fg is not None:
@@ -515,11 +523,29 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     composite = round(min(100, max(0, composite + rs_bonus)), 1)
 
     # ── Fundamental Quality Bonus ─────────────────────────────────────────────
-    # Score 0-10 mapped to ±6 point swing on composite:
-    #   fund_score=10 → +6, fund_score=5 → 0, fund_score=0 → -6
     fund_score = get_fundamental_score(ticker)
     composite = round(min(100.0, max(0.0, composite + (fund_score - 5) * 1.2)), 1)
 
+    # ── Analyst Consensus + Short Squeeze ─────────────────────────────────────
+    try:
+        _info = yf.Ticker(ticker).info
+        # Analyst target upside: if analysts see >15% upside → +5 bonus
+        _target = float(_info.get("targetMeanPrice") or 0)
+        _cur    = float(_info.get("currentPrice") or _info.get("regularMarketPrice") or 0)
+        if _target > 0 and _cur > 0:
+            _upside = (_target - _cur) / _cur * 100
+            if _upside >= 20:    composite = min(100, composite + 6)
+            elif _upside >= 10:  composite = min(100, composite + 3)
+            elif _upside < -10:  composite = max(0,   composite - 4)
+
+        # Short squeeze potential: high short interest = contrarian signal
+        _short_pct = float(_info.get("shortPercentOfFloat") or 0) * 100
+        if _short_pct >= 20:   composite = min(100, composite + 5)  # squeeze fuel
+        elif _short_pct >= 10: composite = min(100, composite + 2)
+    except Exception:
+        pass
+
+    composite = round(composite, 1)
     decision = "BUY ✅" if composite >= MIN_BUY_SCORE else "SKIP ❌"
 
     logger.info(

@@ -330,6 +330,31 @@ _fear_greed_cache: dict = {"value": None, "ts": 0}
 _FEAR_GREED_TTL = 3600   # 1 hour
 
 
+def get_put_call_ratio() -> float | None:
+    """
+    Fetch CBOE total Put/Call ratio — free, no auth.
+    PCR > 1.2 = extreme fear (contrarian buy) | PCR < 0.7 = complacency (caution)
+    Cached 1 hour.
+    """
+    import time, requests
+    now = time.time()
+    if _fear_greed_cache.get("pcr_ts") and now - _fear_greed_cache["pcr_ts"] < 3600:
+        return _fear_greed_cache.get("pcr")
+    try:
+        # CBOE daily put/call summary via yfinance proxy ticker
+        import yfinance as _yf
+        _pcr_ticker = _yf.Ticker("^PCR")
+        hist = _pcr_ticker.history(period="2d")
+        if not hist.empty:
+            val = round(float(hist["Close"].iloc[-1]), 3)
+            _fear_greed_cache["pcr"] = val
+            _fear_greed_cache["pcr_ts"] = now
+            return val
+    except Exception:
+        pass
+    return None
+
+
 def get_fear_greed() -> int | None:
     """
     Fetch CNN Fear & Greed Index (0=Extreme Fear, 100=Extreme Greed).
@@ -389,6 +414,11 @@ def get_market_conditions() -> dict:
         fg = get_fear_greed()
         if fg is not None:
             result["fear_greed"] = fg
+
+        # Put/Call Ratio — options market sentiment
+        pcr = get_put_call_ratio()
+        if pcr is not None:
+            result["put_call_ratio"] = pcr
     except Exception as e:
         logger.warning(f"Market conditions error: {e}")
 
