@@ -292,6 +292,113 @@ def check_dividend_opportunity(ticker: str) -> dict:
     return {"has_dividend": False, "days_to_ex": None, "dividend_yield": 0}
 
 
+def check_post_earnings_momentum(ticker: str) -> dict:
+    """
+    Detect if a stock just reported earnings in the last 5 days and BEAT estimates.
+    Post-earnings momentum = one of the strongest short-term signals.
+
+    Returns:
+      {
+        "post_earnings": bool,     # True if earnings just happened
+        "beat": bool | None,       # True=beat, False=miss, None=unknown
+        "days_since": int | None,  # days since earnings report
+        "price_reaction": float,   # % price change on earnings day
+        "momentum_score": int,     # 0-10 score boost
+      }
+    """
+    try:
+        t = yf.Ticker(ticker)
+        cal = t.calendar
+        hist_earn = t.earnings_history
+
+        result = {
+            "post_earnings": False,
+            "beat": None,
+            "days_since": None,
+            "price_reaction": 0.0,
+            "momentum_score": 5,
+        }
+
+        # Find last earnings date
+        last_date = None
+        if hist_earn is not None and len(hist_earn) > 0:
+            try:
+                last_date = hist_earn.index[-1]
+                if hasattr(last_date, 'date'):
+                    last_date = last_date.date()
+            except Exception:
+                pass
+
+        if last_date is None:
+            return result
+
+        from datetime import date, timezone
+        today = date.today()
+        days_since = (today - last_date).days
+        result["days_since"] = days_since
+
+        if days_since > 10:  # too long ago — not actionable momentum
+            return result
+
+        result["post_earnings"] = True
+
+        # Was it a beat or miss?
+        try:
+            row = hist_earn.iloc[-1]
+            eps_est = float(row.get("epsEstimate") or row.get("EPS Estimate") or 0)
+            eps_act = float(row.get("epsActual") or row.get("Reported EPS") or 0)
+            if eps_est != 0:
+                result["beat"] = eps_act >= eps_est
+                surprise_pct = (eps_act - eps_est) / abs(eps_est) * 100
+            else:
+                surprise_pct = 0
+        except Exception:
+            surprise_pct = 0
+
+        # Price reaction on earnings day
+        try:
+            hist = t.history(period="20d", auto_adjust=True)
+            if not hist.empty:
+                earn_dt = pd.Timestamp(last_date)
+                # Find the next trading day after earnings
+                after = hist[hist.index.date > last_date]
+                before = hist[hist.index.date <= last_date]
+                if len(after) > 0 and len(before) > 0:
+                    price_after  = float(after["Close"].iloc[0])
+                    price_before = float(before["Close"].iloc[-1])
+                    reaction = (price_after - price_before) / price_before * 100
+                    result["price_reaction"] = round(reaction, 2)
+        except Exception:
+            pass
+
+        # Compute momentum score (0-10)
+        score = 5
+        if result["beat"] is True:
+            score += 2
+            if surprise_pct > 10:  score += 2  # massive beat
+            if result["price_reaction"] > 3:  score += 1  # market loved it
+        elif result["beat"] is False:
+            score -= 2
+            if result["price_reaction"] < -3:  score -= 2  # market hated it
+
+        # Recency bonus: closer to earnings = stronger momentum
+        if days_since <= 2:    score = min(10, score + 1)
+        elif days_since >= 7:  score = max(0, score - 1)
+
+        result["momentum_score"] = max(0, min(10, score))
+        logger.info(
+            f"[EARNINGS MOMENTUM] {ticker}: days_since={days_since}, "
+            f"beat={result['beat']}, reaction={result['price_reaction']:.1f}%, "
+            f"score={result['momentum_score']}"
+        )
+        return result
+
+    except Exception as exc:
+        logger.debug(f"[EARNINGS MOMENTUM] {ticker}: {exc}")
+        return {"post_earnings": False, "beat": None, "days_since": None,
+                "price_reaction": 0.0, "momentum_score": 5}
+
+
 def get_status() -> dict:
     """Return cache stats for /status endpoint."""
     with _cache_lock:

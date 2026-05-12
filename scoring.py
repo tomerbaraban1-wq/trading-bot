@@ -526,6 +526,22 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     fund_score = get_fundamental_score(ticker)
     composite = round(min(100.0, max(0.0, composite + (fund_score - 5) * 1.2)), 1)
 
+    # ── Post-Earnings Momentum ────────────────────────────────────────────────
+    # Stock that just BEAT earnings = strong short-term momentum signal
+    # Stock that just MISSED = avoid entry
+    try:
+        from earnings import check_post_earnings_momentum
+        earn_momentum = check_post_earnings_momentum(ticker)
+        if earn_momentum.get("post_earnings"):
+            earn_bonus = earn_momentum["momentum_score"] - 5  # -5 to +5 swing
+            composite = round(min(100, max(0, composite + earn_bonus * 1.5)), 1)
+            if earn_momentum["beat"] is True:
+                logger.info(f"[EARNINGS] {ticker}: post-earnings beat bonus +{earn_bonus * 1.5:.1f}")
+            elif earn_momentum["beat"] is False:
+                logger.info(f"[EARNINGS] {ticker}: post-earnings miss penalty {earn_bonus * 1.5:.1f}")
+    except Exception:
+        pass
+
     # ── Analyst Consensus + Short Squeeze ─────────────────────────────────────
     try:
         _info = yf.Ticker(ticker).info
