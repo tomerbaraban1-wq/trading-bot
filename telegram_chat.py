@@ -464,10 +464,10 @@ def _simple_fallback(ctx: dict) -> str:
             held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
-                f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
+                f"   🪙 {p['qty']} מניות  |  💸 הושקע: {_fmt_price(invested)}\n"
                 f"   📌 כניסה: {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}"
-                + (f"  |  🛡️ Stop: ${stop}" if stop else "")
+                + (f"  |  🛡️ Stop: {_fmt_price(stop)}" if stop else "")
                 + held_line
             )
     else:
@@ -634,10 +634,10 @@ def _handle_command(text: str, context: dict) -> str | None:
             total_pnl += p["pnl"]
             lines.append(
                 f"\n{status} <b>{p['ticker']}</b>\n"
-                f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
+                f"   🪙 {p['qty']} מניות  |  💸 הושקע: {_fmt_price(invested)}\n"
                 f"   📌 {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   💰 {_fmt_pnl(p['pnl'])}"
-                + (f"  |  🛡️ Stop: ${stop}" if stop else "")
+                + (f"  |  🛡️ Stop: {_fmt_price(stop)}" if stop else "")
                 + held_line
             )
         total_icon = "🏆" if total_pnl >= 0 else "📉"
@@ -681,7 +681,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         if cash > 0:
             lines.append(f"💰 מזומן: ${cash:,.2f}")
         if invested > 0:
-            lines.append(f"📈 מניות: ${invested:,.2f}")
+            lines.append(f"📈 מניות: {_fmt_price(invested)}")
         if pnl != 0:
             lines.append(f"💹 {_fmt_pnl(pnl)}")
         if realized != 0:
