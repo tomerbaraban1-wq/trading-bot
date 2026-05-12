@@ -210,6 +210,27 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     else:
         breakdown["volatility"] = "⚪ N/A"
 
+    # ── VWAP distance (0-8 points) ─────────────────────────────────────
+    max_score += 8
+    vwap_dist = _safe(indicators.get("vwap_distance_pct"))
+    if vwap_dist is not None:
+        if -3 <= vwap_dist <= -0.3:  score += 8; breakdown["vwap"] = f"✅ Below VWAP ({vwap_dist:.1f}%) — institutional discount"
+        elif -0.3 < vwap_dist <= 1:  score += 5; breakdown["vwap"] = f"✅ Near VWAP ({vwap_dist:.1f}%)"
+        elif 1 < vwap_dist <= 3:     score += 2; breakdown["vwap"] = f"⚠️ Above VWAP ({vwap_dist:.1f}%)"
+        else:                         score += 0; breakdown["vwap"] = f"❌ Far above VWAP ({vwap_dist:.1f}%)"
+    else:
+        breakdown["vwap"] = "⚪ N/A"
+
+    # ── Candlestick patterns (0-7 points) ──────────────────────────────
+    max_score += 7
+    bull_engulf = indicators.get("pattern_bull_engulf", False)
+    hammer      = indicators.get("pattern_hammer", False)
+    bear_engulf = indicators.get("pattern_bear_engulf", False)
+    if bull_engulf:   score += 7; breakdown["candle"] = "✅ Bullish Engulfing — strong reversal"
+    elif hammer:      score += 5; breakdown["candle"] = "✅ Hammer — bounce signal"
+    elif bear_engulf: score -= 4; breakdown["candle"] = "❌ Bearish Engulfing — avoid entry"
+    else:             breakdown["candle"] = "⚪ No pattern"
+
     # Normalize to 0-100 (clamped both ends — MA bonus can push above max_score,
     # and the MA penalty can push below zero in extreme bearish conditions)
     final_score = round(min(100.0, max(0.0, (score / max_score) * 100)), 1) if max_score > 0 else 0
@@ -287,6 +308,23 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         sent_score * w_sent,
         1
     )
+
+    # ── Relative Strength vs SPY ──────────────────────────────────────────
+    # Stocks outperforming the market get a bonus — buy market leaders, not laggards
+    rs_bonus = 0
+    try:
+        import yfinance as _yf
+        _tickers = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
+        if ticker in _tickers.columns and "SPY" in _tickers.columns:
+            _sr = float(_tickers[ticker].iloc[-1] / _tickers[ticker].iloc[0])
+            _sb = float(_tickers["SPY"].iloc[-1] / _tickers["SPY"].iloc[0])
+            _rs = _sr / _sb if _sb > 0 else 1.0
+            if _rs >= 1.15:   rs_bonus = 8   # strong leader: +15% vs SPY
+            elif _rs >= 1.05: rs_bonus = 4   # mild outperformance
+            elif _rs <= 0.90: rs_bonus = -5  # laggard: penalize
+    except Exception:
+        pass
+    composite = round(min(100, max(0, composite + rs_bonus)), 1)
 
     decision = "BUY ✅" if composite >= MIN_BUY_SCORE else "SKIP ❌"
 

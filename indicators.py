@@ -146,6 +146,35 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["daily_return"] = df["close"].pct_change()
     df["volatility_20"] = df["daily_return"].rolling(20).std() * 100  # % volatility
 
+    # --- VWAP (20-day) — institutional benchmark ---
+    _typical = (df["high"] + df["low"] + df["close"]) / 3
+    _cum_tpv  = (_typical * df["volume"]).rolling(20).sum()
+    _cum_vol  = df["volume"].rolling(20).sum()
+    df["vwap_20"]           = _cum_tpv / (_cum_vol + 1e-10)
+    df["vwap_distance_pct"] = (df["close"] - df["vwap_20"]) / (df["vwap_20"] + 1e-10) * 100
+
+    # --- Candlestick patterns (last bar) ---
+    if len(df) >= 3:
+        o, h, l, c = df["open"].values, df["high"].values, df["low"].values, df["close"].values
+        body        = abs(c[-1] - o[-1])
+        rng         = h[-1] - l[-1] + 1e-10
+        lower_wick  = min(o[-1], c[-1]) - l[-1]
+        upper_wick  = h[-1] - max(o[-1], c[-1])
+        # Hammer: long lower wick, small body near top
+        df["pattern_hammer"] = lower_wick >= 2 * body and upper_wick <= body * 0.5 and rng > 0
+        # Bullish engulfing: current bullish bar engulfs previous bearish bar
+        df["pattern_bull_engulf"] = (
+            len(df) >= 2 and c[-2] < o[-2] and c[-1] > o[-1] and
+            o[-1] <= c[-2] and c[-1] >= o[-2]
+        )
+        # Bearish engulfing: current bearish bar engulfs previous bullish
+        df["pattern_bear_engulf"] = (
+            len(df) >= 2 and c[-2] > o[-2] and c[-1] < o[-1] and
+            o[-1] >= c[-2] and c[-1] <= o[-2]
+        )
+    else:
+        df["pattern_hammer"] = df["pattern_bull_engulf"] = df["pattern_bear_engulf"] = False
+
     return df
 
 
@@ -252,6 +281,13 @@ def get_current_indicators(symbol: str) -> dict | None:
         "obv": safe(last.get("obv")),
         # Daily return
         "daily_return": safe(last.get("daily_return")),
+        # VWAP
+        "vwap_20":           safe(last.get("vwap_20")),
+        "vwap_distance_pct": safe(last.get("vwap_distance_pct")),
+        # Candlestick patterns
+        "pattern_hammer":      bool(last.get("pattern_hammer", False)),
+        "pattern_bull_engulf": bool(last.get("pattern_bull_engulf", False)),
+        "pattern_bear_engulf": bool(last.get("pattern_bear_engulf", False)),
     }
 
     # Cache the result — prevents redundant yfinance downloads within same scan cycle
