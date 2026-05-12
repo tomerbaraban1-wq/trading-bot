@@ -464,7 +464,7 @@ class TVPaperBroker(BrokerBase):
             sell_qty = qty
 
         # Use the provided price to avoid redundant yfinance network call
-        if price and price > 0:
+        if price is not None and price > 0:
             current_price = float(price)
         else:
             current_price = self._get_price(ticker)  # raises if price = 0
