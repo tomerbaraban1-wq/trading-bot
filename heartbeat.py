@@ -556,10 +556,25 @@ async def auto_invest_loop():
                 pass   # fail-open: proceed if market data unavailable
 
             # Trading hours / liquidity / FOMC blackout guard
-            from trading_hours import is_ok_to_trade
+            from trading_hours import is_ok_to_trade, is_high_impact_day
             hours_ok, hours_reason = is_ok_to_trade()
             if not hours_ok:
                 logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
+
+            # High-impact economic event guard (CPI / NFP)
+            _econ_impact, _econ_event = is_high_impact_day()
+            if _econ_impact:
+                logger.warning(f"AUTO-INVEST: High-impact day — {_econ_event} — skipping buys")
+                _create_background_task(
+                    send_message(
+                        f"📅 *High-Impact Economic Event Today*\n"
+                        f"⛔ *{_econ_event}*\n"
+                        f"Buys are blocked for today to avoid pre-release volatility.\n"
+                        f"Existing positions and sell orders are not affected."
+                    )
+                )
                 await asyncio.sleep(5 * 60)
                 continue
 

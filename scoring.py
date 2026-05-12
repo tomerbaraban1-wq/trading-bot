@@ -4,12 +4,65 @@ Combines ALL signals into a single score 0-100.
 Bot only buys when score >= MIN_SCORE (default 60).
 """
 import logging
+import time as _time_module
 import numpy as np
 import pandas as pd
 import yfinance as yf
 from indicators import get_current_indicators, get_market_conditions, get_stock_data, add_all_indicators
 
 logger = logging.getLogger(__name__)
+
+# ── Higher-Timeframe (Weekly) Cache ──────────────────────────────────────────
+# Stores (timestamp, is_bearish: bool) per ticker; TTL = 4 hours
+_htf_cache: dict[str, tuple[float, bool]] = {}
+_HTF_CACHE_TTL = 4 * 3600  # seconds
+
+
+def _get_weekly_bearish(ticker: str) -> bool:
+    """
+    Return True if the weekly timeframe is bearish for *ticker*.
+    Bearish = weekly close < weekly SMA(20) AND weekly MACD < weekly MACD signal.
+    Result is cached for 4 hours per ticker.
+    """
+    now_ts = _time_module.time()
+    cached = _htf_cache.get(ticker)
+    if cached is not None:
+        ts, result = cached
+        if now_ts - ts < _HTF_CACHE_TTL:
+            return result
+
+    try:
+        import yfinance as _yf
+        _hist = _yf.Ticker(ticker).history(period="2y", interval="1wk", timeout=10)
+        if _hist is None or len(_hist) < 26:
+            _htf_cache[ticker] = (now_ts, False)
+            return False
+
+        close = _hist["Close"].dropna()
+
+        # Weekly SMA(20)
+        sma20 = close.rolling(20).mean()
+        price_below_sma20 = float(close.iloc[-1]) < float(sma20.iloc[-1])
+
+        # Weekly MACD (12, 26, 9)
+        ema12 = close.ewm(span=12, adjust=False).mean()
+        ema26 = close.ewm(span=26, adjust=False).mean()
+        macd_line = ema12 - ema26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        macd_below_signal = float(macd_line.iloc[-1]) < float(signal_line.iloc[-1])
+
+        is_bearish = price_below_sma20 and macd_below_signal
+        _htf_cache[ticker] = (now_ts, is_bearish)
+        logger.debug(
+            f"[HTF] {ticker}: weekly bearish={is_bearish} "
+            f"(close<SMA20={price_below_sma20}, MACD<signal={macd_below_signal})"
+        )
+        return is_bearish
+
+    except Exception as e:
+        logger.warning(f"[HTF] Weekly trend check failed for {ticker}: {e}")
+        _htf_cache[ticker] = (now_ts, False)  # fail-open: don't penalise on error
+        return False
 
 import os as _os
 MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "58"))  # balanced: was 65 (too strict), now 58
@@ -283,6 +336,20 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     """
     # Technical score (60% weight)
     tech_score, tech_breakdown = score_technicals(ticker)
+
+    # ── Multi-Timeframe Confirmation: weekly trend filter ─────────────────
+    # If the weekly chart is bearish (price < SMA20 AND MACD < signal),
+    # discount the daily tech score by 30% to avoid fighting the macro trend.
+    if _get_weekly_bearish(ticker):
+        original_tech = tech_score
+        tech_score = round(tech_score * 0.70, 1)
+        tech_breakdown["htf_weekly"] = (
+            f"⚠️ Weekly bearish — tech score discounted 30% "
+            f"({original_tech:.1f} → {tech_score:.1f})"
+        )
+        logger.info(f"[HTF] {ticker}: weekly bearish — tech score {original_tech} → {tech_score}")
+    else:
+        tech_breakdown["htf_weekly"] = "✅ Weekly trend OK (no discount)"
 
     # Market conditions score (25% weight)
     market = get_market_conditions()

@@ -150,6 +150,62 @@ _FOMC_DATES: set[date] = {
 }
 
 
+# ── Major Economic Calendar – High-Impact Events 2026 ─────────────────────────
+# Dates where extreme volatility spikes are expected. Buys are blocked;
+# sells remain allowed (we always let positions exit).
+#
+# CPI:  typically released ~8:30 ET on the scheduled dates
+# NFP:  first Friday of each month, released 8:30 ET
+# FOMC: already handled separately in _FOMC_DATES above
+_ECONOMIC_DATES: dict[date, str] = {
+    # ── CPI releases 2026 ──────────────────────────────────────────────────
+    date(2026,  1, 15): "CPI Release (Jan 2026)",
+    date(2026,  2, 12): "CPI Release (Feb 2026)",
+    date(2026,  3, 12): "CPI Release (Mar 2026)",
+    date(2026,  4, 10): "CPI Release (Apr 2026)",
+    date(2026,  5, 13): "CPI Release (May 2026)",
+    date(2026,  6, 11): "CPI Release (Jun 2026)",
+    date(2026,  7, 10): "CPI Release (Jul 2026)",
+    date(2026,  8, 13): "CPI Release (Aug 2026)",
+    date(2026,  9, 10): "CPI Release (Sep 2026)",
+    date(2026, 10,  8): "CPI Release (Oct 2026)",
+    date(2026, 11, 12): "CPI Release (Nov 2026)",
+    date(2026, 12, 10): "CPI Release (Dec 2026)",
+    # ── NFP (Non-Farm Payroll) releases 2026 — first Friday of each month ──
+    date(2026,  1,  9): "NFP Non-Farm Payroll (Jan 2026)",
+    date(2026,  2,  6): "NFP Non-Farm Payroll (Feb 2026)",
+    date(2026,  3,  6): "NFP Non-Farm Payroll (Mar 2026)",
+    date(2026,  4,  3): "NFP Non-Farm Payroll (Apr 2026)",
+    date(2026,  5,  1): "NFP Non-Farm Payroll (May 2026)",
+    date(2026,  6,  5): "NFP Non-Farm Payroll (Jun 2026)",
+    date(2026,  7,  3): "NFP Non-Farm Payroll (Jul 2026)",
+    date(2026,  8,  7): "NFP Non-Farm Payroll (Aug 2026)",
+    date(2026,  9,  4): "NFP Non-Farm Payroll (Sep 2026)",
+    date(2026, 10,  2): "NFP Non-Farm Payroll (Oct 2026)",
+    date(2026, 11,  6): "NFP Non-Farm Payroll (Nov 2026)",
+    date(2026, 12,  4): "NFP Non-Farm Payroll (Dec 2026)",
+}
+
+
+def is_high_impact_day() -> tuple[bool, str]:
+    """
+    Check whether today is a high-impact economic event day (CPI or NFP).
+
+    Returns
+    -------
+    (is_high_impact: bool, event_name: str)
+    is_high_impact=True  → block new buys; reason = event name
+    is_high_impact=False → normal day; reason = ""
+
+    Note: FOMC days are handled separately by is_ok_to_trade().
+    """
+    today = _now_et().date()
+    event_name = _ECONOMIC_DATES.get(today)
+    if event_name:
+        return True, event_name
+    return False, ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,7 +265,12 @@ def is_ok_to_trade() -> tuple[bool, str]:
                 f"window {blackout_start.strftime('%H:%M')}–{blackout_end.strftime('%H:%M')} ET"
             )
 
-    # 5. High-liquidity window filter
+    # 5. High-impact economic event blackout (CPI, NFP)
+    high_impact, event_name = is_high_impact_day()
+    if high_impact:
+        return False, f"High-impact economic event — {event_name} (buys blocked, sells allowed)"
+
+    # 6. High-liquidity window filter
     if HIGH_LIQUIDITY_ONLY:
         in_open_rush  = _LIQOPEN_START  <= current_time < _LIQOPEN_END
         in_close_rush = _LIQCLOSE_START <= current_time < _LIQCLOSE_END
@@ -230,17 +291,20 @@ def get_status() -> dict:
     now = _now_et()
     today = now.date()
     next_fomc = _next_fomc_date(today)
+    high_impact, event_name = is_high_impact_day()
 
     return {
-        "ok_to_trade":          ok,
-        "reason":               reason,
-        "current_time_et":      now.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "is_holiday":           today in _NYSE_HOLIDAYS,
-        "is_fomc_day":          today in _FOMC_DATES,
-        "next_fomc_date":       next_fomc.isoformat() if next_fomc else None,
-        "high_liquidity_only":  HIGH_LIQUIDITY_ONLY,
-        "fomc_blackout_min":    FOMC_BLACKOUT_MIN,
-        "fomc_post_min":        FOMC_POST_MIN,
+        "ok_to_trade":              ok,
+        "reason":                   reason,
+        "current_time_et":          now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "is_holiday":               today in _NYSE_HOLIDAYS,
+        "is_fomc_day":              today in _FOMC_DATES,
+        "next_fomc_date":           next_fomc.isoformat() if next_fomc else None,
+        "is_high_impact_day":       high_impact,
+        "high_impact_event":        event_name if high_impact else None,
+        "high_liquidity_only":      HIGH_LIQUIDITY_ONLY,
+        "fomc_blackout_min":        FOMC_BLACKOUT_MIN,
+        "fomc_post_min":            FOMC_POST_MIN,
     }
 
 

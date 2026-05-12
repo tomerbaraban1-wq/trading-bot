@@ -24,34 +24,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Rate limiting: track requests by IP/timestamp to prevent spam
-_request_history = {}  # ip -> list of timestamps
-_RATE_LIMIT_WINDOW = 60  # seconds
-_RATE_LIMIT_MAX_REQUESTS = 100  # max requests per window
+_request_history: dict[str, list[float]] = {}   # ip -> list of timestamps
+_RATE_LIMIT_WINDOW       = 60    # seconds
+_RATE_LIMIT_MAX_REQUESTS = 100   # max requests per window
+_RATE_LIMIT_MAX_IPS      = 500   # max IPs tracked (prevents unbounded memory growth)
+
 
 def _check_rate_limit(request: Request) -> bool:
     """Check if request exceeds rate limit. Returns True if allowed."""
-    client_ip = request.client.host if request.client else "unknown"
+    # Use X-Forwarded-For when behind Render's proxy, fall back to direct IP
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    client_ip = forwarded or (request.client.host if request.client else "unknown")
     now = time.time()
 
-    if client_ip not in _request_history:
-        _request_history[client_ip] = []
+    # Bound dict size — evict oldest IPs to prevent DoS memory exhaustion
+    if len(_request_history) >= _RATE_LIMIT_MAX_IPS:
+        # Remove IPs whose newest request is the oldest
+        oldest_ip = min(_request_history, key=lambda ip: max(_request_history[ip], default=0))
+        del _request_history[oldest_ip]
 
-    # Remove old entries outside the window
+    _request_history.setdefault(client_ip, [])
+
+    # Remove timestamps outside the window
     _request_history[client_ip] = [
         ts for ts in _request_history[client_ip]
         if now - ts < _RATE_LIMIT_WINDOW
     ]
 
-    # Check if over limit
     if len(_request_history[client_ip]) >= _RATE_LIMIT_MAX_REQUESTS:
         return False
 
-    # Add current timestamp
     _request_history[client_ip].append(now)
-
-    # Cleanup: remove IPs with empty lists to prevent memory leak
-    empty_ips = [ip for ip, ts in _request_history.items() if not ts]
-    for ip in empty_ips:
+    # Cleanup empty entries
+    for ip in [ip for ip, ts in list(_request_history.items()) if not ts]:
         del _request_history[ip]
 
     return True
@@ -1338,38 +1343,21 @@ async def update_settings(data: dict, request: Request):
 
 
 @router.get("/telegram/test")
-async def test_telegram():
-    """
-    Sends a test message to Telegram and returns diagnostic info.
-    Visit this URL in your browser to check if Telegram is connected.
-    """
+async def test_telegram(secret: str = "", request: Request = None):
+    """Sends a test message. Requires secret for security."""
+    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid secret")
     from telegram_bot import send_message, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-    token_set   = bool(TELEGRAM_BOT_TOKEN)
-    chat_set    = bool(TELEGRAM_CHAT_ID)
-    token_hint  = (TELEGRAM_BOT_TOKEN[:8] + "...") if token_set else "❌ לא מוגדר"
-    chat_hint   = (TELEGRAM_CHAT_ID[:4]   + "...") if chat_set  else "❌ לא מוגדר"
+    token_set = bool(TELEGRAM_BOT_TOKEN)
+    chat_set  = bool(TELEGRAM_CHAT_ID)
 
     if not token_set or not chat_set:
-        return {
-            "status": "error",
-            "message": "חסרים פרטי טלגרם ב-Render",
-            "token_configured": token_set,
-            "chat_configured":  chat_set,
-            "fix": "הוסף את המשתנים ב-Render → Environment",
-        }
+        return {"status": "error", "token_configured": token_set, "chat_configured": chat_set}
 
     ok = await send_message(
-        "🤖 <b>בדיקת חיבור טלגרם</b>\n"
-        "✅ הבוט מחובר ועובד!\n"
-        "📡 מוכן לשלוח התראות."
+        "🤖 <b>בדיקת חיבור טלגרם</b>\n✅ הבוט מחובר ועובד!\n📡 מוכן לשלוח התראות."
     )
-    return {
-        "status":            "ok" if ok else "failed",
-        "sent":              ok,
-        "token_configured":  True,
-        "chat_configured":   True,
-        "message":           "הודעת בדיקה נשלחה בהצלחה ✅" if ok else "❌ שליחה נכשלה — בדוק לוגים",
-    }
+    return {"status": "ok" if ok else "failed", "sent": ok}
 
 
 @router.post("/telegram/webhook")
