@@ -413,11 +413,14 @@ def _simple_fallback(ctx: dict) -> str:
             invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
             stop = p.get("atr_stop") or 0
             held = p.get("held_hours", 0)
+            profit = p["pnl"] >= 0
+            dir_emoji = "📈" if profit else "📉"
+            pnl_tag   = "רווח 💚" if profit else "הפסד ❤️"
             held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
             lines.append(
-                f"{emoji} <b>{p['ticker']}</b> 📊\n"
+                f"{dir_emoji} <b>{p['ticker']}</b> 📊  — {pnl_tag}\n"
                 f"   📦 {p['qty']} מניות  |  💵 הושקע: <b>${invested:,.2f}</b>\n"
-                f"   📈 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   🔢 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
                 f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>"
                 + (f"  |  🛑 Stop: ${stop}" if stop else "")
                 + held_line
@@ -476,19 +479,19 @@ def _handle_command(text: str, context: dict) -> str | None:
         lines = [f"📂 <b>פוזיציות פתוחות ({len(positions)})</b>\n━━━━━━━━━━━━━━━━"]
         total_pnl = 0.0
         for p in positions:
-            emoji    = "🟢" if p["pct"] >= 0 else "🔴"
-            stop     = p.get("atr_stop") or 0
-            held     = p.get("held_hours", 0)
-            invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
+            profit    = p["pnl"] >= 0
+            dir_emoji = "📈" if profit else "📉"
+            pnl_tag   = "רווח 💚" if profit else "הפסד ❤️"
+            stop      = p.get("atr_stop") or 0
+            held      = p.get("held_hours", 0)
+            invested  = p.get("invested") or round(p["entry"] * p["qty"], 2)
             held_line = f"\n   ⏱ {_fmt_held(held)}" if held >= 0.5 else ""
             total_pnl += p["pnl"]
             lines.append(
-                f"\n{emoji} <b>{p['ticker']}</b> 📊\n"
-                f"   📦 {p['qty']} מניות\n"
-                f"   💵 הושקע: ${invested:,.2f}\n"
-                f"   📈 כניסה: ${p['entry']} → עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
-                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>\n"
-                f"   🛑 Stop Loss: ${stop}"
+                f"\n{dir_emoji} <b>{p['ticker']}</b> 📊  — {pnl_tag}\n"
+                f"   📦 {p['qty']} מניות  |  💵 הושקע: ${invested:,.2f}\n"
+                f"   🔢 ${p['entry']} → ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   💰 רווח/הפסד: <b>${p['pnl']:+.2f}</b>  |  🛑 Stop: ${stop}"
                 f"{held_line}"
             )
         total_emoji = "📈" if total_pnl >= 0 else "📉"
