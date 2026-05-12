@@ -145,12 +145,19 @@ async def notify_trade_open(
     qty_str = f"{qty:.4f}" if qty != int(qty) else str(int(qty))
     iceberg_line = f"\n🧊 פיצול הזמנה: {n_slices} חלקים" if is_iceberg else ""
     id_line = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
+    try:
+        from telegram_chat import _fmt_price as _fp
+        _price_str = _fp(price)
+        _notional_str = _fp(notional)
+    except Exception:
+        _price_str = f"${price:.2f}"
+        _notional_str = f"${notional:,.2f}"
     await send_message(
         f"🟢 <b>קנייה — {ticker}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"📦 כמות: {qty_str} מניות\n"
-        f"💵 מחיר: ${price:.2f}\n"
-        f"💰 סה״כ: ${notional:,.2f}\n"
+        f"💵 מחיר: {_price_str}\n"
+        f"💰 סה״כ: {_notional_str}\n"
         f"🎯 ציון: {score:.0f}/100\n"
         f"🧠 סנטימנט: {sentiment_score}/10"
         f"{iceberg_line}"

@@ -33,6 +33,38 @@ logger = logging.getLogger(__name__)
 _client = None
 
 
+_usd_ils_cache: tuple[float, float] = (3.7, 0.0)  # (rate, timestamp)
+
+
+def _get_usd_ils() -> float:
+    """Get USD/ILS exchange rate. Cached 1 hour."""
+    import time
+    global _usd_ils_cache
+    rate, ts = _usd_ils_cache
+    if time.time() - ts < 3600 and rate > 0:
+        return rate
+    try:
+        import yfinance as _yf
+        t = _yf.Ticker("USDILS=X")
+        info = t.fast_info
+        r = float(getattr(info, "last_price", 0) or 0)
+        if r > 0:
+            _usd_ils_cache = (r, time.time())
+            return r
+    except Exception:
+        pass
+    return _usd_ils_cache[0] or 3.7  # fallback
+
+
+def _fmt_price(usd: float) -> str:
+    """Format price: $318.75 (₪1,178)"""
+    try:
+        ils = usd * _get_usd_ils()
+        return f"${usd:,.2f} (₪{ils:,.0f})"
+    except Exception:
+        return f"${usd:,.2f}"
+
+
 def _fmt_pnl(amount: float, show_label: bool = True) -> str:
     """Format P&L correctly in Hebrew RTL context"""
     label = "רווח 🟢" if amount >= 0 else "הפסד 🔴"
@@ -280,9 +312,9 @@ def _llm_reply(user_message: str, context: dict) -> str:
         invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
         pos_lines.append(
             f"{emoji} <b>{p['ticker']}</b>\n"
-            f"   📦 {p['qty']} מניות  |  💵 הושקע ${invested:,.2f}\n"
-            f"   📈 כניסה ${p['entry']} → עכשיו ${p['current']} ({p['pct']:+.1f}%)\n"
-            f"   💰 {_fmt_pnl(p['pnl'])}  |  🛑 Stop: ${stop}\n"
+            f"   📦 {p['qty']} מניות  |  💵 הושקע {_fmt_price(invested)}\n"
+            f"   📈 כניסה {_fmt_price(p['entry'])} → עכשיו {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
+            f"   💰 {_fmt_pnl(p['pnl'])}  |  🛑 Stop: {_fmt_price(stop)}\n"
             f"   ⏱ הוחזק: {held_str}"
         )
     pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
@@ -433,7 +465,7 @@ def _simple_fallback(ctx: dict) -> str:
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
                 f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
-                f"   📌 כניסה: ${p['entry']} ➜ עכשיו: ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   📌 כניסה: {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}"
                 + (f"  |  🛡️ Stop: ${stop}" if stop else "")
                 + held_line
@@ -603,7 +635,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(
                 f"\n{status} <b>{p['ticker']}</b>\n"
                 f"   🪙 {p['qty']} מניות  |  💸 הושקע: ${invested:,.2f}\n"
-                f"   📌 ${p['entry']} ➜ ${p['current']} ({p['pct']:+.1f}%)\n"
+                f"   📌 {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   💰 {_fmt_pnl(p['pnl'])}"
                 + (f"  |  🛡️ Stop: ${stop}" if stop else "")
                 + held_line
