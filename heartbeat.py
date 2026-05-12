@@ -406,12 +406,22 @@ async def stop_loss_monitor():
                     except Exception:
                         _atr_tp_pct = settings.TAKE_PROFIT_PCT
 
-                    # Stage 1: Partial TP — sell 50% at first target, let rest run
+                    # Scale-out exit plan (sell in thirds):
+                    #   Stage 1 — sell 50% at 50% of ATR TP
+                    #   Stage 2 — sell 25% (of original) at 80% of ATR TP
+                    #   Stage 3 — sell remaining 25% at full ATR TP
                     _stage1_pct = max(2.0, _atr_tp_pct * 0.5)   # 50% of full TP
+                    _stage2_pct = max(2.5, _atr_tp_pct * 0.8)   # 80% of full TP
+                    # Stage 1 is considered done when the high_watermark already reached
+                    # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
                                         trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage1_pct / 100 + 0.001))
+                    # Stage 2 is considered done when watermark reached stage-2 level
+                    _stage2_done = bool(trade.get("high_watermark") and
+                                        trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage2_pct / 100 + 0.001))
+
                     if not _stage1_done and plpc >= _stage1_pct:
-                        # Sell half the position
+                        # Stage 1: sell 50% of the full position
                         _half_qty = round(trade["qty"] * 0.5, 6)
                         if _half_qty > 0:
                             try:
@@ -420,19 +430,43 @@ async def stop_loss_monitor():
                                     timeout=30
                                 )
                                 _half_pnl = (cur_price - trade["entry_price"]) * _half_qty
-                                logger.info(f"[PARTIAL TP] {ticker}: sold 50% ({_half_qty} shares) "
+                                logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f}")
                                 await send_message(
-                                    f"💰 <b>Partial Take Profit — {ticker}</b>\n"
+                                    f"💰 <b>Partial Take Profit S1 — {ticker}</b>\n"
                                     f"מכרתי 50% מהפוזיציה\n"
                                     f"📊 {_half_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_half_pnl:+.2f}</b>\n"
                                     f"השאר ממשיך לרוץ עם Trailing Stop ✅"
                                 )
                             except Exception as _pe:
-                                logger.warning(f"[PARTIAL TP] {ticker}: half-sell failed: {_pe}")
+                                logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
+
+                    elif _stage1_done and not _stage2_done and plpc >= _stage2_pct:
+                        # Stage 2: sell another 25% of original position (= 50% of current remaining)
+                        # After Stage 1, remaining qty ≈ 50% of original, so we sell half of that
+                        _quarter_qty = round(trade["qty"] * 0.5, 6)   # 50% of what's left
+                        if _quarter_qty > 0:
+                            try:
+                                _s2_order = await asyncio.wait_for(
+                                    asyncio.to_thread(broker.submit_sell, ticker, _quarter_qty, cur_price),
+                                    timeout=30
+                                )
+                                _s2_pnl = (cur_price - trade["entry_price"]) * _quarter_qty
+                                logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
+                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f}")
+                                await send_message(
+                                    f"💰 <b>Partial Take Profit S2 — {ticker}</b>\n"
+                                    f"מכרתי עוד 25% מהפוזיציה המקורית\n"
+                                    f"📊 {_quarter_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
+                                    f"💵 רווח ממומש: <b>${_s2_pnl:+.2f}</b>\n"
+                                    f"25% האחרון ממשיך לרוץ עד TP מלא ✅"
+                                )
+                            except Exception as _pe:
+                                logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
 
                     elif plpc >= _atr_tp_pct:
+                        # Stage 3 (full TP): sell remaining position
                         logger.info(
                             f"[TAKE PROFIT] {ticker}: {plpc:.2f}% ≥ {_atr_tp_pct:.1f}% "
                             f"(ATR-based full TP)"
@@ -780,8 +814,9 @@ async def auto_invest_loop():
                             logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
 
                         # Risk-based position sizing (replaces naive "available/price")
+                        # Pass composite score so high-conviction signals get larger positions
                         from budget import compute_position_size
-                        qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price)
+                        qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price, score)
                         if qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
                             _create_background_task(_asyncio.to_thread(

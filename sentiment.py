@@ -60,6 +60,42 @@ def _keyword_sentiment(headlines: list[str]) -> tuple[int, str]:
     return int(score), f"bull_kw={bull}, bear_kw={bear}, net={net:+d}"
 
 
+_reddit_cache: dict = {}
+_REDDIT_TTL = 600  # 10 min
+
+
+def _get_reddit_mentions(ticker: str) -> list[str]:
+    """
+    Fetch recent Reddit posts mentioning the ticker from r/stocks and r/investing.
+    Uses Reddit's JSON API — completely free, no authentication needed.
+    Returns list of post titles (empty list on failure).
+    """
+    import requests as _req
+    ticker = ticker.upper()
+    now = time.time()
+    if ticker in _reddit_cache and now - _reddit_cache[ticker][1] < _REDDIT_TTL:
+        return _reddit_cache[ticker][0]
+
+    headlines = []
+    subreddits = ["stocks", "investing", "wallstreetbets"]
+    for sub in subreddits[:2]:   # limit to 2 subreddits to save time
+        try:
+            url = f"https://www.reddit.com/r/{sub}/search.json?q={ticker}&sort=new&limit=5&restrict_sr=1"
+            resp = _req.get(url, timeout=5, headers={"User-Agent": "TradingBot/1.0"})
+            if resp.status_code == 200:
+                posts = resp.json().get("data", {}).get("children", [])
+                for post in posts:
+                    title = post.get("data", {}).get("title", "")
+                    score = post.get("data", {}).get("score", 0)
+                    if title and score > 10:   # only posts with some upvotes
+                        headlines.append(f"[Reddit] {title}")
+        except Exception:
+            pass
+
+    _reddit_cache[ticker] = (headlines, now)
+    return headlines[:3]   # max 3 Reddit posts
+
+
 def _get_client() -> OpenAI:
     global _client
     if _client is None and settings.GROQ_API_KEY:
@@ -82,8 +118,11 @@ def score_sentiment(ticker: str) -> SentimentResult:
     if cached is not None and now - cached.timestamp < CACHE_TTL:
         return cached
 
-    # Fetch headlines
+    # Fetch headlines from RSS + Reddit (free, no API key)
     headlines = get_headlines(ticker, limit=5)
+    reddit_headlines = _get_reddit_mentions(ticker)
+    if reddit_headlines:
+        headlines = headlines + reddit_headlines
 
     if not headlines:
         # No news = neutral (score 5)

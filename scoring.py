@@ -67,6 +67,98 @@ def _get_weekly_bearish(ticker: str) -> bool:
 import os as _os
 MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "58"))  # balanced: was 65 (too strict), now 58
 
+# ── Fundamental Quality Cache ─────────────────────────────────────────────────
+# Stores (timestamp, score: float) per ticker; TTL = 24 hours
+_fundamental_cache: dict[str, tuple[float, float]] = {}
+_FUNDAMENTAL_CACHE_TTL = 24 * 3600  # seconds
+
+
+def get_fundamental_score(ticker: str) -> float:
+    """
+    Return a fundamental quality score 0-10 for *ticker*.
+
+    Scoring rubric:
+      P/E 10-30     → +3  (reasonable valuation)
+      P/E > 50      → -2  (overvalued)
+      Positive EPS growth YoY → +3
+      Profit margin > 10%     → +2
+      Debt/Equity < 1.0       → +2
+
+    Result is cached for 24 hours per ticker.
+    Returns 5.0 (neutral) if data is unavailable (fail-open).
+    """
+    now_ts = _time_module.time()
+    cached = _fundamental_cache.get(ticker)
+    if cached is not None:
+        ts, result = cached
+        if now_ts - ts < _FUNDAMENTAL_CACHE_TTL:
+            logger.debug(f"[FUND] {ticker}: using cached score={result}")
+            return result
+
+    try:
+        info = yf.Ticker(ticker).info
+
+        score = 0.0
+
+        # ── P/E Ratio ──────────────────────────────────────────────────────
+        pe = info.get("trailingPE") or info.get("forwardPE")
+        if pe is not None:
+            try:
+                pe = float(pe)
+                if not np.isnan(pe):
+                    if 10 <= pe <= 30:
+                        score += 3   # reasonable valuation
+                    elif pe > 50:
+                        score -= 2   # overvalued
+            except (TypeError, ValueError):
+                pass
+
+        # ── EPS Growth YoY ────────────────────────────────────────────────
+        # yfinance provides earningsGrowth (YoY) — positive = growing EPS
+        eps_growth = info.get("earningsGrowth")
+        if eps_growth is not None:
+            try:
+                eps_growth = float(eps_growth)
+                if not np.isnan(eps_growth) and eps_growth > 0:
+                    score += 3
+            except (TypeError, ValueError):
+                pass
+
+        # ── Profit Margin ─────────────────────────────────────────────────
+        profit_margin = info.get("profitMargins")
+        if profit_margin is not None:
+            try:
+                profit_margin = float(profit_margin)
+                if not np.isnan(profit_margin) and profit_margin > 0.10:
+                    score += 2
+            except (TypeError, ValueError):
+                pass
+
+        # ── Debt / Equity ─────────────────────────────────────────────────
+        debt_equity = info.get("debtToEquity")
+        if debt_equity is not None:
+            try:
+                # yfinance returns debtToEquity as a percentage (e.g. 45 = 0.45)
+                de_ratio = float(debt_equity) / 100.0
+                if not np.isnan(de_ratio) and de_ratio < 1.0:
+                    score += 2
+            except (TypeError, ValueError):
+                pass
+
+        # Clamp 0-10
+        final = round(max(0.0, min(10.0, score)), 2)
+        _fundamental_cache[ticker] = (now_ts, final)
+        logger.info(
+            f"[FUND] {ticker}: pe={pe} eps_growth={eps_growth} "
+            f"margin={profit_margin} d/e={debt_equity} → score={final}"
+        )
+        return final
+
+    except Exception as e:
+        logger.warning(f"[FUND] Fundamental score failed for {ticker}: {e} — returning neutral 5.0")
+        _fundamental_cache[ticker] = (now_ts, 5.0)
+        return 5.0
+
 
 def _safe(val, default=None):
     try:
@@ -284,6 +376,35 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     elif bear_engulf: score -= 4; breakdown["candle"] = "❌ Bearish Engulfing — avoid entry"
     else:             breakdown["candle"] = "⚪ No pattern"
 
+    # ── 52-Week High / Low (0-8 points) ────────────────────────────────
+    # Near 52w high = breakout momentum.  Near 52w low = potential bounce.
+    max_score += 8
+    near_52w_high   = indicators.get("near_52w_high", False)
+    near_52w_low    = indicators.get("near_52w_low", False)
+    pct_from_52w_hi = _safe(indicators.get("pct_from_52w_high"))   # negative = below high
+    if near_52w_high:
+        # Within 5% of 52w high — breakout momentum signal
+        score += 8
+        breakdown["week52"] = f"✅ Near 52w high ({pct_from_52w_hi:.1f}%) — breakout zone"
+    elif pct_from_52w_hi is not None and pct_from_52w_hi >= -20:
+        # Within 20% below 52w high — still a strong chart
+        score += 5
+        breakdown["week52"] = f"✅ Strong chart ({pct_from_52w_hi:.1f}% from 52w high)"
+    elif near_52w_low:
+        # Within 10% above 52w low — support bounce zone
+        score += 3
+        breakdown["week52"] = "⚠️ Near 52w low — support bounce zone"
+    elif pct_from_52w_hi is not None and pct_from_52w_hi <= -40:
+        # Very far below 52w high — weak chart
+        score += 0
+        breakdown["week52"] = f"❌ Far from 52w high ({pct_from_52w_hi:.1f}%) — weak chart"
+    elif pct_from_52w_hi is not None:
+        # Between -20% and -40% — neutral
+        score += 2
+        breakdown["week52"] = f"⚪ {pct_from_52w_hi:.1f}% from 52w high"
+    else:
+        breakdown["week52"] = "⚪ 52w data N/A"
+
     # Normalize to 0-100 (clamped both ends — MA bonus can push above max_score,
     # and the MA penalty can push below zero in extreme bearish conditions)
     final_score = round(min(100.0, max(0.0, (score / max_score) * 100)), 1) if max_score > 0 else 0
@@ -393,6 +514,12 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         pass
     composite = round(min(100, max(0, composite + rs_bonus)), 1)
 
+    # ── Fundamental Quality Bonus ─────────────────────────────────────────────
+    # Score 0-10 mapped to ±6 point swing on composite:
+    #   fund_score=10 → +6, fund_score=5 → 0, fund_score=0 → -6
+    fund_score = get_fundamental_score(ticker)
+    composite = round(min(100.0, max(0.0, composite + (fund_score - 5) * 1.2)), 1)
+
     decision = "BUY ✅" if composite >= MIN_BUY_SCORE else "SKIP ❌"
 
     logger.info(
@@ -411,6 +538,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
             "technicals": tech_score,
             "market": mkt_score,
             "sentiment": round(sent_score, 1),
+            "fundamental": fund_score,
         },
         "breakdown": {
             "technicals": tech_breakdown,

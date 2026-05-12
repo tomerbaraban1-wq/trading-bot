@@ -245,6 +245,28 @@ def get_current_indicators(symbol: str) -> dict | None:
     stoch_oversold = stoch_k < 20 if stoch_k is not None else None
     stoch_overbought = stoch_k > 80 if stoch_k is not None else None
 
+    # ── 52-Week High / Low ────────────────────────────────────────────────
+    # Fetched from yfinance .info; graceful fallback if unavailable.
+    week52_high = None
+    week52_low = None
+    pct_from_52w_high = None
+    near_52w_high = False   # within 5% of 52w high  — breakout zone
+    near_52w_low = False    # within 10% of 52w low   — support zone
+    try:
+        _info = yf.Ticker(symbol).info
+        _52h = _info.get("fiftyTwoWeekHigh")
+        _52l = _info.get("fiftyTwoWeekLow")
+        if _52h and float(_52h) > 0:
+            week52_high = round(float(_52h), 4)
+            pct_from_52w_high = round((close - week52_high) / week52_high * 100, 2)
+            near_52w_high = pct_from_52w_high >= -5.0          # within 5% below high
+        if _52l and float(_52l) > 0:
+            week52_low = round(float(_52l), 4)
+            _pct_above_low = (close - week52_low) / week52_low * 100
+            near_52w_low = _pct_above_low <= 10.0              # within 10% above low
+    except Exception as _e52:
+        logger.debug(f"[52W] Could not fetch 52-week data for {symbol}: {_e52}")
+
     result = {
         # Core
         "close": round(close, 2),
@@ -284,6 +306,12 @@ def get_current_indicators(symbol: str) -> dict | None:
         # VWAP
         "vwap_20":           safe(last.get("vwap_20")),
         "vwap_distance_pct": safe(last.get("vwap_distance_pct")),
+        # 52-Week High / Low
+        "week52_high":        week52_high,
+        "week52_low":         week52_low,
+        "pct_from_52w_high":  pct_from_52w_high,
+        "near_52w_high":      near_52w_high,
+        "near_52w_low":       near_52w_low,
         # Candlestick patterns
         "pattern_hammer":      bool(last.get("pattern_hammer", False)),
         "pattern_bull_engulf": bool(last.get("pattern_bull_engulf", False)),

@@ -150,10 +150,21 @@ def _get_account_equity() -> tuple[float, float]:
     return equity, cash
 
 
-def compute_position_size(entry_price: float) -> tuple[float, dict]:
+def compute_position_size(
+    entry_price: float,
+    conviction_score: float = 58.0,
+) -> tuple[float, dict]:
     """
     Compute fractional shares to buy using risk-per-trade sizing.
     Supports fractional quantities (e.g. 0.5, 2.37) for high-priced stocks.
+
+    Args:
+        entry_price:      Current share price.
+        conviction_score: Composite score 0-100 from scoring engine.
+                          >= 75 → ×1.30 (high conviction, larger position)
+                          >= 65 → ×1.15 (medium conviction)
+                          <  58 → ×0.85 (near threshold, reduce size)
+                          Capped so notional never exceeds MAX_POSITION_PCT.
 
     Returns:
         (qty, metadata_dict)   — qty is float, 0.0 means "do not trade"
@@ -205,6 +216,32 @@ def compute_position_size(entry_price: float) -> tuple[float, dict]:
         if kelly_qty < qty:
             qty = kelly_qty   # Kelly tightens the size
 
+    # ── Step 8: Conviction-based multiplier ───────────────────────────────────
+    # Scales position up/down based on composite score, capped by MAX_POSITION_PCT.
+    if conviction_score >= 75:
+        conviction_mult = 1.30
+        conviction_label = "high (×1.30)"
+    elif conviction_score >= 65:
+        conviction_mult = 1.15
+        conviction_label = "medium (×1.15)"
+    elif conviction_score < 58:
+        conviction_mult = 0.85
+        conviction_label = "low (×0.85)"
+    else:
+        conviction_mult = 1.0
+        conviction_label = "neutral (×1.00)"
+
+    if conviction_mult != 1.0:
+        proposed_qty = round(qty * conviction_mult, 6)
+        # Hard cap: never exceed MAX_POSITION_PCT notional
+        max_notional_final = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
+        max_qty_by_pct = max_notional_final / entry_price if entry_price > 0 else proposed_qty
+        qty = round(min(proposed_qty, max_qty_by_pct), 6)
+        logger.info(
+            f"[CONVICTION] score={conviction_score:.1f} → {conviction_label} "
+            f"qty adjusted to {qty} (notional cap=${max_notional_final:.2f})"
+        )
+
     binding = (
         "kelly"    if kelly_f > 0 and qty == kelly_qty and kelly_qty < min(risk_qty, notional_qty, cash_qty) else
         "risk"     if qty == risk_qty     else
@@ -224,6 +261,8 @@ def compute_position_size(entry_price: float) -> tuple[float, dict]:
         "cash_qty":         cash_qty,
         "kelly_qty":        kelly_qty,
         "kelly":            kelly_note,
+        "conviction_score": conviction_score,
+        "conviction":       conviction_label,
         "final_qty":        qty,
         "notional":         round(qty * entry_price, 2),
         "binding_constraint": binding,
@@ -233,6 +272,7 @@ def compute_position_size(entry_price: float) -> tuple[float, dict]:
         f"[SIZING] entry=${entry_price:.2f} | risk=${dollar_risk:.2f} "
         f"({RISK_PER_TRADE_PCT}% of ${equity:.0f}) | "
         f"stop=${risk_per_share:.2f}/share | kelly={kelly_note} | "
+        f"conviction={conviction_label} | "
         f"qty={qty} (bound by {binding}) | "
         f"notional=${metadata['notional']:.2f}"
     )
