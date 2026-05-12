@@ -383,7 +383,7 @@ async def stop_loss_monitor():
                         )
                         await _close_position(
                             trade, cur_price, "stop_loss",
-                            f"ATR Trailing Stop (stop=${atr_stop:.2f} | {plpc:.1f}%)"
+                            f"עצירה נגררת (עצירה=${atr_stop:.2f} | {plpc:.1f}%)"
                         )
                         continue  # trade closed — skip other checks
                     elif cur_price <= atr_stop:
@@ -433,11 +433,11 @@ async def stop_loss_monitor():
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f}")
                                 await send_message(
-                                    f"💰 <b>Partial Take Profit S1 — {ticker}</b>\n"
+                                    f"💰 <b>רווח חלקי שלב 1 — {ticker}</b>\n"
                                     f"מכרתי 50% מהפוזיציה\n"
                                     f"📊 {_half_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_half_pnl:+.2f}</b>\n"
-                                    f"השאר ממשיך לרוץ עם Trailing Stop ✅"
+                                    f"השאר ממשיך לרוץ עם עצירה נגררת ✅"
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
@@ -456,11 +456,11 @@ async def stop_loss_monitor():
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f}")
                                 await send_message(
-                                    f"💰 <b>Partial Take Profit S2 — {ticker}</b>\n"
+                                    f"💰 <b>רווח חלקי שלב 2 — {ticker}</b>\n"
                                     f"מכרתי עוד 25% מהפוזיציה המקורית\n"
                                     f"📊 {_quarter_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_s2_pnl:+.2f}</b>\n"
-                                    f"25% האחרון ממשיך לרוץ עד TP מלא ✅"
+                                    f"25% האחרון ממשיך לרוץ עד יעד מלא ✅"
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
@@ -473,7 +473,7 @@ async def stop_loss_monitor():
                         )
                         await _close_position(
                             trade, cur_price, "take_profit",
-                            f"Take Profit ({plpc:.1f}% ≥ {_atr_tp_pct:.1f}%)"
+                            f"רווח יעד ({plpc:.1f}% ≥ {_atr_tp_pct:.1f}%)"
                         )
                         continue
 
@@ -513,7 +513,7 @@ async def stop_loss_monitor():
                                 _smart_sell_low_count.pop(ticker, None)
                                 await _close_position(
                                     trade, cur_price, "smart_sell",
-                                    f"Smart Sell (score={comp}/100)"
+                                    f"מכירה חכמה (ציון={comp}/100)"
                                 )
                             else:
                                 logger.info(
@@ -646,7 +646,7 @@ async def auto_invest_loop():
                                     logger.info(f"AUTO-REBALANCE: selling weak {_tsym} "
                                                 f"(score={_tscore['composite_score']}) to make room")
                                     await _close_position(_t, _cprice, "smart_sell",
-                                                          f"Auto-rebalance (score={_tscore['composite_score']})")
+                                                          f"איזון מחדש (ציון={_tscore['composite_score']})")
                                     _rebalanced = True
                                     break
                     except Exception as _re:
@@ -1134,7 +1134,7 @@ async def eod_sweep_loop():
                             if score_r.get("composite_score", 100) < 55:
                                 logger.info(f"[EOD SWEEP] {ticker}: flat ({plpc:.1f}%) + weak score — selling")
                                 await _close_position(trade, cur, "smart_sell",
-                                                      f"EOD sweep: flat {plpc:.1f}%, score={score_r['composite_score']:.0f}")
+                                                      f"ניקוי סוף יום: שטוח {plpc:.1f}%, ציון={score_r['composite_score']:.0f}")
                                 swept += 1
                     except Exception:
                         continue

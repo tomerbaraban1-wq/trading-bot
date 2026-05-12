@@ -238,9 +238,15 @@ async def notify_error(
         "insufficient_funds": "אין מספיק מזומן",
         "sentiment_fail":     "ניתוח סנטימנט נכשל",
         "loop_error":         "שגיאה כללית ברקע",
-        "stop_loss_fail":     "סטופ לוס נכשל",
+        "stop_loss_fail":     "עצירת הפסד נכשלה",
+        "stop_loss":          "עצירת הפסד",
+        "take_profit":        "רווח יעד הושג",
+        "smart_sell":         "מכירה חכמה",
+        "time_exit":          "יציאה לפי זמן",
+        "emergency_exit":     "יציאת חירום",
+        "stale_restart":      "פוזיציה ישנה — נוקתה",
     }
-    error_label = error_labels_he.get(error_type, error_type.replace('_', ' ').upper())
+    error_label = error_labels_he.get(error_type, error_type.replace('_', ' '))
 
     ticker_line = f"  •  מניה: <b>{ticker}</b>" if ticker else ""
     detail_line = f"\n💬 {detail[:300]}"          if detail  else ""
