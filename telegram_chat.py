@@ -401,8 +401,15 @@ def _simple_fallback(ctx: dict) -> str:
 
     lines = [f"📊 <b>מצב התיק</b>\n━━━━━━━━━━━━━━━━"]
     lines.append(f"💼 <b>שווי תיק כולל: ${equity:,.2f}</b>")
-    lines.append(f"   💰 מזומן פנוי: ${cash:,.2f}  |  📈 מניות: ${total_invested:,.2f}")
-    lines.append(f"   💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
+    row = []
+    if cash > 0:
+        row.append(f"💰 מזומן: ${cash:,.2f}")
+    if total_invested > 0:
+        row.append(f"📈 מניות: ${total_invested:,.2f}")
+    if row:
+        lines.append("   " + "  |  ".join(row))
+    if pnl != 0:
+        lines.append(f"   💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>{pnl_note}")
     if realized != 0:
         lines.append(f"   💳 רווח ממומש: <b>${realized:+.2f}</b>")
 
@@ -531,10 +538,13 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"💼 <b>שווי התיק</b>",
             f"━━━━━━━━━━━━━━━━",
             f"📊 סה״כ: <b>${equity:,.2f}</b>",
-            f"💰 מזומן: ${cash:,.2f}",
-            f"📈 מניות: ${invested:,.2f}",
-            f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>",
         ]
+        if cash > 0:
+            lines.append(f"💰 מזומן: ${cash:,.2f}")
+        if invested > 0:
+            lines.append(f"📈 מניות: ${invested:,.2f}")
+        if pnl != 0:
+            lines.append(f"💹 רווח/הפסד פתוח: <b>${pnl:+.2f}</b>")
         if realized != 0:
             lines.append(f"💳 ממומש: ${realized:+.2f}")
         return "\n".join(lines)
