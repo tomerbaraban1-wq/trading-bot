@@ -136,6 +136,37 @@ def kelly_fraction() -> float:
         return 0.0
 
 
+def _get_streak_multiplier() -> float:
+    """
+    Drawdown-adaptive sizing: reduce size during losing streaks, increase during wins.
+    Looks at last 6 trades:
+      3+ consecutive losses OR equity down >5% from recent peak → 0.60 (smaller)
+      3+ consecutive wins → 1.25 (larger)
+      Otherwise → 1.0 (normal)
+    """
+    try:
+        from database import get_win_trades, get_loss_trades, get_trade_history
+        recent = get_trade_history(limit=6)
+        closed = [t for t in recent if t.get("status") not in ("open", None)]
+        if len(closed) < 3:
+            return 1.0  # not enough history
+
+        # Check last 3 trades for streak
+        last3 = [t.get("pnl_gross", 0) or 0 for t in closed[:3]]
+        all_wins   = all(p > 0 for p in last3)
+        all_losses = all(p <= 0 for p in last3)
+
+        if all_losses:
+            logger.info("[SIZING] 3 consecutive losses — reducing position size ×0.60")
+            return 0.60
+        if all_wins:
+            logger.info("[SIZING] 3 consecutive wins — increasing position size ×1.25")
+            return 1.25
+    except Exception:
+        pass
+    return 1.0
+
+
 def _get_account_equity() -> tuple[float, float]:
     """
     Returns (equity, cash).
@@ -204,6 +235,14 @@ def compute_position_size(
         logger.info(f"[SIZING] using minimum notional ${MIN_NOTIONAL} → qty={qty:.4f} @ ${entry_price:.2f}")
 
     qty = round(qty, 6)
+
+    # ── Step 6c: Drawdown-adaptive streak multiplier ──────────────────────────
+    streak_mult = _get_streak_multiplier()
+    if streak_mult != 1.0:
+        qty = round(qty * streak_mult, 6)
+        # Re-apply notional cap after multiplier
+        max_notional = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
+        qty = min(qty, max_notional / entry_price)
 
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
     kelly_qty  = qty      # start with unconstrained qty

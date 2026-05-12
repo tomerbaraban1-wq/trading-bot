@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI):
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
                            weekly_report_loop, shadow_monitor_loop, portfolio_update_loop,
                            news_refresh_loop, morning_briefing_loop, position_alert_loop,
-                           backtest_learning_loop)
+                           backtest_learning_loop, eod_sweep_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -182,6 +182,7 @@ async def lifespan(app: FastAPI):
     daily_summary_task     = asyncio.create_task(daily_summary_loop())
     weekly_report_task     = asyncio.create_task(weekly_report_loop())
     backtest_task          = asyncio.create_task(backtest_learning_loop())
+    eod_sweep_task         = asyncio.create_task(eod_sweep_loop())
     morning_briefing_task  = asyncio.create_task(morning_briefing_loop())
     news_refresh_task      = asyncio.create_task(news_refresh_loop())
 
@@ -204,7 +205,7 @@ async def lifespan(app: FastAPI):
         heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
         keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
         portfolio_update_task, news_refresh_task, morning_briefing_task, position_alert_task,
-        backtest_task,
+        backtest_task, eod_sweep_task,
     ] if t is not None]
 
     # Cancel all background tasks

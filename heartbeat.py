@@ -1085,6 +1085,74 @@ async def position_alert_loop():
         await asyncio.sleep(2 * 60)
 
 
+async def eod_sweep_loop():
+    """
+    End-of-day sweep (3:45 PM ET): sell 'dead money' positions.
+    A position is dead money if: flat (-1% to +1%) AND composite score < 55.
+    Frees capital for better opportunities tomorrow.
+    """
+    import datetime as _dt
+    _utc = _dt.timezone.utc
+    _last_sweep_date = None
+    await asyncio.sleep(120)
+    while True:
+        try:
+            now_utc = _dt.datetime.now(_utc)
+            try:
+                from trading_hours import _now_et
+                now_et = _now_et()
+                is_sweep_time = (now_et.hour == 15 and now_et.minute >= 45)
+            except Exception:
+                is_sweep_time = False
+
+            today = now_utc.date()
+            if is_sweep_time and _last_sweep_date != today:
+                _last_sweep_date = today
+                logger.info("[EOD SWEEP] Running end-of-day dead-money check...")
+
+                open_trades = await asyncio.to_thread(database.get_open_trades)
+                swept = 0
+                for trade in open_trades:
+                    if trade["action"] != "buy":
+                        continue
+                    ticker = trade["ticker"]
+                    try:
+                        pos = await asyncio.wait_for(
+                            asyncio.to_thread(broker.get_position, ticker), timeout=10
+                        )
+                        if not pos:
+                            continue
+                        plpc = float(pos.get("unrealized_plpc", 0)) * 100
+                        cur  = float(pos.get("current_price", trade["entry_price"]))
+
+                        # Dead money: flat AND score deteriorating
+                        if -1.0 <= plpc <= 1.0:
+                            from scoring import get_composite_score
+                            score_r = await asyncio.wait_for(
+                                asyncio.to_thread(get_composite_score, ticker, 5), timeout=20
+                            )
+                            if score_r.get("composite_score", 100) < 55:
+                                logger.info(f"[EOD SWEEP] {ticker}: flat ({plpc:.1f}%) + weak score — selling")
+                                await _close_position(trade, cur, "smart_sell",
+                                                      f"EOD sweep: flat {plpc:.1f}%, score={score_r['composite_score']:.0f}")
+                                swept += 1
+                    except Exception:
+                        continue
+
+                if swept:
+                    await send_message(
+                        f"🌙 <b>סיכום EOD Sweep</b>\n"
+                        f"מכרתי {swept} פוזיציות 'כסף מת' — שטוחות + ציון נמוך\n"
+                        f"✅ ניפינו הון לחר מחר"
+                    )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"EOD sweep error: {e}")
+        await asyncio.sleep(60)
+
+
 async def news_refresh_loop():
     """
     Pre-fetch news for all watchlist stocks every 60 seconds — always running,

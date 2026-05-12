@@ -562,6 +562,21 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         pass
 
     composite = round(composite, 1)
+    # ── Time-of-Day Bias ─────────────────────────────────────────────────────
+    # Avoid buying during chaotic market open (9:30-10:00 ET) and MOC noise (3:30-4:00)
+    try:
+        from trading_hours import _now_et
+        _now = _now_et()
+        _h, _m = _now.hour, _now.minute
+        _mins = _h * 60 + _m
+        if 9 * 60 + 30 <= _mins < 10 * 60:        # 9:30-10:00 → wide spreads
+            composite = max(0, composite - 12)
+        elif 15 * 60 + 30 <= _mins < 16 * 60:     # 3:30-4:00 → MOC noise
+            composite = max(0, composite - 8)
+    except Exception:
+        pass
+
+    composite = round(composite, 1)
     decision = "BUY ✅" if composite >= MIN_BUY_SCORE else "SKIP ❌"
 
     logger.info(
