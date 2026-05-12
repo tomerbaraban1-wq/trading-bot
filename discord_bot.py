@@ -16,14 +16,113 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-DISCORD_BOT_TOKEN:  str = os.getenv("DISCORD_BOT_TOKEN",  "")
-DISCORD_CHANNEL_ID: str = os.getenv("DISCORD_CHANNEL_ID", "")
+DISCORD_BOT_TOKEN:    str = os.getenv("DISCORD_BOT_TOKEN",      "")
+DISCORD_CHANNEL_ID:   str = os.getenv("DISCORD_CHANNEL_ID",    "")   # channel to SEND alerts
+DISCORD_READ_CHANNEL: str = os.getenv("DISCORD_READ_CHANNEL_ID","1460937711396589634")  # #ישראל SKIL
 
 _DISCORD_API = "https://discord.com/api/v10"
+
+# Cache for community sentiment
+_community_sentiment: dict[str, tuple[float, float]] = {}  # ticker → (score, timestamp)
+_COMMUNITY_TTL = 1800  # 30 min
 
 
 def _enabled() -> bool:
     return bool(DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID)
+
+
+async def fetch_community_sentiment(ticker: str) -> float | None:
+    """
+    Read recent messages from the SKIL #ישראל channel and extract
+    community sentiment for a given ticker.
+    Returns sentiment score 1-10 or None if not mentioned.
+    Cached 30 minutes.
+    """
+    import time, re
+    now = time.time()
+    cached = _community_sentiment.get(ticker.upper())
+    if cached and now - cached[1] < _COMMUNITY_TTL:
+        return cached[0]
+
+    if not DISCORD_BOT_TOKEN or not DISCORD_READ_CHANNEL:
+        return None
+
+    try:
+        url = f"{_DISCORD_API}/channels/{DISCORD_READ_CHANNEL}/messages?limit=50"
+        headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                messages = await resp.json()
+
+        # Extract messages mentioning the ticker
+        t = ticker.upper()
+        _BULLISH = {"קנה","קנייה","עולה","חיובי","buy","bull","long","שורי","מומנטום","פריצה","ירוק"}
+        _BEARISH = {"מכור","מכירה","יורד","שלילי","sell","bear","short","דובי","נפילה","אדום","סכנה"}
+
+        bull = bear = mentions = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            if t not in content.upper():
+                continue
+            mentions += 1
+            words = set(content.lower().split())
+            bull += len(words & _BULLISH)
+            bear += len(words & _BEARISH)
+
+        if mentions == 0:
+            return None
+
+        # Score 1-10
+        net = bull - bear
+        score = max(1, min(10, 5 + net))
+        _community_sentiment[t] = (float(score), now)
+        logger.info(f"[DISCORD SENTIMENT] {t}: {mentions} mentions, bull={bull}, bear={bear} → score={score}")
+        return float(score)
+
+    except Exception as exc:
+        logger.debug(f"[DISCORD SENTIMENT] {ticker}: {exc}")
+        return None
+
+
+async def get_trending_tickers() -> list[str]:
+    """
+    Scan the SKIL #ישראל channel and find most-mentioned tickers.
+    Returns list of tickers ordered by mention count.
+    """
+    import re
+    if not DISCORD_BOT_TOKEN or not DISCORD_READ_CHANNEL:
+        return []
+    try:
+        url = f"{_DISCORD_API}/channels/{DISCORD_READ_CHANNEL}/messages?limit=100"
+        headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return []
+                messages = await resp.json()
+
+        # Find ticker-like patterns: 2-5 uppercase letters
+        counts: dict[str, int] = {}
+        for msg in messages:
+            content = msg.get("content", "")
+            found = re.findall(r"\b[A-Z]{2,5}\b", content)
+            # Filter common English words
+            skip = {"THE","AND","FOR","ARE","YOU","HIS","HER","WAS","THIS","FROM","WITH","HAVE"}
+            for t in found:
+                if t not in skip:
+                    counts[t] = counts.get(t, 0) + 1
+
+        # Return top tickers mentioned 3+ times
+        trending = sorted([t for t, c in counts.items() if c >= 3], key=lambda x: -counts[x])
+        if trending:
+            logger.info(f"[DISCORD TRENDING] {trending[:5]}")
+        return trending[:10]
+
+    except Exception as exc:
+        logger.debug(f"[DISCORD TRENDING]: {exc}")
+        return []
 
 
 async def send_discord(text: str) -> bool:

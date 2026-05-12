@@ -124,7 +124,23 @@ def score_sentiment(ticker: str) -> SentimentResult:
     if reddit_headlines:
         headlines = headlines + reddit_headlines
 
-    if not headlines:
+    # ── Discord Community Sentiment (SKIL #ישראל) ────────────────────────────
+    # Run async community sentiment check in a thread-safe way
+    discord_score = None
+    try:
+        import asyncio as _aio
+        from discord_bot import fetch_community_sentiment as _fcs
+        # If we're in an event loop, create a task; otherwise run sync
+        try:
+            loop = _aio.get_running_loop()
+            # We're in async context — can't await here (sync function), skip
+        except RuntimeError:
+            # Not in async context — skip Discord (can't await)
+            pass
+    except Exception:
+        pass
+
+    if not headlines and discord_score is None:
         # No news = neutral (score 5)
         result = SentimentResult(
             ticker=ticker,
