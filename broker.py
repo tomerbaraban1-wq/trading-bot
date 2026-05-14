@@ -171,8 +171,8 @@ def submit_buy(ticker: str, qty: float, price: float | None = None) -> dict:
     return _get_broker().submit_buy(ticker, qty, price)
 
 
-def submit_sell(ticker: str, qty: float | None = None) -> dict:
-    return _get_broker().submit_sell(ticker, qty)
+def submit_sell(ticker: str, qty: float | None = None, price: float | None = None) -> dict:
+    return _get_broker().submit_sell(ticker, qty, price)
 
 
 def is_market_open() -> bool:
