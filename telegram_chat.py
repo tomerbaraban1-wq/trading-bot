@@ -543,11 +543,15 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/vix — מדד הפחד VIX\n"
             "/fear — Fear & Greed Index\n"
             "/top — מניות עם ציון גבוה\n"
-            "/watchlist — רשימת הסריקה\n\n"
+            "/watchlist — רשימת הסריקה\n"
+            "/watchadd AAPL — הוסף מניה לרשימה\n"
+            "/watchremove AAPL — הסר מניה מהרשימה\n"
+            "/signals — סיגנלים פעילים עכשיו\n\n"
             "━━ 📅 <b>היסטוריה וביצועים</b> ━━\n"
             "/today — מה קרה היום\n"
             "/history — עסקאות אחרונות\n"
             "/summary — סיכום 7 ימים\n"
+            "/monthly — סיכום 30 ימים\n"
             "/biztsuim — ביצועים ו-Win Rate\n"
             "/best — העסקה הטובה ביותר\n"
             "/worst — העסקה הגרועה ביותר\n"
@@ -626,6 +630,150 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append("/top לסריקה | /market למצב שוק | /risk לניתוח</i>")
 
         return "\n".join(lines)
+
+    # /watchadd TICKER — add ticker to watchlist
+    if cmd in ("/watchadd", "watchadd", "הוסף מניה", "הוסף לרשימה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /watchadd AAPL"
+        try:
+            import os as _os, yfinance as _yf
+            # Validate ticker exists
+            info = _yf.Ticker(_ticker).fast_info
+            if not getattr(info, "last_price", 0):
+                return f"❌ לא מצאתי מניה בשם <b>{_ticker}</b>"
+            existing = [t.strip().upper() for t in _os.getenv("USER_WATCHLIST", "").split(",") if t.strip()]
+            if _ticker in existing:
+                return f"✅ <b>{_ticker}</b> כבר ברשימה!"
+            existing.append(_ticker)
+            _os.environ["USER_WATCHLIST"] = ",".join(existing)
+            # Also remove from REMOVE list if was there
+            removes = [t.strip().upper() for t in _os.getenv("USER_WATCHLIST_REMOVE", "").split(",") if t.strip()]
+            if _ticker in removes:
+                removes.remove(_ticker)
+                _os.environ["USER_WATCHLIST_REMOVE"] = ",".join(removes)
+            return (
+                f"➕ <b>{_ticker} נוסף לרשימה!</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 רשימה מותאמת: {len(existing)} מניות\n"
+                f"🔍 הבוט יסרוק את <b>{_ticker}</b> בסבב הבא\n\n"
+                f"💡 להסרה: /watchremove {_ticker}"
+            )
+        except Exception as e:
+            logger.error(f"[/watchadd] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /watchremove TICKER — remove ticker from watchlist
+    if cmd in ("/watchremove", "watchremove", "הסר מניה", "הסר מרשימה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /watchremove AAPL"
+        try:
+            import os as _os
+            # Remove from user additions
+            existing = [x.strip().upper() for x in _os.getenv("USER_WATCHLIST", "").split(",") if x.strip()]
+            if _ticker in existing:
+                existing.remove(_ticker)
+                _os.environ["USER_WATCHLIST"] = ",".join(existing)
+            # Add to remove list
+            removes = [x.strip().upper() for x in _os.getenv("USER_WATCHLIST_REMOVE", "").split(",") if x.strip()]
+            if _ticker not in removes:
+                removes.append(_ticker)
+                _os.environ["USER_WATCHLIST_REMOVE"] = ",".join(removes)
+            return (
+                f"➖ <b>{_ticker} הוסר מהרשימה!</b>\n"
+                f"הבוט לא יסרוק אותה יותר.\n\n"
+                f"💡 להחזרה: /watchadd {_ticker}"
+            )
+        except Exception as e:
+            logger.error(f"[/watchremove] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /monthly — monthly performance summary
+    if cmd in ("/monthly", "monthly", "חודש", "סיכום חודשי"):
+        try:
+            import database as _db
+            from datetime import datetime, timezone, timedelta
+            now_utc    = datetime.now(timezone.utc)
+            month_ago  = (now_utc - timedelta(days=30)).strftime("%Y-%m-%d")
+            trades     = _db.get_trade_history(limit=200) or []
+            monthly    = [tr for tr in trades
+                          if str(tr.get("exit_time",""))[:10] >= month_ago
+                          and tr.get("pnl_gross") is not None]
+            if not monthly:
+                return "📅 <b>סיכום 30 ימים</b>\n━━━━━━━━━━━━━━━━\n😴 לא היו עסקאות החודש"
+            wins        = [tr for tr in monthly if float(tr.get("pnl_gross") or 0) > 0]
+            total_pnl   = sum(float(tr.get("pnl_gross") or 0) for tr in monthly)
+            wr          = round(len(wins) / len(monthly) * 100, 1) if monthly else 0
+            avg_pnl     = total_pnl / len(monthly) if monthly else 0
+            best        = max(monthly, key=lambda x: float(x.get("pnl_gross") or 0))
+            worst       = min(monthly, key=lambda x: float(x.get("pnl_gross") or 0))
+            # Best/worst tickers
+            ticker_pnl: dict[str, float] = {}
+            for tr in monthly:
+                tk = tr.get("ticker","?")
+                ticker_pnl[tk] = ticker_pnl.get(tk, 0) + float(tr.get("pnl_gross") or 0)
+            best_tk  = max(ticker_pnl, key=ticker_pnl.get)
+            worst_tk = min(ticker_pnl, key=ticker_pnl.get)
+            # Monthly equity change
+            equity_now = context.get("equity", 0)
+            wr_bar = "🟢" * round(wr / 10) + "⚪" * (10 - round(wr / 10))
+            return (
+                f"📅 <b>סיכום 30 ימים</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔢  עסקאות:       <b>{len(monthly)}</b>  (✅{len(wins)} ❌{len(monthly)-len(wins)})\n"
+                f"🎯  Win Rate:     <b>{wr}%</b>\n"
+                f"    {wr_bar}\n"
+                f"💰  רווח חודשי:  {_fmt_pnl(total_pnl)}\n"
+                f"⚡  לעסקה:       ${avg_pnl:+.2f}\n\n"
+                f"🏆  הכי טוב:   <b>{best_tk}</b>  ${ticker_pnl[best_tk]:+.2f}\n"
+                f"📉  הכי גרוע: <b>{worst_tk}</b>  ${ticker_pnl[worst_tk]:+.2f}"
+            )
+        except Exception as e:
+            logger.error(f"[/monthly] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /signals — show current buy signals from scanner
+    if cmd in ("/signals", "signals", "סיגנלים", "הזדמנויות"):
+        try:
+            from scanner import get_watchlist
+            from scoring import get_composite_score, MIN_BUY_SCORE
+            from sentiment import score_sentiment
+            import database as _db, random
+            wl   = get_watchlist()
+            held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
+            wl   = [tk for tk in wl if tk not in held]
+            sample = random.sample(wl, min(20, len(wl)))
+            signals = []
+            for tk in sample:
+                try:
+                    sent = score_sentiment(tk)
+                    comp = get_composite_score(tk, sent.score)
+                    sc   = comp["composite_score"]
+                    if sc >= MIN_BUY_SCORE:
+                        signals.append((tk, sc, sent.score, comp))
+                except Exception:
+                    continue
+            signals.sort(key=lambda x: x[1], reverse=True)
+            if not signals:
+                return (
+                    f"📡 <b>סיגנלים פעילים</b>\n━━━━━━━━━━━━━━━━\n"
+                    f"😴 אין סיגנלים מעל {MIN_BUY_SCORE}/100 כרגע\n"
+                    f"🔍 נסרקו {len(sample)} מניות"
+                )
+            lines = [f"📡 <b>סיגנלים פעילים ({len(signals)} מתוך {len(sample)})</b>\n━━━━━━━━━━━━━━━━"]
+            for tk, sc, ss, comp in signals[:5]:
+                tech  = comp["scores"]["technicals"]
+                mkt   = comp["scores"]["market"]
+                lines.append(
+                    f"✅ <b>{tk}</b>  {sc:.0f}/100  <code>{_score_bar(sc, 8)}</code>\n"
+                    f"   🔧{tech:.0f}  🌍{mkt:.0f}  🧠{ss}/10"
+                )
+            lines.append(f"\n🎯 סף קנייה: {MIN_BUY_SCORE}  |  /scan לביצוע מיידי")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/signals] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     if cmd in ("/pause", "עצור", "עצור קניות", "pause"):
         import os as _os
@@ -2486,6 +2634,32 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception as e:
             logger.error(f"[/biztsuim] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
+
+    # ── Auto-detect "קנה TICKER" / "buy TICKER" ────────────────────────────────
+    _buy_trigger = ["קנה", "תקנה", "buy", "רכוש"]
+    _sell_trigger = ["מכור", "תמכור", "sell"]
+    _parts = t.split()
+    if len(_parts) >= 2 and _parts[0] in _buy_trigger:
+        _auto_buy_tk = _safe_ticker(_parts[1])
+        if _auto_buy_tk:
+            # Check if already held
+            import database as _db2
+            if _db2.get_open_trade_by_ticker(_auto_buy_tk):
+                return f"⚠️ כבר מחזיקים <b>{_auto_buy_tk}</b>!\nשלח /stop {_auto_buy_tk} לראות פרטים"
+            return (
+                f"🛒 <b>קנייה ידנית — {_auto_buy_tk}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"הבוט קונה רק דרך הסריקה האוטומטית.\n\n"
+                f"💡 <b>מה לעשות:</b>\n"
+                f"1️⃣  /score {_auto_buy_tk} — בדוק ציון\n"
+                f"2️⃣  /watchadd {_auto_buy_tk} — הוסף לרשימה\n"
+                f"3️⃣  /scan — הפעל סריקה מיידית\n\n"
+                f"אם הציון מעל הסף — הבוט יקנה אוטומטית!"
+            )
+    if len(_parts) >= 2 and _parts[0] in _sell_trigger:
+        _auto_sell_tk = _safe_ticker(_parts[1])
+        if _auto_sell_tk:
+            return _handle_command(f"/sell {_auto_sell_tk}", context)
 
     # ── Auto-detect ticker in free Hebrew text ─────────────────────────────────
     _auto_ticker = _extract_ticker_from_text(text)

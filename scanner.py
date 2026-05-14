@@ -95,12 +95,21 @@ def refresh_large_cap_list() -> None:
 def get_watchlist() -> list[str]:
     """
     Returns the dynamic large-cap watchlist if ready, else static WATCHLIST.
-    Call refresh_large_cap_list() once at startup (in a background thread).
+    Merges USER_WATCHLIST env var (custom tickers added via /watchadd).
+    Respects USER_WATCHLIST_REMOVE env var (tickers removed via /watchremove).
     """
+    import os as _os
     with _dynamic_list_lock:
-        if _dynamic_list:
-            return list(_dynamic_list)
-    return list(WATCHLIST)
+        base = list(_dynamic_list) if _dynamic_list else list(WATCHLIST)
+
+    # User-added tickers (via /watchadd)
+    user_add = [t.strip().upper() for t in _os.getenv("USER_WATCHLIST", "").split(",") if t.strip()]
+    # User-removed tickers (via /watchremove)
+    user_remove = {t.strip().upper() for t in _os.getenv("USER_WATCHLIST_REMOVE", "").split(",") if t.strip()}
+
+    # Merge: user additions first (higher priority), then filter removes
+    merged = user_add + [t for t in base if t not in set(user_add) and t not in user_remove]
+    return merged
 
 
 # Start background refresh immediately on import (non-blocking)
