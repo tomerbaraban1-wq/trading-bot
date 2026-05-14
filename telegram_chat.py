@@ -19,6 +19,7 @@ Security:
 import asyncio
 import json
 import logging
+import re as _re
 from openai import OpenAI
 
 from config import settings
@@ -28,6 +29,14 @@ import budget
 import database
 
 logger = logging.getLogger(__name__)
+
+# Ticker validation — only A-Z0-9 dots and dashes, 1-10 chars
+_TICKER_RE = _re.compile(r'^[A-Z0-9.\-]{1,10}$')
+
+def _safe_ticker(raw: str) -> str | None:
+    """Return sanitized ticker or None if invalid."""
+    t = raw.strip().upper()
+    return t if _TICKER_RE.match(t) else None
 
 # Lazy-init OpenAI/Groq client
 _client = None
@@ -423,7 +432,9 @@ Stop Loss: {context.get('stop_loss_pct', 5)}% | יעד רווח/הפסד: {conte
         logger.info(f"[CHAT] LLM reply generated ({len(reply)} chars)")
         return reply
     except Exception as exc:
-        logger.warning(f"[CHAT] LLM failed: {exc} — using simple fallback")
+        # Suppress raw exception — Groq/OpenAI errors may contain auth headers or API keys
+        logger.warning("[CHAT] LLM call failed (details suppressed for security) — using simple fallback")
+        logger.debug(f"[CHAT] LLM error details: {type(exc).__name__}")
         return _simple_fallback(context)
 
 
@@ -591,7 +602,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 lines.append(f"{m} <b>{s['name']}</b>: {s['return_pct']:+.1f}%")
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     if cmd in ("/market", "שוק", "market", "מצב שוק"):
         try:
@@ -632,7 +644,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 lines.append(f"{i}. {h}")
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /score TICKER
     if cmd in ("/score", "score", "ציון") and len(t.split()) > 1:
@@ -657,7 +670,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"<b>{decision}</b>"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /diagnose
     if cmd in ("/diagnose", "diagnose", "אבחון", "למה לא קונה"):
@@ -679,7 +693,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                         lines.append(f"⛔ {b}")
                 return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /backtest
     if cmd in ("/backtest", "backtest", "למידה היסטורית"):
@@ -701,7 +716,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"🕐 עודכן: {computed}"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /top — top scoring stocks right now
     if cmd in ("/top", "top", "הכי טובים", "מועמדים"):
@@ -729,7 +745,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"\nסף קנייה: {MIN_BUY_SCORE}")
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /history — recent trade history
     if cmd in ("/history", "history", "היסטוריה", "עסקאות"):
@@ -772,7 +789,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 + (f"\n{tip}" if tip else "")
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /earnings TICKER
     if cmd in ("/earnings", "earnings", "דוחות") and len(t.split()) > 1:
@@ -795,7 +813,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 lines.append(f"📊 תנועה ממוצעת: <b>{avg_move:.1f}%</b>")
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /stop TICKER — show stop loss for a position
     if cmd in ("/stop", "stop", "סטופ", "עצירה") and len(t.split()) > 1:
@@ -822,7 +841,10 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /compare AAPL MSFT — compare two stocks
     if cmd in ("/compare", "compare", "השווה") and len(t.split()) >= 3:
         parts = t.split()
-        t1, t2 = parts[1].upper(), parts[2].upper()
+        t1 = _safe_ticker(parts[1]) or ""
+        t2 = _safe_ticker(parts[2]) or ""
+        if not t1 or not t2:
+            return "❌ טיקר לא חוקי — דוגמה: /compare AAPL MSFT"
         try:
             from scoring import get_composite_score
             from sentiment import score_sentiment
@@ -840,7 +862,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"🏆 עדיף: <b>{winner}</b> (פער {diff:.0f} נקודות)"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /correlation — portfolio correlation
     if cmd in ("/correlation", "correlation", "קורלציה", "מתאם"):
@@ -864,7 +887,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 lines.append(f"━━━━━━━━━━━━━━━━\n⚠️ הכי מתואמות: {max_pair[0]}↔{max_pair[1]} ({max_corr:.2f})")
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /next — next market open time
     if cmd in ("/next", "next", "מתי שוק", "מתי נפתח", "פתיחה"):
@@ -889,7 +913,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                     f"⏳ בעוד: <b>{h}ש' {m}ד'</b>"
                 )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /portfolio — full allocation breakdown
     if cmd in ("/portfolio", "portfolio", "הקצאה", "פיזור"):
@@ -930,7 +955,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📅 <b>סיכום 7 ימים</b>\n━━━━━━━━━━━━━━━━\n😴 לא היו עסקאות השבוע"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /best — best performing position ever
     if cmd in ("/best", "best", "הכי טוב", "הצלחה"):
@@ -951,7 +977,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📅 תאריך: {str(best.get('exit_time', ''))[:10]}"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /worst — worst losing trade
     if cmd in ("/worst", "worst", "הכי גרוע", "הפסד גדול"):
@@ -972,7 +999,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📅 תאריך: {str(worst.get('exit_time', ''))[:10]}"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /uptime — bot running time
     if cmd in ("/uptime", "uptime", "כמה זמן רץ", "זמן פעילות"):
@@ -990,7 +1018,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"✅ הבוט רץ ברציפות"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /taxes — tax summary
     if cmd in ("/taxes", "taxes", "מס", "מיסים"):
@@ -1050,7 +1079,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📈 מומנטום 20 יום: <b>{ret:+.1f}%</b>"
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /watchlist — show top watchlist stocks
     if cmd in ("/watchlist", "watchlist", "רשימה", "מניות לסריקה"):
@@ -1068,7 +1098,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 + " | ".join(sample)
             )
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /vix — VIX level
     if cmd in ("/vix", "vix"):
@@ -1084,7 +1115,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             else:          label = "😱 פחד קיצוני"
             return f"🌡️ <b>VIX — מדד הפחד</b>\n━━━━━━━━━━━━━━━━\n📊 רמה: <b>{vix:.1f}</b>\n💭 מצב: {label}"
         except Exception as e:
-            return f"❌ שגיאה: {e}"
+            logger.error(f"[CHAT CMD] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /budget — budget settings
     if cmd in ("/budget", "budget", "תקציב", "הגדרות"):
@@ -1136,7 +1168,9 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /alert TICKER PRICE — price alert (stored in memory)
     if cmd in ("/alert", "alert", "התראה") and len(t.split()) >= 3:
         parts = t.split()
-        _ticker = parts[1].upper()
+        _ticker = _safe_ticker(parts[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /alert AAPL 200"
         try:
             _price = float(parts[2])
             import os as _os
@@ -1179,7 +1213,7 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /sell TICKER — force sell a position
     if cmd == "/sell" or (cmd == "מכור" and len(t.split()) > 1):
         parts = t.split()
-        ticker_to_sell = parts[1].upper() if len(parts) > 1 else ""
+        ticker_to_sell = _safe_ticker(parts[1]) if len(parts) > 1 else ""
         if not ticker_to_sell:
             return "שימוש: /sell AAPL — לדוגמה"
         import database as _db

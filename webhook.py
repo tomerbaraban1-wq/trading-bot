@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends, Query
 from config import settings
 from models import WebhookPayload, TradeAction, HealthResponse, BudgetStatus, BrokerSwitch
 import broker
@@ -23,6 +23,54 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Per-ticker buy locks — prevent double-buy from simultaneous webhook + auto_invest
+_buy_locks: dict[str, asyncio.Lock] = {}
+_buy_locks_mutex = asyncio.Lock()  # protects _buy_locks dict creation
+
+
+async def _get_buy_lock(ticker: str) -> asyncio.Lock:
+    """Return (or create) an asyncio.Lock for the given ticker."""
+    async with _buy_locks_mutex:
+        if ticker not in _buy_locks:
+            _buy_locks[ticker] = asyncio.Lock()
+        return _buy_locks[ticker]
+
+
+# ── Auth helpers ──────────────────────────────────────────────────────────────
+
+def _verify_secret(
+    request: Request,
+    secret: str = Query(default=""),
+) -> None:
+    """
+    Dependency: verify WEBHOOK_SECRET for sensitive GET endpoints.
+    Accepts secret via:
+      1. X-Webhook-Secret header  (preferred — not logged by proxies)
+      2. ?secret= query param     (fallback — warn if used)
+    Raises 403 if missing/wrong.
+    """
+    header_secret = request.headers.get("X-Webhook-Secret", "")
+    token = header_secret or secret
+    if not settings.WEBHOOK_SECRET or token != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if secret and not header_secret:
+        # Secret arrived via query param — still accepted but log a warning
+        logger.warning(
+            "[AUTH] Secret passed as query param from %s — use X-Webhook-Secret header instead",
+            _get_client_ip(request),
+        )
+
+
+import re as _re_ticker
+_TICKER_RE = _re_ticker.compile(r'^[A-Z0-9.\-]{1,10}$')
+
+def _validate_ticker(ticker: str) -> str:
+    """Sanitize and validate a ticker symbol. Raises 400 on invalid input."""
+    t = ticker.strip().upper()
+    if not _TICKER_RE.match(t):
+        raise HTTPException(status_code=400, detail=f"Invalid ticker: {ticker!r}")
+    return t
+
 # Rate limiting: track requests by IP/timestamp to prevent spam
 _request_history: dict[str, list[float]] = {}   # ip -> list of timestamps
 _RATE_LIMIT_WINDOW       = 60    # seconds
@@ -30,11 +78,20 @@ _RATE_LIMIT_MAX_REQUESTS = 100   # max requests per window
 _RATE_LIMIT_MAX_IPS      = 500   # max IPs tracked (prevents unbounded memory growth)
 
 
+def _get_client_ip(request: Request) -> str:
+    """Extract real client IP — use rightmost entry in X-Forwarded-For (Render appends it)."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        # Rightmost IP is added by the trusted proxy (Render) — cannot be spoofed
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return (request.client.host if request.client else "unknown")
+
+
 def _check_rate_limit(request: Request) -> bool:
     """Check if request exceeds rate limit. Returns True if allowed."""
-    # Use X-Forwarded-For when behind Render's proxy, fall back to direct IP
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    client_ip = forwarded or (request.client.host if request.client else "unknown")
+    client_ip = _get_client_ip(request)
     now = time.time()
 
     # Bound dict size — evict oldest IPs to prevent DoS memory exhaustion
@@ -140,6 +197,16 @@ async def _handle_buy(payload: WebhookPayload) -> dict:
     """Handle a buy signal."""
     ticker = payload.ticker.upper()
 
+    # Per-ticker lock — prevents double-buy from concurrent webhook + auto_invest
+    _lock = await _get_buy_lock(ticker)
+    if _lock.locked():
+        return {"status": "skipped", "reason": f"Buy already in progress for {ticker}"}
+    async with _lock:
+        return await _handle_buy_locked(payload, ticker)
+
+
+async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
+    """Inner buy handler — called while holding the per-ticker lock."""
     # Check if already have an open position
     existing = database.get_open_trade_by_ticker(ticker)
     if existing:
@@ -515,7 +582,7 @@ async def health_check():
 
 
 @router.get("/diagnose")
-async def diagnose():
+async def diagnose(_auth: None = Depends(_verify_secret)):
     """
     Full step-by-step diagnostic — shows EXACTLY why the bot is or isn't buying right now.
     Hit this URL in your browser to debug.
@@ -778,7 +845,7 @@ async def scan_preview():
 
 
 @router.get("/status")
-async def trading_status():
+async def trading_status(_auth: None = Depends(_verify_secret)):
     status = await asyncio.to_thread(budget.get_budget_status)
     positions = await asyncio.to_thread(broker.get_positions)
     return {
@@ -807,7 +874,7 @@ async def volume_check(ticker: str):
 
 
 @router.get("/correlation")
-async def correlation_matrix():
+async def correlation_matrix(_auth: None = Depends(_verify_secret)):
     """
     Full N×N Pearson correlation matrix for all currently open positions.
     Also checks each open position against the others and flags pairs above threshold.
@@ -829,7 +896,7 @@ async def correlation_check(ticker: str):
 
 
 @router.get("/performance")
-async def performance_report(weeks: int = 4):
+async def performance_report(weeks: int = 4, _auth: None = Depends(_verify_secret)):
     """
     Full performance KPI report for the last `weeks` calendar weeks.
     Returns Sharpe Ratio, Max Drawdown, win rate per strategy, daily equity curve.
@@ -841,7 +908,7 @@ async def performance_report(weeks: int = 4):
 
 
 @router.get("/performance/csv")
-async def performance_csv(weeks: int = 4):
+async def performance_csv(weeks: int = 4, _auth: None = Depends(_verify_secret)):
     """
     Download a ZIP-style CSV bundle (trades + summary) for the last `weeks`.
     Returns the summary CSV as a downloadable file.
@@ -879,18 +946,18 @@ async def performance_csv(weeks: int = 4):
 
 
 @router.get("/trades")
-async def trade_history(ticker: str | None = None, limit: int = 50):
+async def trade_history(ticker: str | None = None, limit: int = 50, _auth: None = Depends(_verify_secret)):
     limit = min(max(1, limit), 500)   # clamp to [1, 500] — prevent memory exhaustion
     return database.get_trade_history(ticker, limit)
 
 
 @router.get("/tax")
-async def tax_report():
+async def tax_report(_auth: None = Depends(_verify_secret)):
     return database.get_tax_summary()
 
 
 @router.get("/learning")
-async def learning_log(pattern_type: str | None = None, limit: int = 50):
+async def learning_log(pattern_type: str | None = None, limit: int = 50, _auth: None = Depends(_verify_secret)):
     limit = min(max(1, limit), 200)   # clamp to [1, 200]
     return database.get_learning_entries(pattern_type, limit)
 
@@ -1143,7 +1210,7 @@ async def get_news(ticker: str):
 
 
 @router.get("/shadow")
-async def shadow_compare():
+async def shadow_compare(_auth: None = Depends(_verify_secret)):
     """
     Compare shadow (aggressive) strategy vs live (conservative) strategy.
 
@@ -1163,7 +1230,7 @@ async def shadow_compare():
 
 
 @router.get("/shadow/trades")
-async def shadow_trades(limit: int = 50):
+async def shadow_trades(limit: int = 50, _auth: None = Depends(_verify_secret)):
     """
     List recent shadow trades (open and closed).
     ?limit=50  (default 50, max 1000)
@@ -1233,7 +1300,7 @@ async def market_regime_check(ticker: str):
 
 
 @router.get("/kelly")
-async def kelly_status():
+async def kelly_status(_auth: None = Depends(_verify_secret)):
     """
     Return the current Half-Kelly fraction derived from closed trade history.
     Shows the inputs (win_rate, profit_factor) and the recommended fraction.
@@ -1269,7 +1336,7 @@ async def kelly_status():
 
 
 @router.get("/slippage/summary")
-async def slippage_summary():
+async def slippage_summary(_auth: None = Depends(_verify_secret)):
     """
     Aggregate slippage statistics across all recorded trades.
 
@@ -1292,7 +1359,7 @@ async def slippage_summary():
 
 
 @router.get("/slippage")
-async def slippage_history(limit: int = 100):
+async def slippage_history(limit: int = 100, _auth: None = Depends(_verify_secret)):
     """
     Return the most recent slippage observations (newest first).
     Each row shows signal_price vs fill_price and the resulting cost in bps.
@@ -1324,6 +1391,8 @@ async def update_settings(data: dict, request: Request):
         val = float(data["max_budget"])
         if val < 100:
             raise HTTPException(status_code=400, detail="Budget must be at least $100")
+        if val > 1_000_000:
+            raise HTTPException(status_code=400, detail="Budget cannot exceed $1,000,000")
         settings.MAX_BUDGET = val
         import os as _os
         _os.environ["MAX_BUDGET"] = str(val)
@@ -1351,11 +1420,17 @@ async def update_settings(data: dict, request: Request):
         logger.info(f"Broker switched to: {broker_name}")
 
     if "stop_loss_pct" in data:
-        settings.STOP_LOSS_PCT = float(data["stop_loss_pct"])
+        val = float(data["stop_loss_pct"])
+        if not (0.1 <= val <= 50):
+            raise HTTPException(status_code=400, detail="stop_loss_pct must be between 0.1 and 50")
+        settings.STOP_LOSS_PCT = val
         logger.info(f"Stop loss updated to {settings.STOP_LOSS_PCT}%")
 
     if "take_profit_pct" in data:
-        settings.TAKE_PROFIT_PCT = float(data["take_profit_pct"])
+        val = float(data["take_profit_pct"])
+        if not (0.1 <= val <= 100):
+            raise HTTPException(status_code=400, detail="take_profit_pct must be between 0.1 and 100")
+        settings.TAKE_PROFIT_PCT = val
         logger.info(f"Take profit updated to {settings.TAKE_PROFIT_PCT}%")
 
     return {

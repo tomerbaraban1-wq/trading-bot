@@ -292,7 +292,7 @@ import re as _re
 _extra_origins = [
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
     if o.strip() and o.strip() != "*"  # block wildcard injection
-    and _re.match(r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$", o.strip())
+    and _re.match(r"^https://[a-zA-Z0-9.-]+(:[0-9]+)?$", o.strip())  # https only — no http
 ]
 _allowed_origins = _default_origins + _extra_origins
 
@@ -319,16 +319,20 @@ async def dashboard():
 @app.get("/inject.js")
 async def inject_js():
     from fastapi.responses import Response
-    js_path = Path(__file__).parent.parent / "tradebot-extension" / "content.js"
+    _expected_root = (Path(__file__).parent.parent / "tradebot-extension").resolve()
+    js_path = _expected_root / "content.js"
 
-    # Check if file exists before reading
+    # Path traversal guard — ensure resolved path stays inside expected directory
+    try:
+        js_resolved = js_path.resolve()
+        if not str(js_resolved).startswith(str(_expected_root)):
+            logger.warning(f"[SECURITY] inject.js path traversal attempt blocked: {js_path}")
+            return Response(content="// Access denied", status_code=403, media_type="application/javascript")
+    except Exception:
+        return Response(content="// Access denied", status_code=403, media_type="application/javascript")
+
     if not js_path.exists():
-        logger.warning(f"JavaScript inject file not found: {js_path}")
-        return Response(
-            content="// Inject file not found",
-            status_code=404,
-            media_type="application/javascript"
-        )
+        return Response(content="// Inject file not found", status_code=404, media_type="application/javascript")
 
     code = await asyncio.to_thread(js_path.read_text, encoding="utf-8")
     return Response(content=code, media_type="application/javascript")

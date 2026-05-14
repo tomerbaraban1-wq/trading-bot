@@ -97,7 +97,7 @@ def compute_initial_stop(ticker: str, entry_price: float) -> tuple[float, dict]:
     max_dist = entry_price * MAX_STOP_PCT / 100
     stop_dist = max(min_dist, min(max_dist, raw_stop_dist))
 
-    stop_price = round(entry_price - stop_dist, 4)
+    stop_price = max(round(entry_price - stop_dist, 4), 0.0001)  # never zero or negative
     stop_pct   = round(stop_dist / entry_price * 100, 3)
 
     meta = {
