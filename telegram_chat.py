@@ -504,19 +504,20 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/start", "/help", "עזרה"):
         return (
             "👋 <b>שלום! אני בוט המסחר שלך.</b>\n\n"
-            "<b>שאל בעברית חופשית:</b>\n"
-            "• איזה מניות יש לי?\n"
-            "• כמה כסף יש לי?\n"
-            "• מה הרווח שלי?\n"
-            "• מה שווי התיק?\n"
-            "• מתי השוק נפתח?\n\n"
-            "<b>פקודות מהירות:</b>\n"
-            "📊 /status — מצב מהיר\n"
+            "<b>📋 כל הפקודות:</b>\n"
+            "📊 /status — מצב התיק המלא\n"
+            "📂 /manioth — איזה מניות יש לי\n"
+            "💰 /revach — מה הרווח שלי\n"
+            "💼 /shovi — שווי התיק\n"
+            "💵 /mazon — כמה מזומן יש לי\n"
+            "🏆 /biztsuim — ביצועים ואחוז הצלחה\n"
+            "🌍 /market — מצב השוק\n"
             "📈 /sectors — דירוג סקטורים\n"
-            "🌍 /market — מצב שוק\n"
             "⏸️ /pause — עצור קניות\n"
             "▶️ /resume — חדש קניות\n"
-            "❓ /help — הודעה זו"
+            "🔻 /sell AAPL — מכור מניה ספציפית\n"
+            "❓ /help — הודעה זו\n\n"
+            "<i>אפשר גם לשאול בעברית חופשית!</i>"
         )
 
     if cmd == "/status":
@@ -694,7 +695,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         return "\n".join(lines)
 
     # ── שאלות מזומן ────────────────────────────────────────────────────────
-    cash_keywords = ["כמה כסף", "כמה מזומן", "מזומן", "cash"]
+    cash_keywords = ["כמה כסף", "כמה מזומן", "מזומן", "cash", "mazon", "/mazon"]
     if any(k in t for k in cash_keywords):
         cash = context.get("cash", 0)
         equity = context.get("equity", 0)
@@ -708,7 +709,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         return "\n".join(lines)
 
     # ── שאלות ביצועים ──────────────────────────────────────────────────────
-    perf_keywords = ["ביצועים", "סטטיסטיקה", "כמה עסקאות", "win rate", "אחוז הצלחה"]
+    perf_keywords = ["ביצועים", "סטטיסטיקה", "כמה עסקאות", "win rate", "אחוז הצלחה", "biztsuim", "/biztsuim"]
     if any(k in t for k in perf_keywords):
         closed = context.get("closed_trades", [])
         total  = len(closed)

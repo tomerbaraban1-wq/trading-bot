@@ -79,15 +79,17 @@ async def lifespan(app: FastAPI):
 
                 # Set command menu (shows as clickable buttons in Telegram)
                 _commands = [
-                    {"command": "status",    "description": "📊 מצב התיק"},
-                    {"command": "manioth",   "description": "📂 פוזיציות פתוחות"},
-                    {"command": "revach",    "description": "💰 רווח/הפסד"},
-                    {"command": "shovi",     "description": "💼 שווי התיק"},
-                    {"command": "market",    "description": "🌍 מצב השוק"},
+                    {"command": "status",    "description": "📊 מצב התיק המלא"},
+                    {"command": "manioth",   "description": "📂 איזה מניות יש לי"},
+                    {"command": "revach",    "description": "💰 מה הרווח שלי"},
+                    {"command": "shovi",     "description": "💼 מה שווי התיק"},
+                    {"command": "mazon",     "description": "💵 כמה מזומן יש לי"},
+                    {"command": "biztsuim",  "description": "🏆 ביצועים ואחוז הצלחה"},
+                    {"command": "market",    "description": "🌍 מצב השוק עכשיו"},
                     {"command": "sectors",   "description": "📈 דירוג סקטורים"},
-                    {"command": "pause",     "description": "⏸️ עצור קניות"},
+                    {"command": "pause",     "description": "⏸️ עצור קניות חדשות"},
                     {"command": "resume",    "description": "▶️ חדש קניות"},
-                    {"command": "help",      "description": "❓ עזרה"},
+                    {"command": "help",      "description": "❓ כל הפקודות"},
                 ]
                 async with _sess.post(
                     f"https://api.telegram.org/bot{_tg_token}/setMyCommands",
