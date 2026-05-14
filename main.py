@@ -59,9 +59,7 @@ async def lifespan(app: FastAPI):
     _broker_info = settings.ACTIVE_BROKER if settings.ACTIVE_BROKER else settings.ALPACA_BASE_URL
     logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {_broker_info} | DB Mode: {durability_mode}")
 
-    # ── Auto-register Telegram webhook ───────────────────────────────────────
-    # Registers /telegram/webhook with Telegram so the bot can receive messages.
-    # Only runs if TELEGRAM_BOT_TOKEN and RENDER_EXTERNAL_URL are configured.
+    # ── Auto-register Telegram webhook + command menu ─────────────────────────
     try:
         _render_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
         _tg_token   = settings.TELEGRAM_BOT_TOKEN
@@ -69,6 +67,7 @@ async def lifespan(app: FastAPI):
             import aiohttp as _aiohttp
             _webhook_url = f"{_render_url}/telegram/webhook"
             async with _aiohttp.ClientSession() as _sess:
+                # Register webhook
                 async with _sess.post(
                     f"https://api.telegram.org/bot{_tg_token}/setWebhook",
                     json={"url": _webhook_url},
@@ -77,10 +76,29 @@ async def lifespan(app: FastAPI):
                     _data = await _resp.json()
                     if _data.get("ok"):
                         logger.info(f"Telegram webhook registered: {_webhook_url}")
-                    else:
-                        logger.warning(f"Telegram webhook registration failed: {_data}")
+
+                # Set command menu (shows as clickable buttons in Telegram)
+                _commands = [
+                    {"command": "status",    "description": "📊 מצב התיק"},
+                    {"command": "manioth",   "description": "📂 פוזיציות פתוחות"},
+                    {"command": "revach",    "description": "💰 רווח/הפסד"},
+                    {"command": "shovi",     "description": "💼 שווי התיק"},
+                    {"command": "market",    "description": "🌍 מצב השוק"},
+                    {"command": "sectors",   "description": "📈 דירוג סקטורים"},
+                    {"command": "pause",     "description": "⏸️ עצור קניות"},
+                    {"command": "resume",    "description": "▶️ חדש קניות"},
+                    {"command": "help",      "description": "❓ עזרה"},
+                ]
+                async with _sess.post(
+                    f"https://api.telegram.org/bot{_tg_token}/setMyCommands",
+                    json={"commands": _commands},
+                    timeout=_aiohttp.ClientTimeout(total=10),
+                ) as _resp2:
+                    _data2 = await _resp2.json()
+                    if _data2.get("ok"):
+                        logger.info("Telegram command menu registered")
     except Exception as _e:
-        logger.warning(f"Telegram webhook auto-register failed (non-critical): {_e}")
+        logger.warning(f"Telegram setup failed (non-critical): {_e}")
 
     # ── Startup state restore + reconciliation ───────────────────────────────
     # Detects and fixes the case where broker has positions but SQLite is empty.

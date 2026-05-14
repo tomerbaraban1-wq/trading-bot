@@ -618,7 +618,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             return f"❌ שגיאה בבדיקת {ticker_to_sell}: {e}"
 
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
-    stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה"]
+    stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה", "manioth", "/manioth"]
     if any(k in t for k in stocks_keywords):
         positions = context.get("open_positions", [])
         if not positions:
@@ -650,7 +650,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         return "\n".join(lines)
 
     # ── שאלות רווח/הפסד ────────────────────────────────────────────────────
-    profit_keywords = ["רווח", "הפסד", "כמה הרווחתי", "כמה הפסדתי", "p&l", "pnl"]
+    profit_keywords = ["רווח", "הפסד", "כמה הרווחתי", "כמה הפסדתי", "p&l", "pnl", "revach", "/revach"]
     if any(k in t for k in profit_keywords):
         positions = context.get("open_positions", [])
         realized  = context.get("realized_pnl_net", 0)
@@ -671,7 +671,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         return "\n".join(lines)
 
     # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
-    portfolio_keywords = ["שווי", "ערך התיק", "שווה", "תיק", "portfolio"]
+    portfolio_keywords = ["שווי", "ערך התיק", "שווה", "תיק", "portfolio", "shovi", "/shovi"]
     if any(k in t for k in portfolio_keywords) and "מניות" not in t:
         cash      = context.get("cash", 0)
         equity    = context.get("equity", 0)
