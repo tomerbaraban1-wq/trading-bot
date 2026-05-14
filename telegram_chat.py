@@ -733,17 +733,21 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /history — recent trade history
     if cmd in ("/history", "history", "היסטוריה", "עסקאות"):
-        import database as _db
-        trades = _db.get_trade_history(limit=5)
-        closed = [t for t in trades if t.get("status") != "open"]
-        if not closed:
-            return "📋 אין עסקאות סגורות עדיין"
-        lines = [f"📋 <b>עסקאות אחרונות</b>\n━━━━━━━━━━━━━━━━"]
-        for t in closed[:5]:
-            pnl = t.get("pnl_gross") or 0
-            icon = "🟢" if pnl >= 0 else "🔴"
-            lines.append(f"{icon} <b>{t['ticker']}</b>: {_fmt_pnl(pnl, False)} | {t.get('status','')}")
-        return "\n".join(lines)
+        try:
+            import database as _db
+            trades = _db.get_trade_history(limit=5) or []
+            closed = [t for t in trades if t.get("status") != "open"]
+            if not closed:
+                return "📋 אין עסקאות סגורות עדיין"
+            lines = [f"📋 <b>עסקאות אחרונות</b>\n━━━━━━━━━━━━━━━━"]
+            for _t in closed[:5]:
+                pnl = float(_t.get("pnl_gross") or 0)
+                icon = "🟢" if pnl >= 0 else "🔴"
+                lines.append(f"{icon} <b>{_t['ticker']}</b>: {_fmt_pnl(pnl, False)} | {_t.get('status','')}")
+            return "\n".join(lines)
+        except Exception as _e:
+            logger.error(f"[/history] Error: {_e}")
+            return "📋 <b>עסקאות אחרונות</b>\n⚠️ לא הצלחתי לטעון היסטוריה כרגע."
 
     # /fear — Fear & Greed Index
     if cmd in ("/fear", "fear", "פחד", "חמדנות", "fear greed"):
@@ -1098,21 +1102,36 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /today — what happened today
     if cmd in ("/today", "today", "היום", "מה היה היום"):
-        import database as _db
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        all_trades = _db.get_trade_history(limit=50)
-        opened = [t for t in all_trades if t.get("entry_time", "")[:10] == today]
-        closed = [t for t in all_trades if t.get("exit_time", "")[:10] == today]
-        total_pnl = sum(t.get("pnl_gross") or 0 for t in closed)
-        lines = [f"📅 <b>סיכום היום</b>\n━━━━━━━━━━━━━━━━"]
-        lines.append(f"🛒 קניות היום: {len(opened)}")
-        lines.append(f"💸 מכירות היום: {len(closed)}")
-        if closed:
-            lines.append(f"💰 רווח/הפסד: {_fmt_pnl(total_pnl)}")
-        if not opened and not closed:
-            lines.append("😴 לא היו עסקאות היום")
-        return "\n".join(lines)
+        try:
+            import database as _db
+            from datetime import datetime, timezone
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            all_trades = _db.get_trade_history(limit=100) or []
+            opened = [t for t in all_trades if str(t.get("entry_time") or "")[:10] == today_str]
+            closed = [t for t in all_trades if str(t.get("exit_time") or "")[:10] == today_str]
+            total_pnl = sum(float(t.get("pnl_gross") or 0) for t in closed)
+            lines = [f"📅 <b>סיכום היום — {today_str}</b>\n━━━━━━━━━━━━━━━━"]
+            lines.append(f"🛒  קניות היום:  <b>{len(opened)}</b>")
+            lines.append(f"💸  מכירות היום:  <b>{len(closed)}</b>")
+            if closed:
+                lines.append(f"💰  רווח/הפסד:  {_fmt_pnl(total_pnl)}")
+                # Show each closed trade
+                for _ct in closed:
+                    _sym  = _ct.get("ticker", "?")
+                    _pnl  = float(_ct.get("pnl_gross") or 0)
+                    _pct  = float(_ct.get("pnl_pct") or 0)
+                    _icon = "🟢" if _pnl >= 0 else "🔴"
+                    lines.append(f"  {_icon} <b>{_sym}</b>  {_pct:+.1f}%  |  {_fmt_pnl(_pnl, False)}")
+            if opened:
+                lines.append(f"\n📂  פתוחות היום:")
+                for _ot in opened:
+                    lines.append(f"  📌 <b>{_ot.get('ticker','?')}</b>  @ {_fmt_price(_ot.get('entry_price', 0))}")
+            if not opened and not closed:
+                lines.append("\n😴  לא היו עסקאות היום")
+            return "\n".join(lines)
+        except Exception as _e:
+            logger.error(f"[/today] Error: {_e}")
+            return f"📅 <b>סיכום היום</b>\n⚠️ לא הצלחתי לטעון נתוני היום כרגע.\nנסה שוב בעוד רגע."
 
     # /alert TICKER PRICE — price alert (stored in memory)
     if cmd in ("/alert", "alert", "התראה") and len(t.split()) >= 3:
@@ -1334,7 +1353,8 @@ async def handle_telegram_update(update: dict) -> dict:
         context = await asyncio.to_thread(_build_context)
 
         # Check for quick commands first (no LLM needed)
-        reply = _handle_command(text, context)
+        # Run in thread — _handle_command makes blocking DB/broker calls
+        reply = await asyncio.to_thread(_handle_command, text, context)
 
         if reply is None:
             # Full LLM reply
