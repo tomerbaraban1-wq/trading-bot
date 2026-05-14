@@ -204,6 +204,8 @@ def compute_position_size(
         return 0.0, {"rejected": "invalid_price"}
 
     equity, cash = _get_account_equity()
+    if equity <= 0:
+        return 0.0, {"rejected": "zero_equity"}
     stop_loss_pct = settings.STOP_LOSS_PCT  # e.g. 5.0
 
     # ── Step 1: Dollar risk budget for this trade ──────────────────────────────
