@@ -522,6 +522,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/pnl — רווח/הפסד מהיר\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
             "/score AAPL — ניתוח עם Progress Bars\n"
+            "/chart AAPL — גרף ASCII 30 ימים\n"
+            "/fundamental AAPL — P/E, הכנסות, מרווחים\n"
+            "/dividend AAPL — דיבידנד ותשואה\n"
             "/52week AAPL — מיקום ב-52 שבועות\n"
             "/price AAPL — מחיר מיידי\n"
             "/news AAPL — חדשות + סנטימנט AI\n"
@@ -563,6 +566,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/uptime — כמה זמן הבוט רץ\n\n"
             "━━ 🧠 <b>AI</b> ━━\n"
             "/ask מה לעשות עם AAPL? — שאלה חופשית\n"
+            "/review — AI סוקר את כל הפוזיציות\n"
             "/advice — ייעוץ AI על התיק\n"
             "/explain RSI — הסבר מונח פיננסי\n"
             "/streak — רצף ניצחונות/הפסדות\n\n"
@@ -1859,6 +1863,170 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"💳  ממומש:  {_fmt_pnl(realized)}")
         lines.append(f"{icon}  <b>סה״כ:  {_fmt_pnl(total)}</b>")
         return "\n".join(lines)
+
+    # /chart TICKER — ASCII price chart (30 days)
+    if cmd in ("/chart", "chart", "גרף") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /chart AAPL"
+        try:
+            import yfinance as _yf
+            hist = _yf.Ticker(_ticker).history(period="30d", auto_adjust=True)
+            if hist.empty or len(hist) < 5:
+                return f"❌ אין מספיק נתונים עבור {_ticker}"
+            closes = [float(v) for v in hist["Close"].dropna()]
+            hi, lo = max(closes), min(closes)
+            rng = hi - lo or 1
+            # 8-level bar chart (one bar per day, max 30)
+            bars   = ["▁","▂","▃","▄","▅","▆","▇","█"]
+            chart  = "".join(bars[round((v - lo) / rng * 7)] for v in closes[-20:])
+            cur    = closes[-1]
+            prev   = closes[-2] if len(closes) >= 2 else cur
+            chg    = (cur - prev) / prev * 100 if prev else 0
+            chg30  = (cur - closes[0]) / closes[0] * 100 if closes[0] else 0
+            trend  = "📈" if chg30 >= 0 else "📉"
+            return (
+                f"📊 <b>גרף — {_ticker}  (30 ימים)</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"<code>{chart}</code>\n\n"
+                f"📍  עכשיו:  <b>{_fmt_price(cur)}</b>  ({chg:+.2f}% היום)\n"
+                f"🏔️  שיא 30י:  {_fmt_price(hi)}\n"
+                f"🏔️  שפל 30י: {_fmt_price(lo)}\n"
+                f"{trend}  שינוי 30 יום: <b>{chg30:+.1f}%</b>"
+            )
+        except Exception as e:
+            logger.error(f"[/chart] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /dividend TICKER — dividend info
+    if cmd in ("/dividend", "dividend", "דיבידנד") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /dividend AAPL"
+        try:
+            import yfinance as _yf
+            info = _yf.Ticker(_ticker).info
+            div_rate   = float(info.get("dividendRate") or 0)
+            div_yield  = float(info.get("dividendYield") or 0) * 100
+            ex_date    = info.get("exDividendDate")
+            pay_date   = info.get("dividendDate")
+            freq       = info.get("dividendFrequency")
+            freq_map   = {1:"שנתי", 2:"חצי-שנתי", 4:"רבעוני", 12:"חודשי"}
+            freq_str   = freq_map.get(freq, "לא ידוע") if freq else "לא ידוע"
+            if div_rate == 0 and div_yield == 0:
+                return (
+                    f"💰 <b>דיבידנד — {_ticker}</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"❌ מניה זו לא משלמת דיבידנד"
+                )
+            from datetime import datetime, timezone
+            def _fmt_ts(ts):
+                if not ts: return "לא ידוע"
+                try:
+                    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d/%m/%Y")
+                except Exception: return str(ts)
+            return (
+                f"💰 <b>דיבידנד — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💵  דיבידנד שנתי:  <b>${div_rate:.2f}</b>\n"
+                f"📊  תשואת דיבידנד: <b>{div_yield:.2f}%</b>\n"
+                f"📅  תאריך פקיעה:   {_fmt_ts(ex_date)}\n"
+                f"💳  תאריך תשלום:   {_fmt_ts(pay_date)}\n"
+                f"🔄  תדירות:          {freq_str}"
+            )
+        except Exception as e:
+            logger.error(f"[/dividend] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /fundamental TICKER — P/E, revenue, margins
+    if cmd in ("/fundamental", "fundamental", "פונדמנטלס", "יסודות") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /fundamental AAPL"
+        try:
+            import yfinance as _yf
+            info = _yf.Ticker(_ticker).info
+            pe         = info.get("trailingPE") or info.get("forwardPE")
+            eps        = info.get("trailingEps")
+            revenue    = info.get("totalRevenue")
+            margin     = info.get("profitMargins")
+            growth     = info.get("revenueGrowth")
+            mktcap     = info.get("marketCap")
+            target     = info.get("targetMeanPrice")
+            cur        = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+            def _bil(v): return f"${v/1e9:.1f}B" if v and v >= 1e9 else (f"${v/1e6:.0f}M" if v else "N/A")
+            upside     = (target - cur) / cur * 100 if target and cur else None
+            analyst    = info.get("recommendationMean")
+            rec_map    = {1:"🟢 קנה חזק", 1.5:"🟢 קנה", 2:"🟡 קנה", 2.5:"🟡 קנה מתון",
+                          3:"⚪ החזק", 3.5:"🟡 מכור מתון", 4:"🔴 מכור", 4.5:"🔴 מכור חזק"}
+            rec_str = next((v for k,v in rec_map.items() if analyst and abs(analyst-k)<=0.25), "N/A") if analyst else "N/A"
+            lines = [f"📈 <b>פונדמנטלס — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
+            if pe:    lines.append(f"💹  P/E Ratio:      <b>{pe:.1f}</b>")
+            if eps:   lines.append(f"💰  EPS:              <b>${eps:.2f}</b>")
+            if revenue: lines.append(f"📊  הכנסות:          <b>{_bil(revenue)}</b>")
+            if margin:  lines.append(f"📏  מרווח נקי:      <b>{margin*100:.1f}%</b>")
+            if growth:  lines.append(f"📈  צמיחת הכנסות: <b>{growth*100:+.1f}%</b>")
+            if mktcap:  lines.append(f"🏦  שווי שוק:        <b>{_bil(mktcap)}</b>")
+            if target:  lines.append(f"🎯  יעד אנליסטים: <b>{_fmt_price(target)}</b>"
+                                     + (f"  ({upside:+.1f}%)" if upside else ""))
+            lines.append(f"📋  המלצה:          {rec_str}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/fundamental] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /review — AI reviews all positions and gives recommendations
+    if cmd in ("/review", "review", "סקירה", "בדוק פוזיציות"):
+        client = _get_client()
+        if not client:
+            return "⚙️ Groq API לא מוגדר"
+        try:
+            positions = context.get("open_positions", [])
+            if not positions:
+                return "📭 אין פוזיציות לסקירה"
+            vix     = context.get("vix", "N/A")
+            equity  = context.get("equity", 0)
+            ils_r   = _get_usd_ils()
+            pos_lines = "\n".join(
+                f"- {p['ticker']}: קנייה ${p['entry']:.2f}, עכשיו ${p['current']:.2f} "
+                f"({p['pct']:+.1f}%), P&L ${p['pnl']:+.2f}, "
+                f"Stop ${p.get('atr_stop',0):.2f}, הוחזק {_fmt_held(p.get('held_hours',0))}"
+                for p in positions
+            )
+            resp = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content":
+                        "אתה יועץ השקעות מקצועי. ענה בעברית בלבד. "
+                        f"VIX={vix}, שווי תיק=${equity:.0f}"},
+                    {"role": "user", "content":
+                        f"סקור את הפוזיציות הבאות ותן המלצה קצרה לכל אחת (החזק/מכור/הוסף):\n{pos_lines}"},
+                ],
+                max_tokens=400, temperature=0.3,
+            )
+            review = resp.choices[0].message.content.strip()
+            return f"🤖 <b>סקירת פוזיציות AI</b>\n━━━━━━━━━━━━━━━━\n{review}"
+        except Exception as e:
+            logger.error(f"[/review] Error: {type(e).__name__}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /quiet — reduce notifications (only critical alerts)
+    if cmd in ("/quiet", "quiet", "שקט", "פחות התראות"):
+        import os as _os
+        _os.environ["QUIET_MODE"] = "true"
+        return (
+            "🔕 <b>מצב שקט הופעל</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "✅ קניות ומכירות — עדיין נשלחות\n"
+            "🔇 סטופ לוס, חדשות, סריקות — מושתקות\n\n"
+            "לחזרה: /loud"
+        )
+
+    # /loud — restore all notifications
+    if cmd in ("/loud", "loud", "רועש", "כל ההתראות"):
+        import os as _os
+        _os.environ.pop("QUIET_MODE", None)
+        return "🔔 <b>כל ההתראות הופעלו מחדש</b> ✅"
 
     # /vix — VIX level
     if cmd in ("/vix", "vix"):

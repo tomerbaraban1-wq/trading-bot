@@ -41,6 +41,12 @@ def _create_background_task(coro):
     return task
 
 
+def _is_quiet() -> bool:
+    """Return True when QUIET_MODE is enabled — suppress non-critical Telegram alerts."""
+    import os as _os
+    return _os.getenv("QUIET_MODE", "").lower() == "true"
+
+
 async def keep_alive_loop():
     """
     Ping our own /health endpoint every 10 minutes to prevent Render free-tier spin-down.
@@ -376,8 +382,8 @@ async def stop_loss_monitor():
                                 f"${atr_stop:.2f} → ${new_stop:.2f} "
                                 f"(price=${cur_price:.2f} | wm=${new_wm:.2f})"
                             )
-                            # Notify Telegram when stop is raised significantly (≥0.5%)
-                            if atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
+                            # Notify Telegram when stop is raised significantly (≥0.5%) — skipped in quiet mode
+                            if not _is_quiet() and atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
                                 _entry   = trade["entry_price"]
                                 _qty     = trade["qty"]
                                 _pnl_now = (cur_price - _entry) * _qty
