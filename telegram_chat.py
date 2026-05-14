@@ -1288,7 +1288,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             # Quick batch download
             prices = _yf.download(sample, period="2d", progress=False, auto_adjust=True)
             movers = []
-            if not prices.empty and "Close" in prices.columns:
+            _cols = prices.columns.get_level_values(0) if hasattr(prices.columns, "get_level_values") else prices.columns
+            if not prices.empty and "Close" in _cols:
                 close = prices["Close"]
                 for tk in sample:
                     try:
@@ -2466,8 +2467,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             # Kelly info
             kelly_line = ""
             try:
-                from budget import _kelly_fraction
-                kf = _kelly_fraction()
+                from budget import kelly_fraction
+                kf = kelly_fraction()
                 if kf and kf > 0:
                     kelly_line = f"\n📐  Kelly Fraction:  <b>{kf*100:.1f}%</b>"
             except Exception:
@@ -2544,7 +2545,9 @@ def _handle_command(text: str, context: dict) -> str | None:
                 for _ct in closed:
                     _sym  = _ct.get("ticker", "?")
                     _pnl  = float(_ct.get("pnl_gross") or 0)
-                    _pct  = float(_ct.get("pnl_pct") or 0)
+                    _ep   = float(_ct.get("entry_price") or 0)
+                    _xp   = float(_ct.get("exit_price") or 0)
+                    _pct  = (_xp - _ep) / _ep * 100 if _ep else 0
                     _icon = "🟢" if _pnl >= 0 else "🔴"
                     lines.append(f"  {_icon} <b>{_sym}</b>  {_pct:+.1f}%  |  {_fmt_pnl(_pnl, False)}")
             if opened:

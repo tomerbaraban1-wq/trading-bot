@@ -100,7 +100,7 @@ def _check_rate_limit(request: Request) -> bool:
     # Bound dict size — evict oldest IPs to prevent DoS memory exhaustion
     if len(_request_history) >= _RATE_LIMIT_MAX_IPS:
         # Remove IPs whose newest request is the oldest
-        oldest_ip = min(_request_history, key=lambda ip: max(_request_history[ip], default=0))
+        oldest_ip = min(_request_history, key=lambda ip: max(_request_history[ip]) if _request_history[ip] else 0)
         del _request_history[oldest_ip]
 
     _request_history.setdefault(client_ip, [])

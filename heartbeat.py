@@ -605,8 +605,11 @@ async def stop_loss_monitor():
                                     )
                                     high_wm = _s1_wm_final
                                 except Exception as _wm_err:
-                                    logger.critical(f"[PARTIAL TP S1] {ticker}: WATERMARK UPDATE FAILED: {_wm_err} — may double-sell!")
-                                _partial_sell_done.add(_s1_guard_key)  # in-memory guard
+                                    logger.critical(f"[PARTIAL TP S1] {ticker}: WATERMARK UPDATE FAILED: {_wm_err} — NOT marking done to prevent double-sell!")
+                                    # Do NOT add to _partial_sell_done — let next cycle retry the sell
+                                    # but skip adding guard so Stage1 can be retried safely
+                                else:
+                                    _partial_sell_done.add(_s1_guard_key)  # guard only on success
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -653,8 +656,9 @@ async def stop_loss_monitor():
                                     )
                                     high_wm = _s2_wm_final
                                 except Exception as _wm2_err:
-                                    logger.critical(f"[PARTIAL TP S2] {ticker}: WATERMARK UPDATE FAILED: {_wm2_err} — may double-sell!")
-                                _partial_sell_done.add(_s2_guard_key)  # in-memory guard
+                                    logger.critical(f"[PARTIAL TP S2] {ticker}: WATERMARK UPDATE FAILED: {_wm2_err} — NOT marking done")
+                                else:
+                                    _partial_sell_done.add(_s2_guard_key)  # guard only on success
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
