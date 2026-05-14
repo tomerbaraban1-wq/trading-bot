@@ -364,12 +364,12 @@ async def stop_loss_monitor():
                                     _tp = f"${_tp_price:.2f}" if _tp_price else "N/A"
                                     _pp = f"${abs(_pnl_now):.2f}"
                                 _create_background_task(send_message(
-                                    f"🛡️ <b>Stop Loss הועלה</b>  ✨\n"
+                                    f"🛡️ <b>סטופ לוס הועלה</b>  ✨\n"
                                     f"━━━━━━━━━━━━━━━━\n"
                                     f"💹  <b>{ticker}</b>  ·  {_qty} מניות\n\n"
                                     f"📌  מחיר קנייה:      {_ep}\n"
-                                    f"🎯  יציאה ברווח:    {_tp}\n"
-                                    f"🛑  יציאה בהפסד:  <b>{_sp}</b>\n\n"
+                                    f"🎯  טייק פרופיט:   {_tp}\n"
+                                    f"🛑  סטופ לוס:         <b>{_sp}</b>\n\n"
                                     f"📍  מחיר עכשיו:   {_cp}  <b>({_pnl_pct:+.1f}%)</b>\n"
                                     f"{'💚' if _pnl_now >= 0 else '❤️'}  {'רווח' if _pnl_now >= 0 else 'הפסד'} כרגע:  <b>{_pp}</b>"
                                 ))
