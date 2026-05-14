@@ -32,6 +32,9 @@ _smart_sell_low_count: dict[str, int] = {}
 _position_alert_sent: dict[str, float] = {}
 # Price-target alerts already fired: "TICKER:PRICE" strings
 _price_alerts_fired: set = set()
+# In-memory guard: partial-sell stage already executed this cycle
+# Prevents double-sell if watermark DB write fails
+_partial_sell_done: set[str] = set()  # "trade_id:stage" strings
 
 def _create_background_task(coro):
     """Create a background task and track it to prevent garbage collection."""
@@ -566,7 +569,9 @@ async def stop_loss_monitor():
                     _stage2_done = bool(trade.get("high_watermark") and
                                         trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage2_pct / 100 + 0.001))
 
-                    if not _stage1_done and plpc >= _stage1_pct:
+                    _s1_guard_key = f"{trade['id']}:s1"
+                    _s2_guard_key = f"{trade['id']}:s2"
+                    if not _stage1_done and plpc >= _stage1_pct and _s1_guard_key not in _partial_sell_done:
                         # Stage 1: sell 50% of the full position
                         _orig_qty = trade["qty"]
                         _half_qty = round(_orig_qty * 0.5, 6)
@@ -601,6 +606,7 @@ async def stop_loss_monitor():
                                     high_wm = _s1_wm_final
                                 except Exception as _wm_err:
                                     logger.critical(f"[PARTIAL TP S1] {ticker}: WATERMARK UPDATE FAILED: {_wm_err} — may double-sell!")
+                                _partial_sell_done.add(_s1_guard_key)  # in-memory guard
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -614,7 +620,7 @@ async def stop_loss_monitor():
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
                         continue  # skip Smart Sell this cycle after partial exit
 
-                    elif _stage1_done and not _stage2_done and plpc >= _stage2_pct:
+                    elif _stage1_done and not _stage2_done and plpc >= _stage2_pct and _s2_guard_key not in _partial_sell_done:
                         # Stage 2: sell 25% of ORIGINAL (= 50% of what's left after Stage 1)
                         _orig_qty    = trade["qty"]   # already updated after Stage 1
                         _quarter_qty = round(_orig_qty * 0.5, 6)   # 50% of remaining = 25% of original
@@ -648,6 +654,7 @@ async def stop_loss_monitor():
                                     high_wm = _s2_wm_final
                                 except Exception as _wm2_err:
                                     logger.critical(f"[PARTIAL TP S2] {ticker}: WATERMARK UPDATE FAILED: {_wm2_err} — may double-sell!")
+                                _partial_sell_done.add(_s2_guard_key)  # in-memory guard
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -982,7 +989,7 @@ async def auto_invest_loop():
                         # Sanity check — price plausibility + velocity + data completeness
                         from sanity_check import run_all as sanity_run
                         sane, sane_reason = await _asyncio.wait_for(
-                            _asyncio.to_thread(sanity_run, ticker, price, None), timeout=20
+                            _asyncio.to_thread(sanity_run, ticker, price, {}), timeout=20
                         )
                         if not sane:
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")

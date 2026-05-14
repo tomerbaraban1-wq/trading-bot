@@ -287,6 +287,9 @@ def compute_position_size(
         max_notional_final = equity * (settings.MAX_POSITION_PCT / 100)
         max_qty_by_pct = max_notional_final / entry_price if entry_price > 0 else proposed_qty
         qty = round(min(proposed_qty, max_qty_by_pct), 6)
+        # Re-apply Kelly ceiling after conviction boost (Kelly is a hard cap)
+        if kelly_f > 0 and kelly_qty > 0:
+            qty = round(min(qty, kelly_qty), 6)
         logger.info(
             f"[CONVICTION] score={conviction_score:.1f} → {conviction_label} "
             f"qty adjusted to {qty} (notional cap=${max_notional_final:.2f})"

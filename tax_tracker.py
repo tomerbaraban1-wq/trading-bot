@@ -53,7 +53,9 @@ def _handle_profit(trade_id: int, pnl_gross: float) -> dict:
 
 def _handle_loss(trade_id: int, pnl_gross: float) -> dict:
     """Add loss as tax credit for future offset."""
-    credit_amount = abs(pnl_gross) * settings.TAX_RATE
+    # Full loss becomes a credit that offsets future gains at the tax rate.
+    # Store the full loss amount; the tax saving is (credit × TAX_RATE) when applied.
+    credit_amount = abs(pnl_gross)
     save_tax_event(trade_id, "tax_credit", credit_amount)
 
     logger.info(

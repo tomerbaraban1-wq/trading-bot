@@ -481,7 +481,7 @@ def score_market(market: dict) -> tuple[float, dict]:
     """Score overall market conditions. Returns (0-100, breakdown).
     Stricter than before — penalises bad conditions more heavily.
     """
-    score = 50  # neutral default
+    score = 0   # start at 0 — data availability determines the score (was 50, which inflated scores on data outages)
     breakdown = {}
 
     vix = market.get("vix")
