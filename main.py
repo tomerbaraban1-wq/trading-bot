@@ -220,6 +220,14 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Startup reconciliation failed (non-critical): {_e}")
     # ─────────────────────────────────────────────────────────────────────────
 
+    # Store the running event loop so worker threads can use it (e.g. Discord sentiment)
+    try:
+        import asyncio as _asyncio
+        from discord_bot import set_event_loop as _set_loop
+        _set_loop(_asyncio.get_event_loop())
+    except Exception:
+        pass
+
     from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
                            weekly_report_loop, shadow_monitor_loop, portfolio_update_loop,

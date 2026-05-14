@@ -176,10 +176,10 @@ def run_backtest(tickers: list[str], lookback_days: int = LOOKBACK_DAYS) -> Back
     # Compute optimal MIN_BUY_SCORE using score-bucketed win rates
     result.optimal_min_score = _find_optimal_threshold(all_signals)
 
-    # Save result
-    _save_to_db(result)
-
     with _lock:
+        # Double-check cache wasn't populated by a concurrent call while we computed
+        if _cache_ts == 0 or now - _cache_ts >= 3600:
+            _save_to_db(result)   # inside lock — prevents duplicate DB writes
         _result_cache = result
         _cache_ts = now
 

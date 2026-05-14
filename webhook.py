@@ -266,12 +266,13 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             ticker, payload.price, _cscore, _sent, None,
             "score", f"composite_score={_cscore:.0f} < {result.get('min_score', 65)}",
         ))
+        _min_score = result.get("min_score", 65)
         return {
             "status": "blocked_by_score",
             "ticker": ticker,
-            "composite_score": result["composite_score"],
-            "min_score": result["min_score"],
-            "reason": f"Score {result['composite_score']}/100 < min {result['min_score']}",
+            "composite_score": result.get("composite_score", 0),
+            "min_score": _min_score,
+            "reason": f"Score {result.get('composite_score', 0)}/100 < min {_min_score}",
             "breakdown": result.get("breakdown", {}),
         }
 
@@ -1254,8 +1255,8 @@ async def run_backtest_endpoint(secret: str = "", tickers: str = ""):
 
     ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()] if tickers else get_watchlist()[:20]
 
-    result = await asyncio.to_thread(run_backtest, ticker_list)
-    insights = apply_insights()
+    result  = await asyncio.to_thread(run_backtest, ticker_list)
+    insights = await asyncio.to_thread(apply_insights)   # fix: was blocking event loop
     return {**result.to_dict(), "score_update": insights}
 
 

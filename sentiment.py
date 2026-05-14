@@ -125,14 +125,16 @@ def score_sentiment(ticker: str) -> SentimentResult:
         headlines = headlines + reddit_headlines
 
     # ── Discord Community Sentiment (SKIL server) ────────────────────────────
+    # NOTE: score_sentiment() runs in asyncio.to_thread (worker thread).
+    # We use the module-level _MAIN_LOOP reference set at startup by discord_bot.
     discord_score = None
     try:
-        import asyncio as _aio
-        from discord_bot import fetch_community_sentiment as _fcs
-        # We're in asyncio.to_thread — use run_coroutine_threadsafe to call async from sync
-        _loop = _aio.get_event_loop()
-        _future = _aio.run_coroutine_threadsafe(_fcs(ticker), _loop)
-        discord_score = _future.result(timeout=5)
+        from discord_bot import fetch_community_sentiment as _fcs, get_event_loop as _get_loop
+        _loop = _get_loop()   # returns the stored main-thread loop (set at startup)
+        if _loop is not None and _loop.is_running():
+            import asyncio as _aio
+            _future = _aio.run_coroutine_threadsafe(_fcs(ticker), _loop)
+            discord_score = _future.result(timeout=5)
     except Exception:
         pass  # fail-open — Discord sentiment is optional
 

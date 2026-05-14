@@ -511,9 +511,10 @@ async def stop_loss_monitor():
                     if plpc >= 5.0:
                         try:
                             from atr_stop import _fetch_atr as _atr_fn
-                            import os as _os2
+                            import os as _os2  # used for ATR_TIGHT_MULTIPLIER env var
+                            _tight_mult = float(_os2.getenv("ATR_TIGHT_MULTIPLIER", "1.2"))
                             _atr2 = await asyncio.to_thread(_atr_fn, ticker, trade["entry_price"])
-                            _tight_stop = round(cur_price - _atr2 * 1.2, 4)  # 1.2× (vs default 2.0×)
+                            _tight_stop = round(cur_price - _atr2 * _tight_mult, 4)
                             if _tight_stop > atr_stop:
                                 atr_stop = _tight_stop
                                 await asyncio.to_thread(

@@ -28,6 +28,21 @@ _COMMUNITY_TTL = 1800  # 30 min
 _all_messages_cache: tuple[list, float] = ([], 0.0)  # (messages, timestamp)
 _cache_lock: "asyncio.Lock | None" = None   # lazy-init (needs running loop)
 
+# Store the main event loop so worker threads can submit coroutines safely
+# (asyncio.get_event_loop() raises RuntimeError in worker threads on Python 3.12+)
+_main_loop: "asyncio.AbstractEventLoop | None" = None
+
+
+def set_event_loop(loop) -> None:
+    """Call this at startup from the async context to store the running loop."""
+    global _main_loop
+    _main_loop = loop
+
+
+def get_event_loop():
+    """Return the stored main event loop (safe to call from any thread)."""
+    return _main_loop
+
 
 def _enabled() -> bool:
     return bool(DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID)

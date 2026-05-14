@@ -664,7 +664,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
             _gap = get_premarket_gap(ticker)
             if _gap is not None:
                 _gap_pct = _gap["gap_pct"]
-                _vol = tech_breakdown  # volume already in tech pass
+                # volume already captured in tech_breakdown pass
                 if _gap["gap_up"] and _gap_pct >= 2:
                     composite = round(min(100, composite + 6), 1)
                     logger.info(f"[GAP] {ticker}: gap up {_gap_pct:.2f}% — momentum entering +6")

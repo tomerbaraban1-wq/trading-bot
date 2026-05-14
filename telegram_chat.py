@@ -462,7 +462,7 @@ def _simple_fallback(ctx: dict) -> str:
             pnl_label   = f"💰 {_fmt_pnl(p['pnl'])}"
             held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
             try:
-                tp_pct = max(3.0, (stop / p["entry"] * 100) * 1.5) if stop and p["entry"] else 5.0
+                tp_pct = max(3.0, ((p["entry"] - stop) / p["entry"] * 100) * 1.5) if stop and p["entry"] else 5.0
                 tp_price = round(p["entry"] * (1 + tp_pct / 100), 2)
             except Exception:
                 tp_price = 0
@@ -2191,7 +2191,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             held_str = _fmt_held(held) if held >= 0.5 else "כמה דקות"
             # Estimate take-profit (~4×ATR above entry, min 3%)
             try:
-                tp_pct = max(3.0, (stop / p["entry"] * 100) * 1.5) if stop and p["entry"] else 5.0
+                tp_pct = max(3.0, ((p["entry"] - stop) / p["entry"] * 100) * 1.5) if stop and p["entry"] else 5.0
                 tp_price = round(p["entry"] * (1 + tp_pct / 100), 2)
             except Exception:
                 tp_price = 0
