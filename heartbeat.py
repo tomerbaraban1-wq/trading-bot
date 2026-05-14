@@ -1463,7 +1463,43 @@ async def news_monitor_loop():
                     plpc      = (cur_price - entry) / entry * 100
                     atr_stop  = trade.get("atr_stop_price") or (entry * 0.97)
 
-                    news_preview = "\n".join(f"📰 {h[:80]}" for h in headlines) if headlines else "אין כותרות"
+                    # Translate headlines + reasoning to Hebrew
+                    async def _translate_news(hl: list[str], reason: str) -> tuple[list[str], str]:
+                        """Translate English headlines and reasoning to Hebrew using Groq."""
+                        try:
+                            if not settings.GROQ_API_KEY:
+                                return hl, reason
+                            from openai import OpenAI as _OAI
+                            _cli = _OAI(api_key=settings.GROQ_API_KEY,
+                                        base_url="https://api.groq.com/openai/v1")
+                            raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(hl))
+                            prompt = (
+                                f"תרגם לעברית קצרה (עד 10 מילים לכל כותרת). "
+                                f"החזר רק את הכותרות המתורגמות ממוספרות, ואחר כך שורה:\n"
+                                f"ניתוח: [תרגום קצר של הניתוח]\n\n"
+                                f"כותרות:\n{raw}\n\nניתוח מקורי: {reason}"
+                            )
+                            resp = await asyncio.to_thread(lambda: _cli.chat.completions.create(
+                                model=settings.LLM_MODEL,
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=300, temperature=0.2,
+                            ))
+                            lines = resp.choices[0].message.content.strip().split("\n")
+                            translated_hl = []
+                            translated_reason = reason
+                            for line in lines:
+                                line = line.strip()
+                                if line.startswith("ניתוח:"):
+                                    translated_reason = line[6:].strip()
+                                elif line and line[0].isdigit():
+                                    translated_hl.append(line.split(". ", 1)[-1].strip())
+                            return translated_hl or hl, translated_reason
+                        except Exception:
+                            return hl, reason
+
+                    headlines_he, reasoning_he = await _translate_news(headlines, reasoning)
+                    news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "אין כותרות"
+                    reasoning = reasoning_he
 
                     # ── 1. CRITICAL (1-2): emergency sell immediately ─────────
                     if score <= 2:
