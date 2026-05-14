@@ -364,14 +364,14 @@ async def stop_loss_monitor():
                                     _tp = f"${_tp_price:.2f}" if _tp_price else "N/A"
                                     _pp = f"${abs(_pnl_now):.2f}"
                                 _create_background_task(send_message(
-                                    f"🛡️ <b>הגנה הועלתה!</b>  ✨\n"
+                                    f"🛡️ <b>ההגנה הועלתה!</b>  ✨\n"
                                     f"━━━━━━━━━━━━━━━━\n"
-                                    f"🏦  <b>{ticker}</b>  ·  {_qty} מניות\n\n"
-                                    f"💵  קנייה:         {_ep}\n"
-                                    f"🎯  יעד רווח:    {_tp}\n"
-                                    f"🛡️  הגנה (Stop): <b>{_sp}</b>\n\n"
-                                    f"📍  עכשיו:  {_cp}  <b>({_pnl_pct:+.1f}%)</b>\n"
-                                    f"{'💚' if _pnl_now >= 0 else '❤️'}  {'רווח' if _pnl_now >= 0 else 'הפסד'}:  <b>{_pp}</b>"
+                                    f"💹  <b>{ticker}</b>  ·  {_qty} מניות\n\n"
+                                    f"📌  קנינו ב:                {_ep}\n"
+                                    f"🎯  יוצאים ברווח ב:   {_tp}\n"
+                                    f"🛑  יוצאים בהפסד ב: <b>{_sp}</b>\n\n"
+                                    f"📍  מחיר עכשיו:   {_cp}  <b>({_pnl_pct:+.1f}%)</b>\n"
+                                    f"{'💚' if _pnl_now >= 0 else '❤️'}  {'רווח' if _pnl_now >= 0 else 'הפסד'} כרגע:  <b>{_pp}</b>"
                                 ))
                         atr_stop = new_stop
                         high_wm  = new_wm
