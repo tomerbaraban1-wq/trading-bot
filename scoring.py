@@ -702,7 +702,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         "min_score": MIN_BUY_SCORE,
         "decision": decision,
         "should_buy": composite >= MIN_BUY_SCORE,
-        "weights": {"technicals": "60%", "market": "25%", "sentiment": "15%"},
+        "weights": {"technicals": f"{round(w_tech*100)}%", "market": f"{round(w_mkt*100)}%", "sentiment": f"{round(w_sent*100)}%"},
         "scores": {
             "technicals": tech_score,
             "market": mkt_score,

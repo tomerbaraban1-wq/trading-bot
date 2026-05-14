@@ -396,7 +396,7 @@ async def stop_loss_monitor():
                                 _stop_dist = (cur_price - new_stop) / cur_price * 100
                                 # Estimate take profit (~3× stop distance)
                                 try:
-                                    _stop_dist_abs = _entry - new_stop
+                                    _stop_dist_abs = abs(new_stop - _entry)  # always positive (handles break-even lock where stop > entry)
                                     _tp_price = round(_entry + _stop_dist_abs * 3, 2)
                                 except Exception:
                                     _tp_price = 0

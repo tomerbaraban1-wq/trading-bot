@@ -1166,7 +1166,13 @@ async def auto_invest(data: dict):
                 price=price,
             )
             filled_qty = float(order.get("filled_qty", qty))   # use actual fill, not planned
-            trade_id = log_trade_open(fake_payload, sentiment, order, filled_qty)
+            actual_price_auto = float(order.get("price") or price)
+            try:
+                from slippage import estimate as _slip_est
+                _slip_auto = await asyncio.to_thread(_slip_est, price, filled_qty, "buy", ticker)
+            except Exception:
+                _slip_auto = None
+            trade_id = log_trade_open(fake_payload, sentiment, order, filled_qty, None, _slip_auto)
 
             # Set ATR trailing stop immediately after fill
             try:

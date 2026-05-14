@@ -266,12 +266,13 @@ def _check_rolling_alert(ticker: str) -> None:
             logger.warning(f"[SLIPPAGE ALERT] rolling avg={avg:.3f}% > {ALERT_PCT}% — notifying")
             try:
                 from telegram_bot import notify_slippage_alert
-                import asyncio
-                # record() runs in asyncio.to_thread — use run_coroutine_threadsafe
-                from discord_bot import get_event_loop as _gel
-                _loop = _gel()
+                import asyncio as _asyncio
+                try:
+                    _loop = _asyncio.get_running_loop()
+                except RuntimeError:
+                    _loop = None
                 if _loop and _loop.is_running():
-                    asyncio.run_coroutine_threadsafe(
+                    _asyncio.run_coroutine_threadsafe(
                         notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT), _loop
                     )
                 else:
