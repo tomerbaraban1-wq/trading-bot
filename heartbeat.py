@@ -343,23 +343,37 @@ async def stop_loss_monitor():
                                 _pnl_now = (cur_price - _entry) * _qty
                                 _pnl_pct = (cur_price - _entry) / _entry * 100
                                 _stop_dist = (cur_price - new_stop) / cur_price * 100
-                                _raised_pct = (new_stop - atr_stop) / atr_stop * 100
-                                _pnl_icon = "🟢 רווח" if _pnl_now >= 0 else "🔴 הפסד"
+                                # Estimate take profit (~3× stop distance)
+                                try:
+                                    _stop_dist_abs = _entry - new_stop
+                                    _tp_price = round(_entry + _stop_dist_abs * 3, 2)
+                                except Exception:
+                                    _tp_price = 0
+                                _pnl_label = "🟢 רווח" if _pnl_now >= 0 else "🔴 הפסד"
+                                try:
+                                    from telegram_chat import _fmt_price as _fp
+                                    _ep = _fp(_entry)
+                                    _cp = _fp(cur_price)
+                                    _sp = _fp(new_stop)
+                                    _tp = _fp(_tp_price) if _tp_price else "N/A"
+                                    _pp = _fp(abs(_pnl_now))
+                                except Exception:
+                                    _ep = f"${_entry:.2f}"
+                                    _cp = f"${cur_price:.2f}"
+                                    _sp = f"${new_stop:.2f}"
+                                    _tp = f"${_tp_price:.2f}" if _tp_price else "N/A"
+                                    _pp = f"${abs(_pnl_now):.2f}"
                                 _create_background_task(send_message(
-                                    f"🛡️ <b>Stop Loss הועלה — {ticker}</b>\n"
+                                    f"🛡️ <b>Stop Loss הועלה</b>\n"
                                     f"━━━━━━━━━━━━━━━━\n"
                                     f"📊 מניה: <b>{ticker}</b>\n"
-                                    f"📦 כמות: {_qty} מניות\n"
+                                    f"📦 כמות שנקנתה: {_qty} מניות\n"
+                                    f"💵 מחיר קנייה: {_ep}\n"
+                                    f"📈 יציאה ברווח: {_tp}\n"
+                                    f"📉 יציאה בהפסד: {_sp}\n"
                                     f"━━━━━━━━━━━━━━━━\n"
-                                    f"💵 מחיר קנייה: ${_entry:.2f}\n"
-                                    f"📈 מחיר עכשיו: ${cur_price:.2f} ({_pnl_pct:+.1f}%)\n"
-                                    f"🏆 שיא: ${new_wm:.2f}\n"
-                                    f"━━━━━━━━━━━━━━━━\n"
-                                    f"🛑 Stop ישן: ${atr_stop:.2f}\n"
-                                    f"🛡️ Stop חדש: <b>${new_stop:.2f}</b> (+{_raised_pct:.1f}%)\n"
-                                    f"📏 מרחק מ-Stop: {_stop_dist:.1f}%\n"
-                                    f"━━━━━━━━━━━━━━━━\n"
-                                    f"💰 {_pnl_icon}: <b>${abs(_pnl_now):.2f}</b>"
+                                    f"📊 מחיר עכשיו: {_cp} ({_pnl_pct:+.1f}%)\n"
+                                    f"💰 {_pnl_label}: <b>{_pp}</b>"
                                 ))
                         atr_stop = new_stop
                         high_wm  = new_wm
