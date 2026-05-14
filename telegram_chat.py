@@ -461,12 +461,15 @@ def _simple_fallback(ctx: dict) -> str:
             status_icon = "🟢📈" if profit else "🔴📉"
             pnl_label   = f"💰 {_fmt_pnl(p['pnl'])}"
             held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
+            stop_line2 = f"\n   🛡️ Stop: {_fmt_price(stop)}" if stop else ""
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
-                f"   🪙 {p['qty']} מניות  |  💸 הושקע: {_fmt_price(invested)}\n"
-                f"   📌 כניסה: {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
+                f"   🪙 כמות: {p['qty']} מניות\n"
+                f"   💸 הושקע: {_fmt_price(invested)}\n"
+                f"   📌 כניסה: {_fmt_price(p['entry'])}\n"
+                f"   📊 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}"
-                + (f"  |  🛡️ Stop: {_fmt_price(stop)}" if stop else "")
+                + stop_line2
                 + held_line
             )
     else:
@@ -631,12 +634,15 @@ def _handle_command(text: str, context: dict) -> str | None:
             invested  = p.get("invested") or round(p["entry"] * p["qty"], 2)
             held_line = f"\n   ⏳ {_fmt_held(held)}" if held >= 0.5 else ""
             total_pnl += p["pnl"]
+            stop_line = f"\n   🛡️ Stop: {_fmt_price(stop)}" if stop else ""
             lines.append(
                 f"\n{status} <b>{p['ticker']}</b>\n"
-                f"   🪙 {p['qty']} מניות  |  💸 הושקע: {_fmt_price(invested)}\n"
-                f"   📌 {_fmt_price(p['entry'])} ➜ {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
+                f"   🪙 כמות: {p['qty']} מניות\n"
+                f"   💸 הושקע: {_fmt_price(invested)}\n"
+                f"   📌 כניסה: {_fmt_price(p['entry'])}\n"
+                f"   📊 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   💰 {_fmt_pnl(p['pnl'])}"
-                + (f"  |  🛡️ Stop: {_fmt_price(stop)}" if stop else "")
+                + stop_line
                 + held_line
             )
         total_icon = "🏆" if total_pnl >= 0 else "📉"

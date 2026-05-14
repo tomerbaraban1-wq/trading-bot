@@ -597,10 +597,10 @@ async def auto_invest_loop():
                 logger.warning(f"AUTO-INVEST: High-impact day — {_econ_event} — skipping buys")
                 _create_background_task(
                     send_message(
-                        f"📅 *High-Impact Economic Event Today*\n"
-                        f"⛔ *{_econ_event}*\n"
-                        f"Buys are blocked for today to avoid pre-release volatility.\n"
-                        f"Existing positions and sell orders are not affected."
+                        f"📅 <b>אירוע כלכלי משמעותי היום</b>\n"
+                        f"⛔ <b>{_econ_event}</b>\n"
+                        f"קניות חסומות היום למניעת תנודתיות לפני הפרסום.\n"
+                        f"פוזיציות קיימות ומכירות אינן מושפעות."
                     )
                 )
                 await asyncio.sleep(5 * 60)
