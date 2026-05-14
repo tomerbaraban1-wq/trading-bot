@@ -178,7 +178,7 @@ class KrakenBroker(BrokerBase):
             "status": "submitted",
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         pair = _to_kraken_pair(ticker)
 
         if qty is None:

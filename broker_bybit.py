@@ -143,7 +143,7 @@ class BybitBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         session = self._get_session()
         symbol = _to_bybit_symbol(ticker)
         if qty is None:

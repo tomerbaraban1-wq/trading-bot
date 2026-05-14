@@ -21,8 +21,9 @@ class BrokerBase(ABC):
         """Submit a market buy order. Returns order confirmation dict."""
 
     @abstractmethod
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
-        """Submit a market sell order for qty shares (all if qty is None)."""
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
+        """Submit a market sell order for qty shares (all if qty is None).
+        price: optional known price to avoid redundant yfinance fetch."""
 
     @abstractmethod
     def is_market_open(self) -> bool:

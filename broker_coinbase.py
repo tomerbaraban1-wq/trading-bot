@@ -156,7 +156,7 @@ class CoinbaseBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         client = self._get_client()
         product_id = _to_coinbase_product(ticker)
 

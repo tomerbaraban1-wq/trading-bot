@@ -129,7 +129,7 @@ class TastytradeBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         session = self._get_session()
         account = self._get_account()
         symbol = ticker.upper()

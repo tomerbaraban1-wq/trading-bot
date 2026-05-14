@@ -157,7 +157,7 @@ class OKXBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         trade = self._get_trade()
         asset = ticker.upper().replace("-USDT", "").replace("USDT", "")
         inst_id = asset + "-USDT"

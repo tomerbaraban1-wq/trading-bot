@@ -124,7 +124,7 @@ class WebullBroker(BrokerBase):
             "status": status,
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         wb = self._get_client()
         if qty is None:
             position = self.get_position(ticker)

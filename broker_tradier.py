@@ -125,7 +125,7 @@ class TradierBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         if qty is None:
             position = self.get_position(ticker)
             if not position:

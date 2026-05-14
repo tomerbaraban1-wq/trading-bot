@@ -157,7 +157,7 @@ class OandaBroker(BrokerBase):
             "type": "market",
         }
 
-    def submit_sell(self, ticker: str, qty: float | None = None) -> dict:
+    def submit_sell(self, ticker: str, qty: float | None = None, price: float | None = None) -> dict:
         from oandapyV20.endpoints.orders import OrderCreate
         instrument = _normalize_forex_pair(ticker)
 
