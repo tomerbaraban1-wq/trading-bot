@@ -1094,11 +1094,11 @@ async def price_alert_loop():
                             _price_alerts_fired.add(key)
                             direction = "📈 עלה" if cur >= target else "📉 ירד"
                             await send_message(
-                                f"🔔 <b>התראת מחיר — {ticker}</b>\n"
+                                f"🔔 <b>התראה!</b>  {ticker}  הגיע ליעד\n"
                                 f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯 יעד: ${target:.2f}\n"
-                                f"💵 מחיר עכשיו: ${cur:.2f}\n"
-                                f"{direction} ליעד! ✅"
+                                f"🎯  יעד:          ${target:.2f}\n"
+                                f"📍  עכשיו:     ${cur:.2f}\n"
+                                f"{direction}  ✅"
                             )
                     except Exception:
                         continue
