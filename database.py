@@ -413,6 +413,16 @@ def get_tax_summary() -> dict:
 
 # ===== Trade Journal =====
 
+def update_trade_qty(trade_id: int, new_qty: float) -> None:
+    """Update qty on an open trade after a partial sell."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE trade_log SET qty = ? WHERE id = ?",
+        (new_qty, trade_id),
+    )
+    conn.commit()
+
+
 def add_journal_entry(note: str, ticker: str | None = None) -> int:
     """Add a note to the trade journal. Returns the new entry id."""
     conn = get_connection()

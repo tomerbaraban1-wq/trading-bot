@@ -112,9 +112,6 @@ def get_watchlist() -> list[str]:
     return merged
 
 
-# Start background refresh immediately on import (non-blocking)
-threading.Thread(target=refresh_large_cap_list, daemon=True, name="watchlist-refresh").start()
-
 WATCHLIST = [
     # ══════════════════════════════════════════════════
     # מניות — כל החברות מעל $100 מיליארד שווי שוק
@@ -363,6 +360,10 @@ def _get_price_change(ticker: str) -> tuple[float, float]:
 
 # פילטר שווי שוק מינימלי (ניתן לשינוי)
 MIN_MARKET_CAP = 100_000_000_000  # $100 מיליארד
+
+# Start background refresh AFTER all module-level names are defined
+# (WATCHLIST + MIN_MARKET_CAP must exist before the thread can reference them)
+threading.Thread(target=refresh_large_cap_list, daemon=True, name="watchlist-refresh").start()
 
 
 def _get_market_cap(ticker: str) -> float:

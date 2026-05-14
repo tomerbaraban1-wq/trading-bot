@@ -544,6 +544,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/fear — Fear & Greed Index\n"
             "/top — מניות עם ציון גבוה\n"
             "/watchlist — רשימת הסריקה\n"
+            "/quick AAPL — סקירה מהירה (מחיר+ציון+52W)\n"
+            "/position AAPL — פוזיציה מפורטת\n"
             "/watchadd AAPL — הוסף מניה לרשימה\n"
             "/watchremove AAPL — הסר מניה מהרשימה\n"
             "/signals — סיגנלים פעילים עכשיו\n\n"
@@ -1033,6 +1035,122 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[/whatsnew] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
+    # /position TICKER — full single position view (stop + chart + score + news)
+    if cmd in ("/position", "position", "פוזיציה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /position AAPL"
+        try:
+            import database as _db
+            trade = _db.get_open_trade_by_ticker(_ticker)
+            if not trade:
+                return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
+            # Price
+            pos = broker.get_position(_ticker)
+            cur    = float(pos.get("current_price", trade["entry_price"])) if pos else trade["entry_price"]
+            entry  = float(trade["entry_price"])
+            qty    = float(trade["qty"])
+            stop   = float(trade.get("atr_stop_price") or entry * 0.95)
+            wm     = float(trade.get("high_watermark") or entry)
+            pct    = (cur - entry) / entry * 100
+            pnl    = (cur - entry) * qty
+            val    = cur * qty
+            stop_pct = (cur - stop) / cur * 100
+            in_prof  = stop > entry
+            held_h   = 0.0
+            try:
+                from datetime import datetime, timezone as _tz
+                ed = datetime.strptime(str(trade.get("entry_time",""))[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+                held_h = (datetime.now(_tz.utc) - ed).total_seconds() / 3600
+            except Exception:
+                pass
+            # Score
+            sc_str = ""
+            try:
+                from scoring import get_composite_score
+                from sentiment import score_sentiment
+                _sent = score_sentiment(_ticker)
+                _comp = get_composite_score(_ticker, _sent.score)
+                _sc   = _comp["composite_score"]
+                _buy  = _comp["should_buy"]
+                sc_str = f"\n🎯  ציון עכשיו:  <b>{_sc:.0f}/100</b>  {'✅' if _buy else '⚠️ שקול מכירה'}"
+            except Exception:
+                pass
+            # Mini chart (5 days)
+            chart_str = ""
+            try:
+                import yfinance as _yf
+                _h = _yf.Ticker(_ticker).history(period="5d", interval="1h", auto_adjust=True)
+                if len(_h) >= 5:
+                    _cls  = [float(v) for v in _h["Close"].dropna()][-20:]
+                    _mn, _mx = min(_cls), max(_cls)
+                    _bars = ["▁","▂","▃","▄","▅","▆","▇","█"]
+                    _rng  = _mx - _mn or 1
+                    _chart = "".join(_bars[round((v - _mn) / _rng * 7)] for v in _cls)
+                    chart_str = f"\n<code>{_chart}</code>  (5 ימים)"
+            except Exception:
+                pass
+            return (
+                f"📂 <b>פוזיציה — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📍  מחיר עכשיו:  <b>{_fmt_price(cur)}</b>  ({pct:+.1f}%)"
+                f"{chart_str}\n\n"
+                f"📌  קנייה:        {_fmt_price(entry)}\n"
+                f"🔢  כמות:          {qty} מניות\n"
+                f"💼  שווי:           {_fmt_price(val)}\n"
+                f"⏳  הוחזק:         {_fmt_held(held_h)}\n\n"
+                f"🛑  Stop:          {_fmt_price(stop)}  ({'💚 ברווח' if in_prof else '❤️ בהפסד'}, {stop_pct:.1f}% מרחק)\n"
+                f"🏆  שיא:           {_fmt_price(wm)}\n"
+                f"{'💚' if pnl>=0 else '❤️'}  P&L:          <b>{_fmt_pnl(pnl)}</b>"
+                f"{sc_str}"
+            )
+        except Exception as e:
+            logger.error(f"[/position] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /quick TICKER — instant overview: price + score + 52w + sentiment
+    if cmd in ("/quick", "quick", "מהיר", "סקירה מהירה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /quick AAPL"
+        try:
+            import yfinance as _yf
+            fi   = _yf.Ticker(_ticker).fast_info
+            cur  = float(getattr(fi, "last_price", 0) or 0)
+            prev = float(getattr(fi, "previous_close", cur) or cur)
+            hi52 = float(getattr(fi, "year_high",  0) or 0)
+            lo52 = float(getattr(fi, "year_low",   0) or 0)
+            chg  = (cur - prev) / prev * 100 if prev else 0
+            w52_pos = (cur - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else 50
+            if cur <= 0:
+                return f"❌ לא הצלחתי לקבל נתונים"
+            # Score
+            try:
+                from scoring import get_composite_score
+                from sentiment import score_sentiment
+                _sent = score_sentiment(_ticker)
+                _comp = get_composite_score(_ticker, _sent.score)
+                _sc   = _comp["composite_score"]
+                _buy  = _comp["should_buy"]
+                score_line = f"🎯  ציון: <b>{_sc:.0f}/100</b>  {'✅ קנה' if _buy else '❌ דלג'}  {_score_bar(_sc, 8)}"
+                sent_line  = f"🧠  סנטימנט: {_sent.score}/10"
+            except Exception:
+                score_line = "🎯  ציון: חישוב..."
+                sent_line  = ""
+            chg_icon = "📈" if chg >= 0 else "📉"
+            w52_icon = "🔴" if w52_pos >= 85 else ("🟢" if w52_pos <= 20 else "⚪")
+            return (
+                f"⚡ <b>סקירה מהירה — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💲  מחיר:   <b>{_fmt_price(cur)}</b>  {chg_icon} {chg:+.2f}%\n"
+                f"{w52_icon}  52W:     {w52_pos:.0f}%  (שיא {_fmt_price(hi52)})\n"
+                f"{score_line}\n"
+                f"{sent_line}"
+            )
+        except Exception as e:
+            logger.error(f"[/quick] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
     # /ask QUESTION — explicit AI question (always goes to LLM)
     if cmd in ("/ask", "ask", "שאל", "שאלה") and len(t.split()) > 1:
         question = text[len(t.split()[0]):].strip()
@@ -1082,9 +1200,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             # Where is current price in 52w range?
             rng  = hi52 - lo52
             pos  = (cur - lo52) / rng * 100 if rng else 50
-            bar_fill = round(pos / 5)
-            bar  = "░" * (20 - bar_fill) + "▌" + ""
-            bar  = "▓" * bar_fill + "│" + "░" * (20 - bar_fill)
+            bar_fill = max(0, min(20, round(pos / 5)))
+            bar      = "▓" * bar_fill + "│" + "░" * (20 - bar_fill)
             # Signal
             if pos >= 90:   signal = "🔴 ליד שיא — שים לב לתנגדות"
             elif pos >= 70: signal = "🟡 טוב, מעל אמצע הטווח"

@@ -88,6 +88,8 @@ async def lifespan(app: FastAPI):
                     {"command": "market",    "description": "🌍 מצב השוק (SPY/QQQ/DIA)"},
                     {"command": "gainers",   "description": "🚀 מניות מובילות היום"},
                     {"command": "signals",   "description": "📡 סיגנלים פעילים עכשיו"},
+                    {"command": "quick",     "description": "⚡ סקירה מהירה של מניה"},
+                    {"command": "position",  "description": "📂 פרטי פוזיציה מלאים"},
                     {"command": "monthly",   "description": "📅 סיכום 30 ימים"},
                     {"command": "watchadd",  "description": "➕ הוסף מניה לרשימה"},
                     {"command": "watchremove","description": "➖ הסר מניה מהרשימה"},

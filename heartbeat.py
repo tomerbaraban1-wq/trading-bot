@@ -549,7 +549,8 @@ async def stop_loss_monitor():
 
                     if not _stage1_done and plpc >= _stage1_pct:
                         # Stage 1: sell 50% of the full position
-                        _half_qty = round(trade["qty"] * 0.5, 6)
+                        _orig_qty = trade["qty"]
+                        _half_qty = round(_orig_qty * 0.5, 6)
                         if _half_qty > 0:
                             try:
                                 _half_order = await asyncio.wait_for(
@@ -557,8 +558,16 @@ async def stop_loss_monitor():
                                     timeout=30
                                 )
                                 _half_pnl = (cur_price - trade["entry_price"]) * _half_qty
+                                # ── CRITICAL FIX: update DB so next cycle doesn't re-sell ──
+                                _new_qty = round(_orig_qty - _half_qty, 6)
+                                await asyncio.to_thread(
+                                    database.update_trade_qty, trade["id"], _new_qty
+                                )
+                                trade = dict(trade)   # make mutable copy
+                                trade["qty"] = _new_qty   # update in-memory too
+                                record_trade_result(_half_pnl)   # update circuit breaker
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
-                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f}")
+                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
                                     f"💰 <b>רווח חלקי שלב 1 — {ticker}</b>\n"
                                     f"מכרתי 50% מהפוזיציה\n"
@@ -571,9 +580,9 @@ async def stop_loss_monitor():
                         continue  # skip Smart Sell this cycle after partial exit
 
                     elif _stage1_done and not _stage2_done and plpc >= _stage2_pct:
-                        # Stage 2: sell another 25% of original position (= 50% of current remaining)
-                        # After Stage 1 sold 50% of original, remaining = 50%. We sell half of that = 25% of original.
-                        _quarter_qty = round(trade["qty"] * 0.25, 6)   # 25% of original = 50% of remaining
+                        # Stage 2: sell 25% of ORIGINAL (= 50% of what's left after Stage 1)
+                        _orig_qty    = trade["qty"]   # already updated after Stage 1
+                        _quarter_qty = round(_orig_qty * 0.5, 6)   # 50% of remaining = 25% of original
                         if _quarter_qty > 0:
                             try:
                                 _s2_order = await asyncio.wait_for(
@@ -581,14 +590,22 @@ async def stop_loss_monitor():
                                     timeout=30
                                 )
                                 _s2_pnl = (cur_price - trade["entry_price"]) * _quarter_qty
+                                # ── CRITICAL FIX: update DB quantity ──
+                                _new_qty = round(_orig_qty - _quarter_qty, 6)
+                                await asyncio.to_thread(
+                                    database.update_trade_qty, trade["id"], _new_qty
+                                )
+                                trade = dict(trade)
+                                trade["qty"] = _new_qty
+                                record_trade_result(_s2_pnl)
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
-                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f}")
+                                            f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
                                     f"💰 <b>רווח חלקי שלב 2 — {ticker}</b>\n"
-                                    f"מכרתי עוד 25% מהפוזיציה המקורית\n"
+                                    f"מכרתי עוד חצי מהנותר\n"
                                     f"📊 {_quarter_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_s2_pnl:+.2f}</b>\n"
-                                    f"25% האחרון ממשיך לרוץ עד יעד מלא ✅"
+                                    f"הנותר ממשיך לרוץ עד יעד מלא ✅"
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
