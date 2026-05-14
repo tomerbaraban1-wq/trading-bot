@@ -523,6 +523,12 @@ def _handle_command(text: str, context: dict) -> str | None:
             "🏆 /top — מניות עם הציון הגבוה ביותר\n"
             "📋 /history — עסקאות אחרונות\n"
             "😨 /fear — Fear & Greed Index\n"
+            "🌡️ /vix — מדד הפחד VIX\n"
+            "⚙️ /budget — הגדרות הבוט\n"
+            "📅 /today — מה קרה היום\n"
+            "🟢 /winners — פוזיציות ברווח\n"
+            "🔴 /losers — פוזיציות בהפסד\n"
+            "🔔 /alert AAPL 200 — התראת מחיר\n"
             "🔍 /diagnose — למה הבוט לא קונה?\n"
             "🧠 /backtest — תוצאות למידה היסטורית\n"
             "📋 /log — לוג סריקות\n"
@@ -788,6 +794,90 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"🏆 High: {_fmt_price(wm)}\n"
             f"📏 מרחק: <b>{dist:.1f}%</b>"
         )
+
+    # /vix — VIX level
+    if cmd in ("/vix", "vix"):
+        try:
+            from indicators import get_vix
+            vix = get_vix()
+            if vix is None:
+                return "❌ לא הצלחתי לקבל VIX"
+            if vix < 15:   label = "😌 רגיעה מוחלטת"
+            elif vix < 20: label = "🙂 שוק רגוע"
+            elif vix < 25: label = "😐 מעט מוגבר"
+            elif vix < 30: label = "😟 פחד"
+            else:          label = "😱 פחד קיצוני"
+            return f"🌡️ <b>VIX — מדד הפחד</b>\n━━━━━━━━━━━━━━━━\n📊 רמה: <b>{vix:.1f}</b>\n💭 מצב: {label}"
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /budget — budget settings
+    if cmd in ("/budget", "budget", "תקציב", "הגדרות"):
+        from config import settings
+        return (
+            f"⚙️ <b>הגדרות הבוט</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💰 תקציב: ${settings.MAX_BUDGET:,.0f}\n"
+            f"📏 פוזיציה מקסימלית: {settings.MAX_POSITION_PCT}%\n"
+            f"🔢 פוזיציות מקסימום: {settings.MAX_OPEN_POSITIONS}\n"
+            f"🛑 Stop Loss: {settings.STOP_LOSS_PCT}%\n"
+            f"🎯 Take Profit: {settings.TAKE_PROFIT_PCT}%\n"
+            f"🤖 ברוקר: {settings.ACTIVE_BROKER}"
+        )
+
+    # /today — what happened today
+    if cmd in ("/today", "today", "היום", "מה היה היום"):
+        import database as _db
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        all_trades = _db.get_trade_history(limit=50)
+        opened = [t for t in all_trades if t.get("entry_time", "")[:10] == today]
+        closed = [t for t in all_trades if t.get("exit_time", "")[:10] == today]
+        total_pnl = sum(t.get("pnl_gross") or 0 for t in closed)
+        lines = [f"📅 <b>סיכום היום</b>\n━━━━━━━━━━━━━━━━"]
+        lines.append(f"🛒 קניות היום: {len(opened)}")
+        lines.append(f"💸 מכירות היום: {len(closed)}")
+        if closed:
+            lines.append(f"💰 רווח/הפסד: {_fmt_pnl(total_pnl)}")
+        if not opened and not closed:
+            lines.append("😴 לא היו עסקאות היום")
+        return "\n".join(lines)
+
+    # /alert TICKER PRICE — price alert (stored in memory)
+    if cmd in ("/alert", "alert", "התראה") and len(t.split()) >= 3:
+        parts = t.split()
+        _ticker = parts[1].upper()
+        try:
+            _price = float(parts[2])
+            import os as _os
+            _alerts = _os.environ.get("USER_ALERTS", "")
+            _new = f"{_ticker}:{_price}"
+            _os.environ["USER_ALERTS"] = (_alerts + "," + _new).strip(",")
+            return f"🔔 <b>התראה נוצרה!</b>\nכשמחיר <b>{_ticker}</b> יגיע ל-{_fmt_price(_price)} — תקבל הודעה ✅"
+        except Exception:
+            return "שימוש: /alert AAPL 200 (טיקר + מחיר יעד)"
+
+    # /winners — show all winning positions
+    if cmd in ("/winners", "winners", "מרוויחים", "רווחים"):
+        positions = context.get("open_positions", [])
+        winners = [p for p in positions if p["pnl"] > 0]
+        if not winners:
+            return "😔 אין פוזיציות ברווח כרגע"
+        lines = [f"🏆 <b>פוזיציות ברווח ({len(winners)})</b>\n━━━━━━━━━━━━━━━━"]
+        for p in sorted(winners, key=lambda x: x["pct"], reverse=True):
+            lines.append(f"🟢 <b>{p['ticker']}</b>: {p['pct']:+.1f}% | {_fmt_pnl(p['pnl'], False)}")
+        return "\n".join(lines)
+
+    # /losers — show losing positions
+    if cmd in ("/losers", "losers", "מפסידים", "הפסדים"):
+        positions = context.get("open_positions", [])
+        losers = [p for p in positions if p["pnl"] < 0]
+        if not losers:
+            return "✅ אין פוזיציות בהפסד כרגע!"
+        lines = [f"📉 <b>פוזיציות בהפסד ({len(losers)})</b>\n━━━━━━━━━━━━━━━━"]
+        for p in sorted(losers, key=lambda x: x["pct"]):
+            lines.append(f"🔴 <b>{p['ticker']}</b>: {p['pct']:+.1f}% | {_fmt_pnl(p['pnl'], False)}")
+        return "\n".join(lines)
 
     if cmd in ("/log", "לוג", "log"):
         return (
