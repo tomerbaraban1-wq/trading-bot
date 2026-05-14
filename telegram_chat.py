@@ -518,9 +518,15 @@ def _handle_command(text: str, context: dict) -> str | None:
             "🔻 /sell AAPL — מכור מניה ספציפית\n"
             "📰 /news AAPL — חדשות על מניה\n"
             "🎯 /score AAPL — ציון מניה עכשיו\n"
+            "📅 /earnings AAPL — מתי הדוח הבא\n"
+            "🛡️ /stop AAPL — Stop Loss של מניה\n"
+            "🏆 /top — מניות עם הציון הגבוה ביותר\n"
+            "📋 /history — עסקאות אחרונות\n"
+            "😨 /fear — Fear & Greed Index\n"
             "🔍 /diagnose — למה הבוט לא קונה?\n"
-            "🧠 /backtest — הפעל למידה היסטורית\n"
-            "📋 /log — לוג סריקות אחרונות\n"
+            "🧠 /backtest — תוצאות למידה היסטורית\n"
+            "📋 /log — לוג סריקות\n"
+            "🔻 /sell AAPL — מכור מניה\n"
             "❓ /help — הודעה זו\n\n"
             "<i>אפשר גם לשאול בעברית חופשית!</i>"
         )
@@ -670,6 +676,118 @@ def _handle_command(text: str, context: dict) -> str | None:
             )
         except Exception as e:
             return f"❌ שגיאה: {e}"
+
+    # /top — top scoring stocks right now
+    if cmd in ("/top", "top", "הכי טובים", "מועמדים"):
+        try:
+            import asyncio as _aio
+            from scanner import get_watchlist
+            from scoring import get_composite_score, MIN_BUY_SCORE
+            from sentiment import score_sentiment
+            import random
+            wl = get_watchlist()
+            sample = random.sample(wl, min(8, len(wl)))
+            results = []
+            for _t in sample:
+                try:
+                    sent = score_sentiment(_t)
+                    comp = get_composite_score(_t, sent.score)
+                    results.append((_t, comp["composite_score"], comp["should_buy"]))
+                except Exception:
+                    continue
+            results.sort(key=lambda x: x[1], reverse=True)
+            lines = [f"🏆 <b>מועמדים מובילים</b>\n━━━━━━━━━━━━━━━━"]
+            for ticker, score, buy in results[:5]:
+                icon = "✅" if buy else "⏭️"
+                lines.append(f"{icon} <b>{ticker}</b>: {score:.0f}/100")
+            lines.append(f"\nסף קנייה: {MIN_BUY_SCORE}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /history — recent trade history
+    if cmd in ("/history", "history", "היסטוריה", "עסקאות"):
+        import database as _db
+        trades = _db.get_trade_history(limit=5)
+        closed = [t for t in trades if t.get("status") != "open"]
+        if not closed:
+            return "📋 אין עסקאות סגורות עדיין"
+        lines = [f"📋 <b>עסקאות אחרונות</b>\n━━━━━━━━━━━━━━━━"]
+        for t in closed[:5]:
+            pnl = t.get("pnl_gross") or 0
+            icon = "🟢" if pnl >= 0 else "🔴"
+            lines.append(f"{icon} <b>{t['ticker']}</b>: {_fmt_pnl(pnl, False)} | {t.get('status','')}")
+        return "\n".join(lines)
+
+    # /fear — Fear & Greed Index
+    if cmd in ("/fear", "fear", "פחד", "חמדנות", "fear greed"):
+        try:
+            from indicators import get_fear_greed, get_vix
+            fg = get_fear_greed()
+            vix = get_vix()
+            if fg is None:
+                return "❌ לא הצלחתי לקבל Fear & Greed"
+            if fg <= 25:   label = "😨 פחד קיצוני"
+            elif fg <= 45: label = "😟 פחד"
+            elif fg <= 55: label = "😐 ניטרלי"
+            elif fg <= 75: label = "😏 חמדנות"
+            else:          label = "🤑 חמדנות קיצונית"
+            tip = "✅ הזדמנות קנייה!" if fg <= 30 else ("⚠️ שוק חמדני — היזהר" if fg >= 70 else "")
+            return (
+                f"😨 <b>Fear & Greed Index</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 ציון: <b>{fg}/100</b>\n"
+                f"💭 מצב: {label}\n"
+                f"🌡️ VIX: {vix or 'N/A'}\n"
+                + (f"\n{tip}" if tip else "")
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /earnings TICKER
+    if cmd in ("/earnings", "earnings", "דוחות") and len(t.split()) > 1:
+        _ticker = t.split()[1].upper()
+        try:
+            from earnings import check_earnings_risk, get_earnings_impact
+            risky, reason, days = check_earnings_risk(_ticker)
+            impact = get_earnings_impact(_ticker)
+            lines = [f"📅 <b>דוחות — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
+            if days is not None:
+                if risky:
+                    lines.append(f"⛔ <b>Blackout: {days} ימים לדוח</b>")
+                else:
+                    lines.append(f"✅ הדוח הבא: בעוד {days} ימים")
+            beat = impact.get("beat_rate", 0)
+            avg_move = impact.get("avg_move_pct", 0)
+            quarters = impact.get("quarters_analyzed", 0)
+            if quarters > 0:
+                lines.append(f"🎯 Beat rate: <b>{beat*100:.0f}%</b> ({quarters} רבעונים)")
+                lines.append(f"📊 תנועה ממוצעת: <b>{avg_move:.1f}%</b>")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /stop TICKER — show stop loss for a position
+    if cmd in ("/stop", "stop", "סטופ", "עצירה") and len(t.split()) > 1:
+        _ticker = t.split()[1].upper()
+        import database as _db
+        trade = _db.get_open_trade_by_ticker(_ticker)
+        if not trade:
+            return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
+        stop = trade.get("atr_stop_price")
+        entry = trade.get("entry_price", 0)
+        wm = trade.get("high_watermark", entry)
+        if not stop:
+            return f"❌ Stop Loss לא מוגדר עבור {_ticker}"
+        dist = (entry - stop) / entry * 100 if entry else 0
+        return (
+            f"🛡️ <b>Stop Loss — {_ticker}</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📌 כניסה: {_fmt_price(entry)}\n"
+            f"🛑 Stop: {_fmt_price(stop)}\n"
+            f"🏆 High: {_fmt_price(wm)}\n"
+            f"📏 מרחק: <b>{dist:.1f}%</b>"
+        )
 
     if cmd in ("/log", "לוג", "log"):
         return (
