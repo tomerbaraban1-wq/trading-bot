@@ -359,7 +359,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 → ענה: הברוקר הוא {context.get('broker', 'tv_paper')} — זהו ברוקר נייר (paper trading) שמדמה מסחר אמיתי עם כסף וירטואלי. הקניות מתבצעות דרך yfinance עם מחירים אמיתיים מהשוק
 
 ❓ "איך הבוט עובד" / "מה האסטרטגיה":
-→ הסבר בפשטות: סורק כל 5 דקות, קונה מניות עם ציון ≥60/100, מוכר ב-Stop Loss או Take Profit
+→ הסבר בפשטות: סורק כל 5 דקות, קונה מניות עם ציון ≥60/100, מוכר ב-Stop Loss או יעד רווח/הפסד
 
 ❓ כל שאלה אחרת — ענה בידידותיות בעברית
 
@@ -378,7 +378,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 ══ הגדרות בוט ══
 🏦 ברוקר: {context.get('broker', 'tv_paper')} (paper trading — כסף וירטואלי)
 ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
-Stop Loss: {context.get('stop_loss_pct', 5)}% | Take Profit: {context.get('take_profit_pct', 15)}%
+Stop Loss: {context.get('stop_loss_pct', 5)}% | יעד רווח/הפסד: {context.get('take_profit_pct', 15)}%
 🛑 Circuit Breaker: {'⚠️ פעיל — אין קניות!' if context.get('circuit_breaker') else '✅ תקין'}
 🕐 שוק: {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 📉 VIX: {context.get('vix') or 'N/A'}
@@ -470,7 +470,7 @@ def _simple_fallback(ctx: dict) -> str:
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
                 f"   🔢 כמות: {p['qty']} מניות\n"
                 f"   📌 מחיר קנייה: {_fmt_price(p['entry'])}\n"
-                f"   📈 טייק פרופיט: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
+                f"   📈 יעד רווח: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
                 f"   📉 סטופ לוס: {_fmt_price(stop) if stop else 'N/A'}\n"
                 f"   📍 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}\n"
@@ -1092,7 +1092,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"📏 פוזיציה מקסימלית: {settings.MAX_POSITION_PCT}%\n"
             f"🔢 פוזיציות מקסימום: {settings.MAX_OPEN_POSITIONS}\n"
             f"🛑 Stop Loss: {settings.STOP_LOSS_PCT}%\n"
-            f"🎯 Take Profit: {settings.TAKE_PROFIT_PCT}%\n"
+            f"🎯 יעד רווח/הפסד: {settings.TAKE_PROFIT_PCT}%\n"
             f"🤖 ברוקר: {settings.ACTIVE_BROKER}"
         )
 
@@ -1212,7 +1212,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"   🔢 כמות:                    {p['qty']} מניות\n"
                 f"   📌 מחיר קנייה:         {_fmt_price(p['entry'])}\n"
                 f"   📍 מחיר עכשיו:          {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
-                f"   📈 טייק פרופיט:        {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
+                f"   📈 יעד רווח:        {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
                 f"   📉 סטופ לוס:      {_fmt_price(stop) if stop else 'N/A'}\n"
                 f"   ⏳ זמן החזקה:          {held_str}\n"
                 f"   {'💚' if profit else '❤️'} {'רווח' if profit else 'הפסד'}:              {_fmt_pnl(p['pnl'], False)}"
