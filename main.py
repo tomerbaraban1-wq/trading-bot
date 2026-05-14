@@ -311,6 +311,13 @@ from webhook import router
 app.include_router(router)
 
 
+@app.get("/ping")
+async def ping():
+    """Ultra-lightweight liveness endpoint for UptimeRobot / external keep-alive.
+    No DB calls — returns instantly so Render never marks it as slow."""
+    return {"ok": True, "uptime": round(time.time() - START_TIME)}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     import asyncio as _aio

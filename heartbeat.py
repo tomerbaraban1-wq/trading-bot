@@ -57,14 +57,14 @@ async def keep_alive_loop():
 
     if render_external:
         base_url = render_external
-        logger.info(f"Keep-alive: will ping {base_url}/health (Render external URL)")
+        logger.info(f"Keep-alive: will ping {base_url}/ping every 14 min (Render external URL)")
     elif self_ping:
         base_url = self_ping
-        logger.info(f"Keep-alive: will ping {base_url}/health (SELF_PING_URL override)")
+        logger.info(f"Keep-alive: will ping {base_url}/ping every 14 min (SELF_PING_URL override)")
     else:
         port     = getattr(settings, "PORT", 8000)
         base_url = f"http://localhost:{port}"
-        logger.info(f"Keep-alive: will ping {base_url}/health (localhost fallback — "
+        logger.info(f"Keep-alive: will ping {base_url}/ping (localhost — "
                     "set RENDER_EXTERNAL_URL to prevent Render spin-down)")
 
     await asyncio.sleep(60)   # wait 60 s after startup before first ping
@@ -73,13 +73,13 @@ async def keep_alive_loop():
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{base_url}/health",
+                    f"{base_url}/ping",   # /ping is lighter than /health (no DB calls)
                     timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
-                    logger.debug(f"Keep-alive ping → {base_url}/health: {resp.status}")
+                    logger.debug(f"Keep-alive ping → {base_url}/ping: {resp.status}")
         except Exception as exc:
             logger.debug(f"Keep-alive ping failed (harmless): {exc}")
-        await asyncio.sleep(10 * 60)   # every 10 minutes
+        await asyncio.sleep(14 * 60)   # every 14 min — Render sleeps after 15 min inactivity
 
 
 async def heartbeat_loop():
