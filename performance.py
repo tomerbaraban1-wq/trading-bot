@@ -222,7 +222,7 @@ def export_csv(report: PerformanceReport, output_dir: str | None = None) -> str:
         # KPIs
         writer.writerow(["=== KEY METRICS ==="])
         writer.writerow(["Total Trades",      report.total_trades])
-        writer.writerow(["Win Rate",          f"{report.overall_win_rate:.1f}%"])
+        writer.writerow(["אחוז הצלחה",          f"{report.overall_win_rate:.1f}%"])
         writer.writerow(["Total PnL (Gross)", f"${report.total_pnl_gross:+.2f}"])
         writer.writerow(["Total PnL (Net)",   f"${report.total_pnl_net:+.2f}"])
         writer.writerow(["Avg PnL / Trade",   f"${report.avg_pnl_per_trade:+.2f}"])
@@ -234,7 +234,7 @@ def export_csv(report: PerformanceReport, output_dir: str | None = None) -> str:
 
         # Per-strategy table
         writer.writerow(["=== STRATEGY BREAKDOWN ==="])
-        writer.writerow(["Strategy", "Total", "Wins", "Losses", "Win Rate", "Total PnL", "Avg PnL", "Best", "Worst"])
+        writer.writerow(["Strategy", "Total", "Wins", "Losses", "אחוז הצלחה", "Total PnL", "Avg PnL", "Best", "Worst"])
         for s in report.by_strategy:
             writer.writerow([
                 s.strategy, s.total, s.wins, s.losses,
@@ -290,7 +290,7 @@ def format_telegram(report: PerformanceReport) -> str:
         f"📅 {report.period_start} → {report.period_end}",
         f"━━━━━━━━━━━━━━━━",
         f"🔄  עסקאות:      <b>{report.total_trades}</b>  (✅{report.total_wins} ❌{report.total_losses})",
-        f"🎯  Win Rate:    <b>{wr:.1f}%</b>",
+        f"🎯  אחוז הצלחה:    <b>{wr:.1f}%</b>",
         f"    {wr_bar}",
         f"{pnl_emoji}  רווח כולל:  <b>${report.total_pnl_gross:+.2f}</b>  (נטו ${report.total_pnl_net:+.2f})",
         f"⚡  לעסקה:      ${report.avg_pnl_per_trade:+.2f}",

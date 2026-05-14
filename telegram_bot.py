@@ -178,12 +178,12 @@ async def notify_trade_open(
                 _stop_pct = (price - float(_stop)) / price * 100
                 try:
                     from telegram_chat import _fmt_price as _fp2
-                    stop_line = f"\n🛑  Stop Loss:      {_fp2(float(_stop))}  (-{_stop_pct:.1f}%)"
+                    stop_line = f"\n🛑  סטופ לוס:      {_fp2(float(_stop))}  (-{_stop_pct:.1f}%)"
                     # Rough TP estimate: ~3× the stop distance
                     _tp = round(price + (price - float(_stop)) * 3, 2)
                     tp_line = f"\n🎯  יעד רווח:      {_fp2(_tp)}  (+{(_tp-price)/price*100:.1f}%)"
                 except Exception:
-                    stop_line = f"\n🛑  Stop Loss:      ${float(_stop):.2f}"
+                    stop_line = f"\n🛑  סטופ לוס:      ${float(_stop):.2f}"
     except Exception:
         pass
 

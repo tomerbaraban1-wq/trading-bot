@@ -406,13 +406,13 @@ async def stop_loss_monitor():
                                     _ep = _fp(_entry)
                                     _cp = _fp(cur_price)
                                     _sp = _fp(new_stop)
-                                    _tp = _fp(_tp_price) if _tp_price else "N/A"
+                                    _tp = _fp(_tp_price) if _tp_price else "—"
                                     _pp = _fp(abs(_pnl_now))
                                 except Exception:
                                     _ep = f"${_entry:.2f}"
                                     _cp = f"${cur_price:.2f}"
                                     _sp = f"${new_stop:.2f}"
-                                    _tp = f"${_tp_price:.2f}" if _tp_price else "N/A"
+                                    _tp = f"${_tp_price:.2f}" if _tp_price else "—"
                                     _pp = f"${abs(_pnl_now):.2f}"
                                 # Is the new stop above or below entry? → profit or loss if triggered
                                 _stop_in_profit = new_stop > _entry
@@ -1232,11 +1232,12 @@ async def morning_briefing_loop():
                     )
                     _lines = _resp.choices[0].message.content.strip().split("\n")
                     _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
-                    headlines = _translated[:5] if _translated else headlines
+                    headlines = _translated[:5] if _translated else []
                 except Exception as _te:
                     logger.debug(f"[BRIEFING] Translation failed: {_te}")
+                    headlines = []  # don't send untranslated English headlines
 
-            news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות"
+            news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות כרגע"
 
             # Score top 3 candidates quickly
             top = []
@@ -1425,9 +1426,9 @@ async def position_alert_loop():
                         if dist_pct <= 1.5 and _position_alert_sent.get(_stop_key) != round(dist_pct, 0):
                             _position_alert_sent[_stop_key] = round(dist_pct, 0)
                             await send_message(
-                                f"🚨 <b>התראת Stop Loss קרוב — {ticker}</b>\n"
+                                f"🚨 <b>התראת סטופ לוס קרוב — {ticker}</b>\n"
                                 f"💵 מחיר עכשיו: ${cur:.2f}\n"
-                                f"🛡️ Stop Loss: ${atr_stop:.2f}\n"
+                                f"🛡️ סטופ לוס: ${atr_stop:.2f}\n"
                                 f"⚡ מרחק: <b>{dist_pct:.1f}%</b> בלבד!"
                             )
                 except Exception:
@@ -1630,10 +1631,10 @@ async def news_monitor_loop():
                                     translated_hl.append(line.split(". ", 1)[-1].strip())
                             return translated_hl or hl, translated_reason
                         except Exception:
-                            return hl, reason
+                            return [], "לא ניתן לתרגם"  # don't return English on failure
 
                     headlines_he, reasoning_he = await _translate_news(headlines, reasoning)
-                    news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "אין כותרות"
+                    news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "אין כותרות מתורגמות"
                     reasoning = reasoning_he
 
                     # ── 1. CRITICAL (1-2): emergency sell immediately ─────────

@@ -732,7 +732,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📅 <b>סיכום 30 ימים</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔢  עסקאות:       <b>{len(monthly)}</b>  (✅{len(wins)} ❌{len(monthly)-len(wins)})\n"
-                f"🎯  Win Rate:     <b>{wr}%</b>\n"
+                f"🎯  אחוז הצלחה:     <b>{wr}%</b>\n"
                 f"    {wr_bar}\n"
                 f"💰  רווח חודשי:  {_fmt_pnl(total_pnl)}\n"
                 f"⚡  לעסקה:       ${avg_pnl:+.2f}\n\n"
@@ -851,7 +851,7 @@ def _handle_command(text: str, context: dict) -> str | None:
 
             def _idx_line(name, chg):
                 if chg is None:
-                    return f"  {name}: N/A"
+                    return f"  {name}: —"
                 icon = "📈" if chg >= 0 else "📉"
                 return f"  {icon} {name}: <b>{chg:+.2f}%</b>"
 
@@ -1971,7 +1971,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📅 <b>סיכום 7 ימים</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔢  עסקאות: <b>{len(weekly)}</b>  (✅{len(wins)} ❌{len(weekly)-len(wins)})\n"
-                f"🎯  Win Rate: <b>{wr}%</b>\n"
+                f"🎯  אחוז הצלחה: <b>{wr}%</b>\n"
                 f"💰  רווח שבועי: {_fmt_pnl(total_pnl)}"
                 f"{chart_line}\n\n"
                 f"<b>יומי:</b>\n" + "\n".join(day_lines)
@@ -3056,7 +3056,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📊 <b>ביצועים מלאים</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔢  עסקאות:         <b>{total}</b>  (✅{len(wins)} ❌{len(losses)})\n"
-                f"🎯  Win Rate:       <b>{wr}%</b>\n"
+                f"🎯  אחוז הצלחה:       <b>{wr}%</b>\n"
                 f"    {wr_bar}\n\n"
                 f"💰  רווח כולל:       {_fmt_pnl(total_pnl)}\n"
                 f"📈  ממוצע ניצחון:  <b>${avg_win:+.2f}</b>\n"
