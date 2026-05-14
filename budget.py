@@ -330,10 +330,11 @@ def compute_position_size(
     return qty, metadata
 
 
-def check_can_buy(price: float) -> tuple[bool, float, str]:
+def check_can_buy(price: float, conviction_score: float = 58.0) -> tuple[bool, float, str]:
     """
     Public API — drop-in replacement for the old check_can_buy.
     Returns (can_buy, qty, reason).
+    Pass conviction_score so the conviction multiplier is applied correctly.
     """
     try:
         from database import get_open_trades
@@ -343,7 +344,7 @@ def check_can_buy(price: float) -> tuple[bool, float, str]:
                 f"Max open positions reached ({len(open_trades)}/{MAX_OPEN_POSITIONS})"
             )
 
-        qty, meta = compute_position_size(price)
+        qty, meta = compute_position_size(price, conviction_score)
 
         if qty <= 0:
             return False, 0, (

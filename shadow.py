@@ -125,6 +125,7 @@ def evaluate(
     # ── Compute hypothetical position size ────────────────────────────────────
     max_notional = CAPITAL * POSITION_PCT / 100
     qty = round(max_notional / price, 6) if price > 0 else 0.0
+    qty = min(qty, CAPITAL)  # cap: never more shares than total capital value (guards penny stocks)
     if qty == 0:
         logger.debug(f"[SHADOW] {ticker}: qty=0 at price=${price:.2f}")
         return None

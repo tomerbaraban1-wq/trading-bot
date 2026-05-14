@@ -76,10 +76,12 @@ def _reset_if_new_day():
             f"limit ${max_loss:.2f} ({MAX_DAILY_LOSS_PCT}% of ${settings.MAX_BUDGET:,.0f})"
         ) if should_trip else ""
 
-        _state["daily_pnl"]   = daily_pnl
-        _state["trade_date"]  = today
-        _state["tripped"]     = should_trip
-        _state["trip_reason"] = trip_reason
+        import time as _time_cb
+        _state["daily_pnl"]     = daily_pnl
+        _state["trade_date"]    = today
+        _state["tripped"]       = should_trip
+        _state["trip_reason"]   = trip_reason
+        _state["_db_loaded_at"] = _time_cb.time()  # timestamp so record_trade_result can detect fresh load
 
         logger.info(f"Circuit Breaker: initialized for {today} | daily_pnl=${daily_pnl:.2f}")
         if should_trip:
@@ -90,11 +92,14 @@ def record_trade_result(pnl_gross: float):
     """Call this after every trade closes. Updates daily PnL and trips breaker if needed."""
     with _lock:
         _was_uninitialized = _state["trade_date"] is None
+        _db_load_ts_before = _state.get("_db_loaded_at", 0)
         _reset_if_new_day()
-        # If the bot just restarted, _reset_if_new_day loaded today's PnL from DB —
-        # that DB query already INCLUDES the trade we're about to record (it was just
-        # written). Don't double-count it.
-        if not _was_uninitialized:
+        _db_load_ts_after  = _state.get("_db_loaded_at", 0)
+        # If the DB was just reloaded (first call after restart OR day boundary),
+        # it already includes ALL closed trades for today. Only add pnl_gross if
+        # the DB was NOT freshly loaded this call (normal mid-day path).
+        _db_just_loaded = _db_load_ts_after != _db_load_ts_before
+        if not _db_just_loaded:
             _state["daily_pnl"] += pnl_gross
 
         max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)

@@ -242,7 +242,9 @@ async def _close_position(
             st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
         ))
 
-    await notify_sell(ticker, exit_price, pnl_gross, label)
+    # Fire-and-forget — Telegram failure must NOT prevent position cleanup or
+    # cause _close_position to return False (trade is already closed in broker+DB)
+    _create_background_task(notify_sell(ticker, exit_price, pnl_gross, label))
 
     # Cleanup per-ticker state so re-entry into the same ticker works correctly
     _smart_sell_last_check.pop(ticker, None)   # allow immediate smart-sell check on re-entry

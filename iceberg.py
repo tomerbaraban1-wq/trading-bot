@@ -156,10 +156,11 @@ async def iceberg_buy(
                 timeout=TIMEOUT_SEC,
             )
         fill = float(order.get("price") or lim)
+        actual_fill = float(order.get("filled_qty") or total_qty)  # use broker's actual fill
         return {
             "price":      fill,
             "order_id":   order.get("order_id", ""),
-            "filled_qty": total_qty,
+            "filled_qty": actual_fill,
             "iceberg":    False,
             "slices":     [],
         }

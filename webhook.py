@@ -381,7 +381,8 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
 
     # Budget check
-    can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price)
+    # Pass composite score so conviction multiplier is applied correctly
+    can_buy, max_qty, budget_reason = await asyncio.to_thread(budget.check_can_buy, payload.price, _cscore)
     if not can_buy:
         logger.info(f"BUY blocked by budget: {ticker} - {budget_reason}")
         try:
