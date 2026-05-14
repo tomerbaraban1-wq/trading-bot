@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Smart sell throttle: ticker -> last_check_timestamp (check max every 5 minutes)
 _smart_sell_last_check: dict = {}
-_smart_sell_lock = asyncio.Lock()  # Protect race condition on dict access
+_smart_sell_lock: asyncio.Lock | None = None  # lazy-init inside async context (Python 3.12 safe)
 
 # Track background tasks to prevent fire-and-forget errors
 _background_tasks = set()
@@ -192,7 +192,7 @@ async def _close_position(
     Called by stop_loss_monitor for every exit type.
     """
     ticker   = trade["ticker"]
-    lim_sell = limit_sell_price(cur_price)
+    lim_sell = limit_sell_price(cur_price, ticker)
     try:
         # Pass cur_price to avoid redundant yfinance fetch inside submit_sell
         order = await asyncio.wait_for(
@@ -661,6 +661,9 @@ async def stop_loss_monitor():
 
                     # ── 3. Smart Sell (score collapse, max once per 5 min) ────
                     import time as _time
+                    global _smart_sell_lock
+                    if _smart_sell_lock is None:
+                        _smart_sell_lock = asyncio.Lock()
                     # Hold lock ONLY to read/update timestamp — release before expensive I/O
                     async with _smart_sell_lock:
                         last = _smart_sell_last_check.get(ticker, 0)

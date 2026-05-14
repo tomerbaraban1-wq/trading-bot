@@ -267,9 +267,16 @@ def _check_rolling_alert(ticker: str) -> None:
             try:
                 from telegram_bot import notify_slippage_alert
                 import asyncio
-                asyncio.ensure_future(notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT))
+                # record() runs in asyncio.to_thread — use run_coroutine_threadsafe
+                from discord_bot import get_event_loop as _gel
+                _loop = _gel()
+                if _loop and _loop.is_running():
+                    asyncio.run_coroutine_threadsafe(
+                        notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT), _loop
+                    )
+                else:
+                    asyncio.ensure_future(notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT))
             except RuntimeError:
-                # No running event loop (e.g. called from a thread during testing)
                 logger.warning(f"[SLIPPAGE ALERT] No event loop — Telegram alert skipped: {msg}")
             except Exception as te:
                 logger.warning(f"[SLIPPAGE ALERT] Telegram failed: {te}")

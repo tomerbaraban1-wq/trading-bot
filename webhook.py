@@ -25,11 +25,14 @@ router = APIRouter()
 
 # Per-ticker buy locks — prevent double-buy from simultaneous webhook + auto_invest
 _buy_locks: dict[str, asyncio.Lock] = {}
-_buy_locks_mutex = asyncio.Lock()  # protects _buy_locks dict creation
+_buy_locks_mutex: asyncio.Lock | None = None  # lazy-init (Python 3.12 safe)
 
 
 async def _get_buy_lock(ticker: str) -> asyncio.Lock:
     """Return (or create) an asyncio.Lock for the given ticker."""
+    global _buy_locks_mutex
+    if _buy_locks_mutex is None:
+        _buy_locks_mutex = asyncio.Lock()
     async with _buy_locks_mutex:
         if ticker not in _buy_locks:
             _buy_locks[ticker] = asyncio.Lock()
@@ -534,9 +537,12 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
     log_learning(trade["id"], description, f"{outcome}_pattern", indicators, outcome, pnl_gross)
 
     # Cleanup per-ticker state so re-entry works correctly
-    from heartbeat import _smart_sell_last_check, _position_alert_sent
-    _smart_sell_last_check.pop(ticker, None)
-    _position_alert_sent.pop(ticker, None)
+    try:
+        import heartbeat as _hb
+        _hb._smart_sell_last_check.pop(ticker, None)
+        _hb._position_alert_sent.pop(ticker, None)
+    except Exception:
+        pass
 
     # Notify Telegram — full P&L breakdown
     duration_hours = _trade_duration_hours(trade.get("entry_time"))
@@ -1041,9 +1047,12 @@ async def emergency_exit(ticker: str, request: Request):
             ))
 
         # Cleanup per-ticker state so re-entry works correctly
-        from heartbeat import _smart_sell_last_check, _position_alert_sent
-        _smart_sell_last_check.pop(ticker, None)
-        _position_alert_sent.pop(ticker, None)
+        try:
+            import heartbeat as _hb
+            _hb._smart_sell_last_check.pop(ticker, None)
+            _hb._position_alert_sent.pop(ticker, None)
+        except Exception:
+            pass
 
         logger.warning(f"EMERGENCY EXIT: {ticker} | PnL=${pnl_gross:+.2f}")
         return {
@@ -1139,9 +1148,10 @@ async def auto_invest(data: dict):
             results.append({"ticker": ticker, "status": "skipped", "reason": "פוזיציה קיימת"})
             continue
 
-        # קנה
+        # קנה — use iceberg_buy for proper TWAP execution
         try:
-            order = await asyncio.to_thread(broker.submit_buy, ticker, qty)
+            from iceberg import iceberg_buy as _iceberg_buy
+            order = await _iceberg_buy(ticker, qty, price)
             from trade_logger import log_trade_open
             from models import WebhookPayload, TradeAction
             from sentiment import score_sentiment
