@@ -715,7 +715,9 @@ async def auto_invest_loop():
                             for _t in _sample:
                                 try:
                                     _chg = float((_close[_t].iloc[-1] - _close[_t].iloc[-2]) / _close[_t].iloc[-2] * 100)
-                                    if _chg > 0.5:   # positive momentum
+                                    if _chg > 1.5:        # strong momentum (top priority)
+                                        _momentum_tickers.insert(0, _t)
+                                    elif _chg > 0.5:      # mild momentum
                                         _momentum_tickers.append(_t)
                                     else:
                                         _normal_tickers.append(_t)

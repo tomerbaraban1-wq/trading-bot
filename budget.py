@@ -217,8 +217,17 @@ def compute_position_size(
     # ── Step 3: Risk-derived qty (fractional) ─────────────────────────────────
     risk_qty = dollar_risk / risk_per_share
 
-    # ── Step 4: Hard cap — max notional per position ──────────────────────────
-    max_notional   = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
+    # ── Step 4: Hard cap — scales with conviction ────────────────────────────
+    # High conviction (score≥75) → allow up to 40% | Normal → 20%
+    if conviction_score >= 80:
+        effective_pct = min(50.0, settings.MAX_POSITION_PCT * 2.0)   # double — very high conviction
+    elif conviction_score >= 75:
+        effective_pct = min(40.0, settings.MAX_POSITION_PCT * 1.75)  # 40%
+    elif conviction_score >= 70:
+        effective_pct = min(30.0, settings.MAX_POSITION_PCT * 1.5)   # 30%
+    else:
+        effective_pct = settings.MAX_POSITION_PCT                    # normal 20%
+    max_notional   = equity * (effective_pct / 100)   # use EQUITY not MAX_BUDGET
     notional_qty   = max_notional / entry_price
 
     # ── Step 5: Cash constraint ────────────────────────────────────────────────
