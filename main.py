@@ -107,6 +107,8 @@ async def lifespan(app: FastAPI):
                     {"command": "history",   "description": "📋 עסקאות אחרונות"},
                     {"command": "fear",      "description": "😨 Fear and Greed Index"},
                     {"command": "newscheck", "description": "📰 בדוק חדשות לכל הפוזיציות"},
+                    {"command": "price",     "description": "💲 מחיר מניה"},
+                    {"command": "alerts",    "description": "🔔 התראות מחיר פעילות"},
                     {"command": "diagnose",  "description": "🔍 למה הבוט לא קונה"},
                     {"command": "backtest",  "description": "🧠 למידה היסטורית"},
                     {"command": "help",      "description": "❓ כל הפקודות"},

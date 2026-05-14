@@ -38,6 +38,22 @@ def _safe_ticker(raw: str) -> str | None:
     t = raw.strip().upper()
     return t if _TICKER_RE.match(t) else None
 
+
+def _score_bar(score: float, width: int = 10) -> str:
+    """Visual progress bar: ██████░░░░  65/100"""
+    filled = round(score / 100 * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def _extract_ticker_from_text(text: str) -> str | None:
+    """Try to find a stock ticker in free Hebrew text. e.g. 'מה ציון של AAPL?' → 'AAPL'"""
+    words = text.upper().split()
+    for w in words:
+        clean = _re.sub(r'[^A-Z0-9.\-]', '', w)
+        if _TICKER_RE.match(clean) and len(clean) >= 2:
+            return clean
+    return None
+
 # Lazy-init OpenAI/Groq client
 _client = None
 
@@ -530,8 +546,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/losers — פוזיציות בהפסד\n"
             "/risk — ניתוח סיכון\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
-            "/score AAPL — ציון המניה\n"
-            "/news AAPL — חדשות בזמן אמת\n"
+            "/score AAPL — ניתוח עם Progress Bars\n"
+            "/price AAPL — מחיר מיידי\n"
+            "/news AAPL — חדשות + סנטימנט AI\n"
             "/newscheck — בדיקת חדשות לכל הפוזיציות\n"
             "/earnings AAPL — דוח רווחים\n"
             "/stop AAPL — מצב ה-Stop Loss\n"
@@ -557,7 +574,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/pause — עצור קניות חדשות\n"
             "/resume — חדש קניות\n"
             "/sell AAPL — מכור מניה עכשיו\n"
-            "/alert AAPL 200 — התראת מחיר\n"
+            "/alert AAPL 200 — הגדר התראת מחיר\n"
+            "/alerts — ראה כל ההתראות הפעילות\n"
             "/budget — הגדרות הבוט\n"
             "/diagnose — למה הבוט לא קונה?\n"
             "/next — מתי השוק נפתח\n"
@@ -671,16 +689,97 @@ def _handle_command(text: str, context: dict) -> str | None:
             return "❌ טיקר לא חוקי — דוגמה: /news AAPL"
         try:
             from news_service import get_headlines
-            headlines = get_headlines(_ticker, limit=5)
+            from sentiment import score_sentiment
+            headlines = get_headlines(_ticker, limit=6)
             if not headlines:
-                return f"❌ לא נמצאו חדשות עבור <b>{_ticker}</b>"
-            lines = [f"📰 <b>חדשות — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
-            for i, h in enumerate(headlines, 1):
-                lines.append(f"{i}. {h}")
+                return f"📰 <b>חדשות — {_ticker}</b>\n\n😴 לא נמצאו חדשות עדכניות"
+            # Get AI sentiment on the news
+            sent = score_sentiment(_ticker)
+            sc   = sent.score
+            if sc <= 3:   sent_line = f"🔴 סנטימנט AI: {sc}/10 — שלילי מאוד"
+            elif sc <= 5: sent_line = f"🟠 סנטימנט AI: {sc}/10 — שלילי"
+            elif sc <= 7: sent_line = f"⚪ סנטימנט AI: {sc}/10 — ניטרלי"
+            elif sc <= 8: sent_line = f"🟡 סנטימנט AI: {sc}/10 — חיובי"
+            else:         sent_line = f"🟢 סנטימנט AI: {sc}/10 — חיובי מאוד"
+            lines = [f"📰 <b>חדשות — {_ticker}</b>\n━━━━━━━━━━━━━━━━", sent_line, ""]
+            for i, h in enumerate(headlines[:5], 1):
+                lines.append(f"{i}. {h[:100]}")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
+
+    # /price TICKER — quick current price check
+    if cmd in ("/price", "price", "מחיר") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /price AAPL"
+        try:
+            import broker as _broker
+            import yfinance as _yf
+            # Try broker first (if position open), fallback to yfinance
+            pos = _broker.get_position(_ticker)
+            if pos:
+                cur  = float(pos.get("current_price", 0))
+                pct  = float(pos.get("unrealized_plpc", 0)) * 100
+                held = pos.get("qty", 0)
+                icon = "📈" if pct >= 0 else "📉"
+                return (
+                    f"💲 <b>מחיר — {_ticker}</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📍  מחיר עכשיו:  <b>{_fmt_price(cur)}</b>\n"
+                    f"{icon}  שינוי בפוזיציה: <b>{pct:+.2f}%</b>\n"
+                    f"🔢  כמות בידי:    {held}"
+                )
+            else:
+                hist = _yf.Ticker(_ticker).fast_info
+                cur = float(getattr(hist, "last_price", 0) or 0)
+                prev = float(getattr(hist, "previous_close", cur) or cur)
+                chg_pct = (cur - prev) / prev * 100 if prev else 0
+                icon = "📈" if chg_pct >= 0 else "📉"
+                if cur <= 0:
+                    return f"❌ לא הצלחתי לקבל מחיר עבור {_ticker}"
+                return (
+                    f"💲 <b>מחיר — {_ticker}</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📍  מחיר עכשיו:  <b>{_fmt_price(cur)}</b>\n"
+                    f"{icon}  שינוי יומי:      <b>{chg_pct:+.2f}%</b>"
+                )
+        except Exception as e:
+            logger.error(f"[/price] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /alerts — show all active price alerts
+    if cmd in ("/alerts", "alerts", "התראות", "התראות מחיר"):
+        try:
+            import os as _os
+            raw = _os.getenv("USER_ALERTS", "")
+            if not raw.strip():
+                return "🔔 <b>התראות מחיר</b>\n━━━━━━━━━━━━━━━━\n😴 אין התראות פעילות\n\n💡 הגדר: /alert AAPL 200"
+            parts = [a.strip() for a in raw.split(",") if ":" in a.strip()]
+            if not parts:
+                return "🔔 <b>התראות מחיר</b>\n━━━━━━━━━━━━━━━━\n😴 אין התראות פעילות"
+            lines = [f"🔔 <b>התראות פעילות ({len(parts)})</b>\n━━━━━━━━━━━━━━━━"]
+            for alert in parts:
+                try:
+                    tk, price_str = alert.split(":", 1)
+                    lines.append(f"📌 <b>{tk.upper()}</b> → {_fmt_price(float(price_str))}")
+                except Exception:
+                    pass
+            lines.append("\n💡 הסר הכל: /alerts clear")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/alerts] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /alerts clear — remove all price alerts
+    if t in ("/alerts clear", "alerts clear", "נקה התראות", "מחק התראות"):
+        try:
+            import os as _os
+            _os.environ["USER_ALERTS"] = ""
+            return "🔕 <b>כל ההתראות נמחקו</b>"
+        except Exception:
+            return "❌ שגיאה פנימית"
 
     # /score TICKER
     if cmd in ("/score", "score", "ציון") and len(t.split()) > 1:
@@ -690,21 +789,38 @@ def _handle_command(text: str, context: dict) -> str | None:
         try:
             from scoring import get_composite_score
             from sentiment import score_sentiment
-            sent = score_sentiment(_ticker)
+            sent   = score_sentiment(_ticker)
             result = get_composite_score(_ticker, sent.score)
-            score = result["composite_score"]
-            decision = "✅ קנה" if result["should_buy"] else "❌ דלג"
-            vix = result.get("vix", "N/A")
+            sc     = result["composite_score"]
+            tech   = result["scores"]["technicals"]
+            mkt    = result["scores"]["market"]
+            sent_n = round(sent.score / 10 * 100)   # normalize to 0-100
+            vix    = result.get("vix", "N/A")
+            buy    = result["should_buy"]
+            # Quality label
+            if sc >= 80:   qlabel = "🔥 חזק מאוד"
+            elif sc >= 70: qlabel = "✅ טוב"
+            elif sc >= 60: qlabel = "⚠️ גבולי"
+            else:          qlabel = "❌ חלש"
+            # Sentiment label
+            if sent.score >= 8:   sl = "😍 מצוין"
+            elif sent.score >= 6: sl = "🙂 חיובי"
+            elif sent.score >= 4: sl = "😐 ניטרלי"
+            else:                 sl = "😟 שלילי"
             return (
-                f"🎯 <b>ציון — {_ticker}</b>\n"
+                f"🎯 <b>ניתוח — {_ticker}</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"📊 ציון כולל: <b>{score}/100</b>\n"
-                f"🔧 טכני: {result['scores']['technicals']}/100\n"
-                f"🌍 שוק: {result['scores']['market']}/100\n"
-                f"🧠 סנטימנט: {sent.score}/10\n"
-                f"📉 VIX: {vix}\n"
+                f"⭐  ציון כולל:   <b>{sc:.0f}/100</b>  {qlabel}\n"
+                f"    <code>{_score_bar(sc)}</code>\n\n"
+                f"🔧  טכני:         {tech:.0f}/100\n"
+                f"    <code>{_score_bar(tech)}</code>\n"
+                f"🌍  שוק:           {mkt:.0f}/100\n"
+                f"    <code>{_score_bar(mkt)}</code>\n"
+                f"🧠  סנטימנט:   {sent.score}/10  {sl}\n"
+                f"    <code>{_score_bar(sent_n)}</code>\n\n"
+                f"🌡️  VIX: {vix}\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"<b>{decision}</b>"
+                f"{'✅ <b>המלצה: קנה</b>' if buy else '⏭️ <b>המלצה: דלג</b>'}"
             )
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -759,27 +875,33 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /top — top scoring stocks right now
     if cmd in ("/top", "top", "הכי טובים", "מועמדים"):
         try:
-            import asyncio as _aio
             from scanner import get_watchlist
             from scoring import get_composite_score, MIN_BUY_SCORE
             from sentiment import score_sentiment
             import random
-            wl = get_watchlist()
-            sample = random.sample(wl, min(8, len(wl)))
+            wl      = get_watchlist()
+            sample  = random.sample(wl, min(15, len(wl)))  # scan 15 instead of 8
             results = []
-            for _t in sample:
+            for _tk in sample:
                 try:
-                    sent = score_sentiment(_t)
-                    comp = get_composite_score(_t, sent.score)
-                    results.append((_t, comp["composite_score"], comp["should_buy"]))
+                    sent = score_sentiment(_tk)
+                    comp = get_composite_score(_tk, sent.score)
+                    results.append((_tk, comp["composite_score"], comp["should_buy"], sent.score))
                 except Exception:
                     continue
             results.sort(key=lambda x: x[1], reverse=True)
-            lines = [f"🏆 <b>מועמדים מובילים</b>\n━━━━━━━━━━━━━━━━"]
-            for ticker, score, buy in results[:5]:
-                icon = "✅" if buy else "⏭️"
-                lines.append(f"{icon} <b>{ticker}</b>: {score:.0f}/100")
-            lines.append(f"\nסף קנייה: {MIN_BUY_SCORE}")
+            lines = [f"🏆 <b>מובילי הסריקה — {len(results)} מניות</b>\n━━━━━━━━━━━━━━━━"]
+            buys  = [(t,s,b,ss) for t,s,b,ss in results if b]
+            skips = [(t,s,b,ss) for t,s,b,ss in results if not b]
+            if buys:
+                lines.append("✅ <b>מעל סף קנייה:</b>")
+                for tk, sc, _, ss in buys[:5]:
+                    lines.append(f"  🟢 <b>{tk}</b>  {sc:.0f}/100  {_score_bar(sc, 8)}  🧠{ss}/10")
+            if skips:
+                lines.append("\n⏭️ <b>מתחת לסף:</b>")
+                for tk, sc, _, ss in skips[:3]:
+                    lines.append(f"  ⚪ <b>{tk}</b>  {sc:.0f}/100")
+            lines.append(f"\n━━━━━━━━━━━━━━━━\n🎯 סף קנייה: <b>{MIN_BUY_SCORE}</b>")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -1439,6 +1561,22 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"🎯 אחוז הצלחה: <b>{wr}%</b>\n"
             f"💰 רווח כולל: <b>${total_pnl:+.2f}</b>"
         )
+
+    # ── Auto-detect ticker in free Hebrew text ─────────────────────────────────
+    # e.g. "מה ציון של AAPL?" → run /score AAPL
+    # e.g. "מה חדשות על TSLA" → run /news TSLA
+    _auto_ticker = _extract_ticker_from_text(text)
+    if _auto_ticker:
+        _score_kws = ["ציון", "score", "כמה", "כדאי", "לקנות", "לא לקנות", "מה דעתך"]
+        _news_kws  = ["חדשות", "news", "כותרות", "מה קורה", "מה היה"]
+        _price_kws = ["מחיר", "price", "שווה", "עולה", "יורד"]
+        if any(k in t for k in _score_kws):
+            # Simulate /score TICKER
+            return _handle_command(f"/score {_auto_ticker}", context)
+        if any(k in t for k in _news_kws):
+            return _handle_command(f"/news {_auto_ticker}", context)
+        if any(k in t for k in _price_kws):
+            return _handle_command(f"/price {_auto_ticker}", context)
 
     return None  # let LLM handle everything else
 
