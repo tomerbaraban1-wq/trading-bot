@@ -571,6 +571,10 @@ def _handle_command(text: str, context: dict) -> str | None:
             "━━ 🧠 <b>AI</b> ━━\n"
             "/ask מה לעשות עם AAPL? — שאלה חופשית\n"
             "/review — AI סוקר את כל הפוזיציות\n"
+            "/journal — יומן עסקאות אישי\n"
+            "/whatsnew — 5 הפעולות האחרונות\n"
+            "/levels AAPL — תמיכה/תנגדות\n"
+            "/remind 17:30 לבדוק TSLA — תזכורת\n"
             "/advice — ייעוץ AI על התיק\n"
             "/explain RSI — הסבר מונח פיננסי\n"
             "/streak — רצף ניצחונות/הפסדות\n\n"
@@ -887,6 +891,146 @@ def _handle_command(text: str, context: dict) -> str | None:
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[/market] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /journal [TICKER] NOTE — add a note to trade journal
+    if cmd in ("/journal", "journal", "יומן", "הערה"):
+        parts = t.split(maxsplit=2)
+        if len(parts) < 2:
+            # Show recent entries
+            try:
+                entries = database.get_journal_entries(limit=7)
+                if not entries:
+                    return (
+                        f"📓 <b>יומן עסקאות</b>\n━━━━━━━━━━━━━━━━\n"
+                        f"😴 אין הערות עדיין\n\n"
+                        f"💡 <code>/journal AAPL מניה עם פוטנציאל גדול</code>"
+                    )
+                lines = [f"📓 <b>יומן עסקאות</b>\n━━━━━━━━━━━━━━━━"]
+                for e in entries:
+                    tk   = f"[{e['ticker']}] " if e.get("ticker") else ""
+                    date = str(e.get("created_at",""))[:10]
+                    lines.append(f"📌 {tk}<i>{e['note']}</i>  <code>{date}</code>")
+                return "\n".join(lines)
+            except Exception as e:
+                logger.error(f"[/journal] Error: {e}")
+                return "❌ שגיאה פנימית — נסה שוב"
+        # Check if second word is a ticker
+        possible_ticker = _safe_ticker(parts[1])
+        if possible_ticker and len(parts) >= 3:
+            note_text = parts[2]
+            ticker_arg = possible_ticker
+        else:
+            note_text = " ".join(parts[1:])
+            ticker_arg = None
+        if not note_text.strip():
+            return "💡 דוגמה: <code>/journal AAPL עלייה חזקה לפני דוח</code>"
+        try:
+            eid = database.add_journal_entry(note_text, ticker_arg)
+            tk_str = f" על <b>{ticker_arg}</b>" if ticker_arg else ""
+            return (
+                f"📓 <b>הערה נשמרה!</b>{tk_str}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📌 {note_text}\n"
+                f"🔖 מזהה: #{eid}\n\n"
+                f"💡 /journal לצפייה בכל ההערות"
+            )
+        except Exception as e:
+            logger.error(f"[/journal] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /levels TICKER — support/resistance via pivot points
+    if cmd in ("/levels", "levels", "רמות", "תמיכה", "תנגדות") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /levels AAPL"
+        try:
+            import yfinance as _yf
+            hist = _yf.Ticker(_ticker).history(period="5d", interval="1d", auto_adjust=True)
+            if hist.empty or len(hist) < 2:
+                return f"❌ אין מספיק נתונים עבור {_ticker}"
+            # Standard pivot point (PP) calculation from yesterday
+            prev   = hist.iloc[-2]
+            hi, lo, cl = float(prev["High"]), float(prev["Low"]), float(prev["Close"])
+            cur    = float(hist.iloc[-1]["Close"])
+            pp     = (hi + lo + cl) / 3
+            r1     = 2 * pp - lo
+            r2     = pp + (hi - lo)
+            r3     = hi + 2 * (pp - lo)
+            s1     = 2 * pp - hi
+            s2     = pp - (hi - lo)
+            s3     = lo - 2 * (hi - pp)
+            # Mark where current price sits
+            def _level_marker(price, cur_p):
+                return " ◀ עכשיו" if abs(price - cur_p) / cur_p < 0.015 else ""
+            lines = [
+                f"📐 <b>רמות תמיכה/תנגדות — {_ticker}</b>\n━━━━━━━━━━━━━━━━",
+                f"🔴 R3: {_fmt_price(r3)}{_level_marker(r3, cur)}",
+                f"🔴 R2: {_fmt_price(r2)}{_level_marker(r2, cur)}",
+                f"🔴 R1: {_fmt_price(r1)}{_level_marker(r1, cur)}",
+                f"⚪ PP: <b>{_fmt_price(pp)}</b>{_level_marker(pp, cur)}  ← ציר",
+                f"🟢 S1: {_fmt_price(s1)}{_level_marker(s1, cur)}",
+                f"🟢 S2: {_fmt_price(s2)}{_level_marker(s2, cur)}",
+                f"🟢 S3: {_fmt_price(s3)}{_level_marker(s3, cur)}",
+                f"\n📍 מחיר עכשיו: <b>{_fmt_price(cur)}</b>",
+            ]
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/levels] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /remind HH:MM TEXT — set a time-based reminder (Israel time)
+    if cmd in ("/remind", "remind", "תזכורת") and len(t.split()) >= 3:
+        parts = t.split(maxsplit=2)
+        time_str = parts[1]
+        reminder_text = parts[2] if len(parts) > 2 else "תזכורת!"
+        try:
+            hh, mm = map(int, time_str.split(":"))
+            assert 0 <= hh <= 23 and 0 <= mm <= 59
+        except Exception:
+            return "❌ פורמט שגוי — דוגמה: /remind 17:30 לבדוק TSLA"
+        import os as _os
+        reminders = _os.getenv("USER_REMINDERS", "")
+        new_entry = f"{hh:02d}:{mm:02d}|{reminder_text}"
+        _os.environ["USER_REMINDERS"] = (reminders + "," + new_entry).strip(",")
+        return (
+            f"⏰ <b>תזכורת נוצרה!</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🕐  שעה: <b>{hh:02d}:{mm:02d}</b> (שעון ישראל)\n"
+            f"📌  הודעה: {reminder_text}\n\n"
+            f"✅ הבוט ישלח הודעה בשעה {hh:02d}:{mm:02d}"
+        )
+
+    # /whatsnew — last 5 bot actions
+    if cmd in ("/whatsnew", "whatsnew", "מה קרה", "פעולות אחרונות"):
+        try:
+            trades = database.get_trade_history(limit=10) or []
+            recent = trades[:5]
+            if not recent:
+                return "📋 <b>פעולות אחרונות</b>\n━━━━━━━━━━━━━━━━\n😴 אין פעולות עדיין"
+            lines = ["📋 <b>פעולות אחרונות</b>\n━━━━━━━━━━━━━━━━"]
+            for tr in recent:
+                st   = tr.get("status", "open")
+                tk   = tr.get("ticker", "?")
+                pnl  = float(tr.get("pnl_gross") or 0)
+                ep   = float(tr.get("entry_price") or 0)
+                xp   = float(tr.get("exit_price") or 0)
+                date = str(tr.get("exit_time") or tr.get("entry_time",""))[:10]
+                if st == "open":
+                    lines.append(f"🟡 <b>קנייה:</b> {tk} @ {_fmt_price(ep)}  <code>{date}</code>")
+                else:
+                    icon = "🟢" if pnl >= 0 else "🔴"
+                    reason_map = {"take_profit":"🎯","stop_loss":"🛑","smart_sell":"🧠",
+                                  "news_exit":"📰","time_exit":"⏱"}
+                    r = reason_map.get(st, "📌")
+                    lines.append(f"{icon} <b>מכירה {r}:</b> {tk}  ${pnl:+.2f}  <code>{date}</code>")
+            # Also show open positions
+            open_t = database.get_open_trades()
+            if open_t:
+                lines.append(f"\n📂 פתוח: {', '.join(tr['ticker'] for tr in open_t)}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/whatsnew] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
     # /ask QUESTION — explicit AI question (always goes to LLM)

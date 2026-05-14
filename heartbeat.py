@@ -1256,6 +1256,34 @@ async def price_alert_loop():
                             )
                     except Exception:
                         continue
+            # ── Check user reminders (set via /remind HH:MM TEXT) ────────────
+            import time as _t2
+            from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+            reminders_str = _os.getenv("USER_REMINDERS", "")
+            if reminders_str:
+                # Israel time
+                _il_off  = 3 if 3 <= _dt2.now(_tz2.utc).month <= 10 else 2
+                _now_il  = _dt2.now(_tz2.utc) + _td2(hours=_il_off)
+                _hhmm    = _now_il.strftime("%H:%M")
+                _reminders = [r.strip() for r in reminders_str.split(",") if "|" in r.strip()]
+                _fired   = []
+                _keep    = []
+                for rem in _reminders:
+                    try:
+                        rem_time, rem_text = rem.split("|", 1)
+                        if rem_time.strip() == _hhmm:
+                            _fired.append(rem_text.strip())
+                        else:
+                            _keep.append(rem)
+                    except Exception:
+                        _keep.append(rem)
+                if _fired:
+                    _os.environ["USER_REMINDERS"] = ",".join(_keep)
+                    for msg in _fired:
+                        await send_message(
+                            f"⏰ <b>תזכורת!</b>\n━━━━━━━━━━━━━━━━\n📌 {msg}"
+                        )
+
         except asyncio.CancelledError:
             raise
         except Exception as e:

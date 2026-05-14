@@ -216,6 +216,18 @@ def init_db():
     except Exception:
         pass
 
+    # Trade journal — user notes on positions and decisions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trade_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT,
+            note TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_ticker ON trade_journal(ticker)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_time ON trade_journal(created_at DESC)")
+
     # Migrate qty columns to REAL (fractional share support)
     # SQLite stores INTEGER as REAL transparently — just cast existing values
     for tbl_col in ("trade_log.qty", "shadow_trades.qty", "slippage_log.qty"):
@@ -397,6 +409,35 @@ def get_tax_summary() -> dict:
         "tax_credit": tax_bal["tax_credit"],
         "realized_pnl_net": row[2],
     }
+
+
+# ===== Trade Journal =====
+
+def add_journal_entry(note: str, ticker: str | None = None) -> int:
+    """Add a note to the trade journal. Returns the new entry id."""
+    conn = get_connection()
+    cur = conn.execute(
+        "INSERT INTO trade_journal (ticker, note) VALUES (?, ?)",
+        (ticker.upper() if ticker else None, note.strip()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_journal_entries(ticker: str | None = None, limit: int = 10) -> list[dict]:
+    """Return recent journal entries, optionally filtered by ticker."""
+    conn = get_connection()
+    if ticker:
+        rows = conn.execute(
+            "SELECT * FROM trade_journal WHERE ticker=? ORDER BY created_at DESC LIMIT ?",
+            (ticker.upper(), limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM trade_journal ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ===== Heartbeat =====
