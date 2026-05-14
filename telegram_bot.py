@@ -163,12 +163,35 @@ async def notify_trade_open(
 
     sent_label = "😨 פחד — הזדמנות" if sentiment_score <= 4 else ("🟢 חיובי" if sentiment_score >= 7 else "😐 ניטרלי")
 
+    # Fetch stop & TP from DB for immediate context
+    stop_line = ""
+    tp_line   = ""
+    try:
+        import database as _db
+        _trade = _db.get_open_trade_by_ticker(ticker)
+        if _trade:
+            _stop = _trade.get("atr_stop_price")
+            if _stop:
+                _stop_pct = (price - float(_stop)) / price * 100
+                try:
+                    from telegram_chat import _fmt_price as _fp2
+                    stop_line = f"\n🛑  Stop Loss:      {_fp2(float(_stop))}  (-{_stop_pct:.1f}%)"
+                    # Rough TP estimate: ~3× the stop distance
+                    _tp = round(price + (price - float(_stop)) * 3, 2)
+                    tp_line = f"\n🎯  יעד רווח:      {_fp2(_tp)}  (+{(_tp-price)/price*100:.1f}%)"
+                except Exception:
+                    stop_line = f"\n🛑  Stop Loss:      ${float(_stop):.2f}"
+    except Exception:
+        pass
+
     await send_message(
         f"🛒 <b>קנינו!</b>  🎉\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"💹  <b>{ticker}</b>  ·  {qty_str} מניות\n\n"
         f"📌  מחיר קנייה:   {_price_str}\n"
-        f"💸  סה״כ הושקע:  {_notional_str}\n\n"
+        f"💸  סה״כ הושקע:  {_notional_str}"
+        f"{stop_line}"
+        f"{tp_line}\n\n"
         f"🎯  ציון:           <b>{score:.0f}/100</b>  {q}\n"
         f"🧠  סנטימנט:     {sentiment_score}/10  {sent_label}"
         f"{iceberg_line}"

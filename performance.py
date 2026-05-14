@@ -263,39 +263,63 @@ def export_csv(report: PerformanceReport, output_dir: str | None = None) -> str:
 
 
 def format_telegram(report: PerformanceReport) -> str:
-    """Format a concise weekly report for Telegram (HTML mode)."""
-
-    sharpe_str = f"{report.sharpe_ratio:.2f}" if report.sharpe_ratio is not None else "N/A"
+    """Format a rich weekly report for Telegram (HTML mode)."""
+    sharpe_str   = f"{report.sharpe_ratio:.2f}" if report.sharpe_ratio is not None else "N/A"
     sharpe_grade = _grade_sharpe(report.sharpe_ratio)
-    dd_grade = "🟢" if report.max_drawdown_pct < 5 else ("🟡" if report.max_drawdown_pct < 15 else "🔴")
-    pnl_emoji = "📈" if report.total_pnl_gross >= 0 else "📉"
+    dd_grade     = "🟢" if report.max_drawdown_pct < 5 else ("🟡" if report.max_drawdown_pct < 15 else "🔴")
+    pnl_emoji    = "📈" if report.total_pnl_gross >= 0 else "📉"
+    wr           = report.overall_win_rate
+    wr_bar       = "🟢" * round(wr / 10) + "⚪" * (10 - round(wr / 10))
+
+    # ASCII equity mini-chart (last 7 data points)
+    equity_chart = ""
+    try:
+        eq_data = (report.daily_equity or [])[-7:]
+        if len(eq_data) >= 2:
+            values = [row["equity"] for row in eq_data]
+            mn, mx = min(values), max(values)
+            rng    = mx - mn or 1
+            bars   = ["▁","▂","▃","▄","▅","▆","▇","█"]
+            chart  = "".join(bars[round((v - mn) / rng * 7)] for v in values)
+            equity_chart = f"\n<code>תיק: {chart}</code>  (7 ימים)"
+    except Exception:
+        pass
 
     lines = [
-        f"📊 <b>דו״ח ביצועים שבועי</b>",
+        f"📊 <b>דו״ח שבועי</b>",
         f"📅 {report.period_start} → {report.period_end}",
-        "",
-        f"<b>── מדדים עיקריים ──</b>",
-        f"🔄 עסקאות: <b>{report.total_trades}</b>  (רווח: {report.total_wins} / הפסד: {report.total_losses})",
-        f"🎯 אחוז הצלחה: <b>{report.overall_win_rate:.1f}%</b>",
-        f"{pnl_emoji} סה״כ רווח/הפסד: <b>${report.total_pnl_gross:+.2f}</b>  (נטו ${report.total_pnl_net:+.2f})",
-        f"⚡ ממוצע לעסקה: ${report.avg_pnl_per_trade:+.2f}",
-        f"🏆 הטובה ביותר: ${report.best_trade:+.2f}   💀 הגרועה ביותר: ${report.worst_trade:+.2f}",
-        "",
+        f"━━━━━━━━━━━━━━━━",
+        f"🔄  עסקאות:      <b>{report.total_trades}</b>  (✅{report.total_wins} ❌{report.total_losses})",
+        f"🎯  Win Rate:    <b>{wr:.1f}%</b>",
+        f"    {wr_bar}",
+        f"{pnl_emoji}  רווח כולל:  <b>${report.total_pnl_gross:+.2f}</b>  (נטו ${report.total_pnl_net:+.2f})",
+        f"⚡  לעסקה:      ${report.avg_pnl_per_trade:+.2f}",
+        f"🏆  הכי טוב:   ${report.best_trade:+.2f}   |   💀 הכי גרוע: ${report.worst_trade:+.2f}",
+        f"",
         f"<b>── סיכון ──</b>",
-        f"{sharpe_grade} יחס שארפ: <b>{sharpe_str}</b>",
+        f"{sharpe_grade} שארפ: <b>{sharpe_str}</b>",
         f"{dd_grade} ירידה מקסימלית: <b>{report.max_drawdown_pct:.2f}%</b>",
-        "",
-        f"<b>── פילוח לפי אסטרטגיה ──</b>",
+        equity_chart,
+        f"",
+        f"<b>── לפי אסטרטגיה ──</b>",
     ]
 
-    for s in report.by_strategy:
+    strategy_labels = {
+        "take_profit": "🎯 יעד רווח",
+        "stop_loss":   "🛑 סטופ לוס",
+        "smart_sell":  "🧠 מכירה חכמה",
+        "news_exit":   "📰 חדשות",
+        "time_exit":   "⏱ זמן",
+    }
+    for s in sorted(report.by_strategy, key=lambda x: -abs(x.total_pnl)):
         pnl_icon = "🟢" if s.total_pnl >= 0 else "🔴"
+        label    = strategy_labels.get(s.strategy, s.strategy)
         lines.append(
-            f"{pnl_icon} <b>{s.strategy}</b>: {s.total} עסקאות | "
-            f"הצלחה {s.win_rate:.0f}% | רווח/הפסד ${s.total_pnl:+.2f}"
+            f"{pnl_icon} <b>{label}</b>: {s.total} עסקאות | "
+            f"{s.win_rate:.0f}% | ${s.total_pnl:+.2f}"
         )
 
-    return "\n".join(lines)
+    return "\n".join(l for l in lines if l is not None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

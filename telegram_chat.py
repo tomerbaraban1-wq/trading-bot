@@ -1183,30 +1183,66 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /next — next market open time
+    # /next — next market open + weekly schedule
     if cmd in ("/next", "next", "מתי שוק", "מתי נפתח", "פתיחה"):
         try:
             import broker as _br
-            clock = _br.get_clock()
             from datetime import datetime, timezone, timedelta
-            next_open = clock.get("next_open", "")
-            if next_open:
-                dt = datetime.fromisoformat(str(next_open).replace("Z", "+00:00"))
-                il_offset = 3 if 3 <= dt.month <= 10 else 2
-                dt_il = dt + timedelta(hours=il_offset)
-                now_utc = datetime.now(timezone.utc)
-                mins = int((dt - now_utc).total_seconds() / 60)
-                if mins <= 0:
-                    return "🟢 <b>השוק פתוח עכשיו!</b>"
-                h, m = divmod(mins, 60)
-                return (
-                    f"🕐 <b>פתיחת שוק הבאה</b>\n"
+            clock    = _br.get_clock()
+            now_utc  = datetime.now(timezone.utc)
+            is_edt   = 3 <= now_utc.month <= 10
+            il_off   = timedelta(hours=3 if is_edt else 2)
+            open_il  = "16:30" if is_edt else "15:30"
+            close_il = "23:00" if is_edt else "22:00"
+            now_il   = now_utc + il_off
+
+            if clock and clock.get("is_open"):
+                next_close = clock.get("next_close", "")
+                mins_left  = 0
+                if next_close:
+                    dt_close  = datetime.fromisoformat(str(next_close).replace("Z", "+00:00"))
+                    mins_left = int((dt_close - now_utc).total_seconds() / 60)
+                h, m = divmod(mins_left, 60)
+                header = (
+                    f"🟢 <b>השוק פתוח עכשיו!</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"
-                    f"🇮🇱 שעת ישראל: <b>{dt_il.strftime('%H:%M')}</b>\n"
-                    f"⏳ בעוד: <b>{h}ש' {m}ד'</b>"
+                    f"🕐  שעה: {now_il.strftime('%H:%M')} ישראל\n"
+                    f"⏳  נסגר בעוד: <b>{h}ש' {m}ד'</b>  ({close_il})"
                 )
+            else:
+                next_open = clock.get("next_open", "") if clock else ""
+                if next_open:
+                    dt_open = datetime.fromisoformat(str(next_open).replace("Z", "+00:00"))
+                    dt_il   = dt_open + il_off
+                    mins    = int((dt_open - now_utc).total_seconds() / 60)
+                    h, m    = divmod(mins, 60)
+                    header  = (
+                        f"🔴 <b>השוק סגור</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"🕐  עכשיו: {now_il.strftime('%H:%M')} ישראל\n"
+                        f"🟢  פתיחה: <b>{dt_il.strftime('%H:%M')}</b>  בעוד {h}ש' {m}ד'"
+                    )
+                else:
+                    header = f"🔴 <b>השוק סגור</b>"
+
+            # Weekly schedule
+            day_names = {0:"שני",1:"שלישי",2:"רביעי",3:"חמישי",4:"שישי",5:"שבת",6:"ראשון"}
+            sched = [f"\n<b>לוח שבועי (ישראל):</b>"]
+            for offset in range(7):
+                d     = now_utc + timedelta(days=offset)
+                wday  = d.weekday()
+                name  = day_names.get(wday, "")
+                d_str = d.strftime("%d/%m")
+                if wday < 5:   # Mon-Fri
+                    is_today = (d.date() == now_utc.date())
+                    marker   = " ◀" if is_today else ""
+                    sched.append(f"  📅 {name} {d_str}:  {open_il}–{close_il}{marker}")
+                else:
+                    sched.append(f"  🛌 {name} {d_str}:  סגור")
+
+            return header + "\n" + "\n".join(sched)
         except Exception as e:
-            logger.error(f"[CHAT CMD] Error: {e}")
+            logger.error(f"[/next] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
     # /portfolio — full allocation breakdown with visual bars
@@ -1235,29 +1271,55 @@ def _handle_command(text: str, context: dict) -> str | None:
         lines.append(f"\n━━━━━━━━━━━━━━━━\n💎 <b>סה״כ:</b>  {_fmt_price(equity)}")
         return "\n".join(lines)
 
-    # /summary — weekly performance summary
+    # /summary — weekly performance summary with mini-chart
     if cmd in ("/summary", "summary", "סיכום שבועי", "שבוע"):
         try:
             import database as _db
             from datetime import datetime, timezone, timedelta
-            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-            trades = _db.get_trade_history(limit=100)
-            weekly = [t for t in trades if t.get("exit_time", "")[:10] >= week_ago and t.get("pnl_gross") is not None]
-            wins = [t for t in weekly if (t.get("pnl_gross") or 0) > 0]
-            total_pnl = sum(t.get("pnl_gross") or 0 for t in weekly)
-            wr = round(len(wins) / len(weekly) * 100, 1) if weekly else 0
+            now_utc  = datetime.now(timezone.utc)
+            week_ago = (now_utc - timedelta(days=7)).strftime("%Y-%m-%d")
+            trades   = _db.get_trade_history(limit=150) or []
+            weekly   = [t for t in trades
+                        if str(t.get("exit_time",""))[:10] >= week_ago
+                        and t.get("pnl_gross") is not None]
+            if not weekly:
+                return f"📅 <b>סיכום 7 ימים</b>\n━━━━━━━━━━━━━━━━\n😴 לא היו עסקאות השבוע"
+
+            wins      = [t for t in weekly if float(t.get("pnl_gross") or 0) > 0]
+            total_pnl = sum(float(t.get("pnl_gross") or 0) for t in weekly)
+            wr        = round(len(wins) / len(weekly) * 100, 1) if weekly else 0
+
+            # Daily P&L mini-chart (last 7 days)
+            daily_pnl: dict[str, float] = {}
+            for tr in weekly:
+                day = str(tr.get("exit_time",""))[:10]
+                daily_pnl[day] = daily_pnl.get(day, 0) + float(tr.get("pnl_gross") or 0)
+            days_sorted = sorted(daily_pnl.keys())[-7:]
+            bars = ["▁","▂","▃","▄","▅","▆","▇","█"]
+            pnls = [daily_pnl[d] for d in days_sorted]
+            mn, mx = min(pnls), max(pnls)
+            rng = mx - mn or 1
+            chart = "".join(bars[round((v - mn) / rng * 7)] for v in pnls)
+            chart_line = f"\n<code>P&L: {chart}</code>  ({len(days_sorted)} ימים)"
+
+            # Per-day breakdown
+            day_lines = []
+            for day in days_sorted[-5:]:
+                p = daily_pnl[day]
+                icon = "🟢" if p >= 0 else "🔴"
+                day_lines.append(f"  {icon} {day[5:]}:  ${p:+.2f}")
+
             return (
                 f"📅 <b>סיכום 7 ימים</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🔢 עסקאות: {len(weekly)}\n"
-                f"✅ זכיות: {len(wins)} | ❌ הפסדים: {len(weekly)-len(wins)}\n"
-                f"🎯 אחוז הצלחה: <b>{wr}%</b>\n"
-                f"💰 רווח שבועי: {_fmt_pnl(total_pnl)}"
-                if weekly else
-                f"📅 <b>סיכום 7 ימים</b>\n━━━━━━━━━━━━━━━━\n😴 לא היו עסקאות השבוע"
+                f"🔢  עסקאות: <b>{len(weekly)}</b>  (✅{len(wins)} ❌{len(weekly)-len(wins)})\n"
+                f"🎯  Win Rate: <b>{wr}%</b>\n"
+                f"💰  רווח שבועי: {_fmt_pnl(total_pnl)}"
+                f"{chart_line}\n\n"
+                f"<b>יומי:</b>\n" + "\n".join(day_lines)
             )
         except Exception as e:
-            logger.error(f"[CHAT CMD] Error: {e}")
+            logger.error(f"[/summary] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
     # /best — best performing position ever
@@ -1468,19 +1530,41 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /budget — budget settings
+    # /budget — budget settings + capacity
     if cmd in ("/budget", "budget", "תקציב", "הגדרות"):
-        from config import settings
-        return (
-            f"⚙️ <b>הגדרות הבוט</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"💰 תקציב: ${settings.MAX_BUDGET:,.0f}\n"
-            f"📏 פוזיציה מקסימלית: {settings.MAX_POSITION_PCT}%\n"
-            f"🔢 פוזיציות מקסימום: {settings.MAX_OPEN_POSITIONS}\n"
-            f"🛑 Stop Loss: {settings.STOP_LOSS_PCT}%\n"
-            f"🎯 יעד רווח/הפסד: {settings.TAKE_PROFIT_PCT}%\n"
-            f"🤖 ברוקר: {settings.ACTIVE_BROKER}"
-        )
+        try:
+            cash     = context.get("cash", 0)
+            equity   = context.get("equity", 0) or settings.MAX_BUDGET
+            n_open   = context.get("open_positions_count", 0)
+            max_pos  = settings.MAX_OPEN_POSITIONS
+            capacity = max_pos - n_open
+            # Kelly info
+            kelly_line = ""
+            try:
+                from budget import _kelly_fraction
+                kf = _kelly_fraction()
+                if kf and kf > 0:
+                    kelly_line = f"\n📐  Kelly Fraction:  <b>{kf*100:.1f}%</b>"
+            except Exception:
+                pass
+            # How much per new position
+            pos_budget = equity * settings.MAX_POSITION_PCT / 100
+            return (
+                f"⚙️ <b>הגדרות הבוט</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💰  תקציב:              ${settings.MAX_BUDGET:,.0f}\n"
+                f"💵  מזומן פנוי:         {_fmt_price(cash)}\n"
+                f"📂  פוזיציות:           <b>{n_open}/{max_pos}</b>  "
+                f"({'✅ יש מקום ל-' + str(capacity) if capacity > 0 else '⛔ מלא'})\n"
+                f"📏  גודל פוזיציה מקס:  {settings.MAX_POSITION_PCT}%  (~{_fmt_price(pos_budget)})\n"
+                f"🛑  Stop Loss:          {settings.STOP_LOSS_PCT}%\n"
+                f"🎯  יעד רווח:           {settings.TAKE_PROFIT_PCT}%"
+                f"{kelly_line}\n"
+                f"🤖  ברוקר:             {settings.ACTIVE_BROKER}"
+            )
+        except Exception as e:
+            logger.error(f"[/budget] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /newscheck — force immediate news sentiment check on all open positions
     if cmd in ("/newscheck", "newscheck", "בדוק חדשות", "חדשות חדשות"):
