@@ -363,13 +363,16 @@ async def stop_loss_monitor():
                                     _sp = f"${new_stop:.2f}"
                                     _tp = f"${_tp_price:.2f}" if _tp_price else "N/A"
                                     _pp = f"${abs(_pnl_now):.2f}"
+                                # Is the new stop above or below entry? → profit or loss if triggered
+                                _stop_in_profit = new_stop > _entry
+                                _stop_label = "סטופ לוס ברווח 💚" if _stop_in_profit else "סטופ לוס בהפסד ❤️"
                                 _create_background_task(send_message(
                                     f"🛡️ <b>סטופ לוס הועלה</b>  ✨\n"
                                     f"━━━━━━━━━━━━━━━━\n"
                                     f"💹  <b>{ticker}</b>  ·  {_qty} מניות\n\n"
                                     f"📌  מחיר קנייה:      {_ep}\n"
                                     f"🎯  טייק פרופיט:   {_tp}\n"
-                                    f"🛑  סטופ לוס:         <b>{_sp}</b>\n\n"
+                                    f"🛑  {_stop_label}:  <b>{_sp}</b>\n\n"
                                     f"📍  מחיר עכשיו:   {_cp}  <b>({_pnl_pct:+.1f}%)</b>\n"
                                     f"{'💚' if _pnl_now >= 0 else '❤️'}  {'רווח' if _pnl_now >= 0 else 'הפסד'} כרגע:  <b>{_pp}</b>"
                                 ))
