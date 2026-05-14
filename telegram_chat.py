@@ -543,6 +543,17 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/alert AAPL 200 — התראת מחיר\n"
             "/budget — הגדרות\n"
             "/diagnose — למה לא קונה?\n\n"
+            "━━ 📊 <b>עוד פקודות</b> ━━\n"
+            "/portfolio — הקצאת תיק (%)\n"
+            "/next — מתי השוק נפתח\n"
+            "/summary — סיכום 7 ימים\n"
+            "/best — העסקה הטובה ביותר\n"
+            "/worst — העסקה הגרועה ביותר\n"
+            "/uptime — כמה זמן הבוט רץ\n"
+            "/taxes — סיכום מס\n"
+            "/risk — ניתוח סיכון\n"
+            "/sector AAPL — סקטור המניה\n"
+            "/watchlist — רשימת הסריקה\n\n"
             "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
 
@@ -803,6 +814,132 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"🏆 High: {_fmt_price(wm)}\n"
             f"📏 מרחק: <b>{dist:.1f}%</b>"
         )
+
+    # /next — next market open time
+    if cmd in ("/next", "next", "מתי שוק", "מתי נפתח", "פתיחה"):
+        try:
+            import broker as _br
+            clock = _br.get_clock()
+            from datetime import datetime, timezone, timedelta
+            next_open = clock.get("next_open", "")
+            if next_open:
+                dt = datetime.fromisoformat(str(next_open).replace("Z", "+00:00"))
+                il_offset = 3 if 3 <= dt.month <= 10 else 2
+                dt_il = dt + timedelta(hours=il_offset)
+                now_utc = datetime.now(timezone.utc)
+                mins = int((dt - now_utc).total_seconds() / 60)
+                if mins <= 0:
+                    return "🟢 <b>השוק פתוח עכשיו!</b>"
+                h, m = divmod(mins, 60)
+                return (
+                    f"🕐 <b>פתיחת שוק הבאה</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"🇮🇱 שעת ישראל: <b>{dt_il.strftime('%H:%M')}</b>\n"
+                    f"⏳ בעוד: <b>{h}ש' {m}ד'</b>"
+                )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /portfolio — full allocation breakdown
+    if cmd in ("/portfolio", "portfolio", "הקצאה", "פיזור"):
+        positions = context.get("open_positions", [])
+        equity = context.get("equity", 1)
+        cash = context.get("cash", 0)
+        if not positions and cash == 0:
+            return "📭 התיק ריק"
+        lines = [f"📊 <b>הקצאת תיק</b>\n━━━━━━━━━━━━━━━━"]
+        cash_pct = cash / equity * 100 if equity else 0
+        lines.append(f"💵 מזומן: {_fmt_price(cash)} ({cash_pct:.1f}%)")
+        for p in positions:
+            val = p.get("value", p["qty"] * p["current"])
+            pct = val / equity * 100 if equity else 0
+            lines.append(f"📈 <b>{p['ticker']}</b>: {_fmt_price(val)} ({pct:.1f}%)")
+        lines.append(f"━━━━━━━━━━━━━━━━\n💎 סה״כ: {_fmt_price(equity)}")
+        return "\n".join(lines)
+
+    # /summary — weekly performance summary
+    if cmd in ("/summary", "summary", "סיכום שבועי", "שבוע"):
+        try:
+            import database as _db
+            from datetime import datetime, timezone, timedelta
+            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+            trades = _db.get_trade_history(limit=100)
+            weekly = [t for t in trades if t.get("exit_time", "")[:10] >= week_ago and t.get("pnl_gross") is not None]
+            wins = [t for t in weekly if (t.get("pnl_gross") or 0) > 0]
+            total_pnl = sum(t.get("pnl_gross") or 0 for t in weekly)
+            wr = round(len(wins) / len(weekly) * 100, 1) if weekly else 0
+            return (
+                f"📅 <b>סיכום 7 ימים</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔢 עסקאות: {len(weekly)}\n"
+                f"✅ זכיות: {len(wins)} | ❌ הפסדים: {len(weekly)-len(wins)}\n"
+                f"🎯 אחוז הצלחה: <b>{wr}%</b>\n"
+                f"💰 רווח שבועי: {_fmt_pnl(total_pnl)}"
+                if weekly else
+                f"📅 <b>סיכום 7 ימים</b>\n━━━━━━━━━━━━━━━━\n😴 לא היו עסקאות השבוע"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /best — best performing position ever
+    if cmd in ("/best", "best", "הכי טוב", "הצלחה"):
+        try:
+            import database as _db
+            wins = _db.get_win_trades(limit=50)
+            if not wins:
+                return "📭 אין עסקאות רווחיות עדיין"
+            best = max(wins, key=lambda t: t.get("pnl_gross") or 0)
+            pnl = best.get("pnl_gross", 0)
+            return (
+                f"🏆 <b>העסקה הטובה ביותר</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 מניה: <b>{best['ticker']}</b>\n"
+                f"💵 כניסה: {_fmt_price(best['entry_price'])}\n"
+                f"💵 יציאה: {_fmt_price(best.get('exit_price', 0))}\n"
+                f"💰 רווח: <b>{_fmt_pnl(pnl)}</b>\n"
+                f"📅 תאריך: {str(best.get('exit_time', ''))[:10]}"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /worst — worst losing trade
+    if cmd in ("/worst", "worst", "הכי גרוע", "הפסד גדול"):
+        try:
+            import database as _db
+            losses = _db.get_loss_trades(limit=50)
+            if not losses:
+                return "✅ אין עסקאות מפסידות עדיין!"
+            worst = min(losses, key=lambda t: t.get("pnl_gross") or 0)
+            pnl = worst.get("pnl_gross", 0)
+            return (
+                f"📉 <b>העסקה הגרועה ביותר</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 מניה: <b>{worst['ticker']}</b>\n"
+                f"💵 כניסה: {_fmt_price(worst['entry_price'])}\n"
+                f"💵 יציאה: {_fmt_price(worst.get('exit_price', 0))}\n"
+                f"💸 הפסד: <b>{_fmt_pnl(pnl)}</b>\n"
+                f"📅 תאריך: {str(worst.get('exit_time', ''))[:10]}"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /uptime — bot running time
+    if cmd in ("/uptime", "uptime", "כמה זמן רץ", "זמן פעילות"):
+        try:
+            import requests as _req, os as _os
+            base = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
+            r = _req.get(f"{base}/health?t=up", timeout=5)
+            secs = r.json().get("uptime_seconds", 0)
+            h, rem = divmod(int(secs), 3600)
+            m = rem // 60
+            return (
+                f"🤖 <b>זמן פעילות הבוט</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"⏱ פעיל: <b>{h} שעות ו-{m} דקות</b>\n"
+                f"✅ הבוט רץ ברציפות"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
 
     # /taxes — tax summary
     if cmd in ("/taxes", "taxes", "מס", "מיסים"):
