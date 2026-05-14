@@ -589,14 +589,16 @@ async def stop_loss_monitor():
                                 except Exception:
                                     pass
                                 record_trade_result(_half_pnl)   # update circuit breaker
-                                # Mark Stage 1 done by pushing watermark above stage-1 threshold.
-                                # Use cur_price (not stale new_wm) to guarantee _stage1_done=True next cycle.
+                                # Mark Stage 1 done — MUST succeed to prevent double-sell next cycle
                                 _s1_wm_mark = round(trade["entry_price"] * (1 + _stage1_pct / 100 + 0.003), 4)
                                 _s1_wm_final = max(cur_price, _s1_wm_mark)
-                                await asyncio.to_thread(
-                                    database.update_trade_stop, trade["id"], atr_stop, _s1_wm_final
-                                )
-                                high_wm = _s1_wm_final
+                                try:
+                                    await asyncio.to_thread(
+                                        database.update_trade_stop, trade["id"], atr_stop, _s1_wm_final
+                                    )
+                                    high_wm = _s1_wm_final
+                                except Exception as _wm_err:
+                                    logger.critical(f"[PARTIAL TP S1] {ticker}: WATERMARK UPDATE FAILED: {_wm_err} — may double-sell!")
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -634,6 +636,16 @@ async def stop_loss_monitor():
                                 except Exception:
                                     pass
                                 record_trade_result(_s2_pnl)
+                                # Mark Stage 2 done to prevent double-sell next cycle
+                                _s2_wm_mark = round(trade["entry_price"] * (1 + _stage2_pct / 100 + 0.003), 4)
+                                _s2_wm_final = max(cur_price, _s2_wm_mark)
+                                try:
+                                    await asyncio.to_thread(
+                                        database.update_trade_stop, trade["id"], atr_stop, _s2_wm_final
+                                    )
+                                    high_wm = _s2_wm_final
+                                except Exception as _wm2_err:
+                                    logger.critical(f"[PARTIAL TP S2] {ticker}: WATERMARK UPDATE FAILED: {_wm2_err} — may double-sell!")
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -1467,7 +1479,7 @@ async def eod_sweep_loop():
                     await send_message(
                         f"🌙 <b>סיכום סוף יום</b>\n"
                         f"מכרתי {swept} פוזיציות 'כסף מת' — שטוחות + ציון נמוך\n"
-                        f"✅ ניפינו הון לחר מחר"
+                        f"✅ ניפינו הון למחר"
                     )
 
         except asyncio.CancelledError:
@@ -1934,7 +1946,7 @@ async def backtest_learning_loop():
             from backtest_learner import run_backtest, apply_insights
             from scanner import get_watchlist as _gwl
             result = await asyncio.to_thread(run_backtest, _gwl()[:25])
-            update = apply_insights()
+            update = await asyncio.to_thread(apply_insights)
             await send_message(
                 f"🎓 <b>למידה מהיסטוריה</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
