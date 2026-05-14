@@ -89,6 +89,9 @@ async def lifespan(app: FastAPI):
                     {"command": "sectors",   "description": "📈 דירוג סקטורים"},
                     {"command": "pause",     "description": "⏸️ עצור קניות חדשות"},
                     {"command": "resume",    "description": "▶️ חדש קניות"},
+                    {"command": "diagnose",  "description": "🔍 למה הבוט לא קונה?"},
+                    {"command": "backtest",  "description": "🧠 תוצאות למידה היסטורית"},
+                    {"command": "log",       "description": "📋 לוג סריקות"},
                     {"command": "help",      "description": "❓ כל הפקודות"},
                 ]
                 async with _sess.post(

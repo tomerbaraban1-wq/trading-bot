@@ -516,6 +516,11 @@ def _handle_command(text: str, context: dict) -> str | None:
             "⏸️ /pause — עצור קניות\n"
             "▶️ /resume — חדש קניות\n"
             "🔻 /sell AAPL — מכור מניה ספציפית\n"
+            "📰 /news AAPL — חדשות על מניה\n"
+            "🎯 /score AAPL — ציון מניה עכשיו\n"
+            "🔍 /diagnose — למה הבוט לא קונה?\n"
+            "🧠 /backtest — הפעל למידה היסטורית\n"
+            "📋 /log — לוג סריקות אחרונות\n"
             "❓ /help — הודעה זו\n\n"
             "<i>אפשר גם לשאול בעברית חופשית!</i>"
         )
@@ -581,6 +586,90 @@ def _handle_command(text: str, context: dict) -> str | None:
             )
         except Exception as e:
             return f"❌ לא הצלחתי לקבל מצב שוק: {e}"
+
+    # /news TICKER
+    if cmd in ("/news", "news", "חדשות") and len(t.split()) > 1:
+        _ticker = t.split()[1].upper()
+        try:
+            from news_service import get_headlines
+            headlines = get_headlines(_ticker, limit=5)
+            if not headlines:
+                return f"❌ לא נמצאו חדשות עבור <b>{_ticker}</b>"
+            lines = [f"📰 <b>חדשות — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
+            for i, h in enumerate(headlines, 1):
+                lines.append(f"{i}. {h}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /score TICKER
+    if cmd in ("/score", "score", "ציון") and len(t.split()) > 1:
+        _ticker = t.split()[1].upper()
+        try:
+            from scoring import get_composite_score
+            from sentiment import score_sentiment
+            sent = score_sentiment(_ticker)
+            result = get_composite_score(_ticker, sent.score)
+            score = result["composite_score"]
+            decision = "✅ קנה" if result["should_buy"] else "❌ דלג"
+            vix = result.get("vix", "N/A")
+            return (
+                f"🎯 <b>ציון — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 ציון כולל: <b>{score}/100</b>\n"
+                f"🔧 טכני: {result['scores']['technicals']}/100\n"
+                f"🌍 שוק: {result['scores']['market']}/100\n"
+                f"🧠 סנטימנט: {sent.score}/10\n"
+                f"📉 VIX: {vix}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"<b>{decision}</b>"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /diagnose
+    if cmd in ("/diagnose", "diagnose", "אבחון", "למה לא קונה"):
+        try:
+            import requests as _req
+            import os as _os
+            base = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
+            resp = _req.get(f"{base}/diagnose", timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                summary = data.get("summary", {})
+                blockers = summary.get("blockers", [])
+                verdict = summary.get("verdict", "")
+                lines = [f"🔍 <b>אבחון</b>\n━━━━━━━━━━━━━━━━"]
+                lines.append(verdict)
+                if blockers:
+                    lines.append("\n<b>חסמים:</b>")
+                    for b in blockers:
+                        lines.append(f"⛔ {b}")
+                return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /backtest
+    if cmd in ("/backtest", "backtest", "למידה היסטורית"):
+        try:
+            from backtest_learner import get_insights
+            insights = get_insights()
+            if insights.get("status") == "not_run_yet":
+                return "⏳ הלמידה עוד לא רצה — תופעל בראשון הקרוב בערב"
+            wr = insights.get("overall_win_rate", 0)
+            total = insights.get("total_signals", 0)
+            optimal = insights.get("optimal_min_score", 58)
+            computed = insights.get("computed_at", "")
+            return (
+                f"🧠 <b>למידה היסטורית</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 סיגנלים שנותחו: {total}\n"
+                f"✅ אחוז הצלחה: <b>{wr:.1f}%</b>\n"
+                f"🎯 ציון אופטימלי: <b>{optimal}</b>\n"
+                f"🕐 עודכן: {computed}"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
 
     if cmd in ("/log", "לוג", "log"):
         return (
