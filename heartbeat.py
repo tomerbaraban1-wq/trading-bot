@@ -433,7 +433,7 @@ async def stop_loss_monitor():
                         _atr_val = await asyncio.to_thread(_fetch_atr, ticker, trade["entry_price"])
                         _atr_tp_pct = min(
                             settings.TAKE_PROFIT_PCT,                    # cap at fixed TP
-                            max(3.0, (_atr_val / trade["entry_price"]) * 100 * 4)  # 4×ATR, min 3%
+                            max(4.0, (_atr_val / trade["entry_price"]) * 100 * 6)  # 6×ATR (was 4×) — let winners run
                         )
                     except Exception:
                         _atr_tp_pct = settings.TAKE_PROFIT_PCT
