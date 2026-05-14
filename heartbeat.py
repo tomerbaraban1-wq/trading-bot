@@ -326,6 +326,31 @@ async def stop_loss_monitor():
                             f"({stop_meta['stop_pct']:.2f}% from entry)"
                         )
 
+                    # ── Break-even lock: once price > entry + 1.5%, floor stop at entry ──
+                    # This guarantees the trade can't turn into a loss after a decent move.
+                    _entry_price = trade["entry_price"]
+                    _breakeven_trigger = 1.5  # % above entry to activate BE lock
+                    if (atr_stop is not None
+                            and atr_stop < _entry_price
+                            and plpc >= _breakeven_trigger):
+                        _be_stop = round(_entry_price * 1.001, 4)  # 0.1% above entry (covers slippage)
+                        if _be_stop > atr_stop:
+                            atr_stop = _be_stop
+                            await asyncio.to_thread(
+                                database.update_trade_stop, trade["id"], atr_stop, high_wm
+                            )
+                            logger.info(
+                                f"[BE LOCK] {ticker}: stop floored to entry "
+                                f"${_be_stop:.2f} (+{plpc:.1f}% | trigger={_breakeven_trigger}%)"
+                            )
+                            _create_background_task(send_message(
+                                f"🔒 <b>סטופ הועבר לנקודת איזון — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"✅  הרווח הוגן של {plpc:.1f}% הופעל\n"
+                                f"🛡️  הסטופ עלה לנקודת הכניסה — הסיכון = 0\n"
+                                f"📍  מחיר עכשיו: <b>${cur_price:.2f}</b>  ·  כניסה: <b>${_entry_price:.2f}</b>"
+                            ))
+
                     # Trail the stop upward as price rises
                     new_stop, new_wm, raised = await asyncio.to_thread(
                         update_trailing_stop,
@@ -430,7 +455,7 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
-                    # ── 2. Take Profit — ATR-based (4× ATR) or fixed ceiling ──
+                    # ── 2. Take Profit — ATR-based (6× ATR) or fixed ceiling ──
                     # ATR-based TP is achievable for low-vol stocks (MO ~2%, V ~4%)
                     # Fixed TP is the safety cap for high-vol stocks
                     try:
@@ -438,10 +463,31 @@ async def stop_loss_monitor():
                         _atr_val = await asyncio.to_thread(_fetch_atr, ticker, trade["entry_price"])
                         _atr_tp_pct = min(
                             settings.TAKE_PROFIT_PCT,                    # cap at fixed TP
-                            max(4.0, (_atr_val / trade["entry_price"]) * 100 * 6)  # 6×ATR (was 4×) — let winners run
+                            max(4.0, (_atr_val / trade["entry_price"]) * 100 * 6)  # 6×ATR — let winners run
                         )
                     except Exception:
                         _atr_tp_pct = settings.TAKE_PROFIT_PCT
+
+                    # ── 2a. Profit-zone tightening: once +5%, shrink ATR multiplier ──
+                    # Standard: 2.0× ATR distance.  Deep-profit zone: 1.2× ATR distance.
+                    # This locks in more gains when the trade is already well in profit.
+                    if plpc >= 5.0:
+                        try:
+                            from atr_stop import _fetch_atr as _atr_fn
+                            import os as _os2
+                            _atr2 = await asyncio.to_thread(_atr_fn, ticker, trade["entry_price"])
+                            _tight_stop = round(cur_price - _atr2 * 1.2, 4)  # 1.2× (vs default 2.0×)
+                            if _tight_stop > atr_stop:
+                                atr_stop = _tight_stop
+                                await asyncio.to_thread(
+                                    database.update_trade_stop, trade["id"], atr_stop, high_wm
+                                )
+                                logger.info(
+                                    f"[TIGHT TRAIL] {ticker}: profit-zone tightened stop to "
+                                    f"${atr_stop:.2f} (1.2×ATR @ +{plpc:.1f}%)"
+                                )
+                        except Exception:
+                            pass  # fail-open
 
                     # Scale-out exit plan (sell in thirds):
                     #   Stage 1 — sell 50% at 50% of ATR TP
@@ -864,6 +910,22 @@ async def auto_invest_loop():
                                 continue
                         except _asyncio.TimeoutError:
                             logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
+
+                        # Sector diversification — skip if already holding a stock from same sector
+                        try:
+                            from sector_rotation import get_sector_for_ticker as _sector_of
+                            _new_sector = _sector_of(ticker)
+                            if _new_sector:
+                                _open_trades = database.get_open_trades()
+                                _open_sectors = [_sector_of(_ot["ticker"]) for _ot in _open_trades]
+                                if _open_sectors.count(_new_sector) >= 1:
+                                    logger.info(
+                                        f"AUTO-INVEST: {ticker} skipped — "
+                                        f"sector {_new_sector} already held"
+                                    )
+                                    continue
+                        except Exception:
+                            pass  # fail-open: proceed if sector check fails
 
                         # Risk-based position sizing (replaces naive "available/price")
                         # Pass composite score so high-conviction signals get larger positions

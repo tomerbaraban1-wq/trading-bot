@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 _htf_cache: dict[str, tuple[float, bool]] = {}
 _HTF_CACHE_TTL = 4 * 3600  # seconds
 
+# ── Relative Strength vs SPY Cache ───────────────────────────────────────────
+# RS calc downloads 3 months of data — cache for 2 hours (changes slowly)
+_rs_cache: dict[str, tuple[float, float]] = {}  # ticker → (rs_ratio, timestamp)
+_RS_CACHE_TTL = 2 * 3600
+
 # ── Pre-Market Gap Cache ──────────────────────────────────────────────────────
 # Stores (timestamp, result_dict) per ticker; TTL = 30 minutes
 _premarket_gap_cache: dict[str, tuple[float, dict]] = {}
@@ -582,19 +587,28 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     except Exception:
         pass
 
-    # ── Relative Strength vs SPY ──────────────────────────────────────────
+    # ── Relative Strength vs SPY (cached 2h) ─────────────────────────────────
     # Stocks outperforming the market get a bonus — buy market leaders, not laggards
     rs_bonus = 0
     try:
         import yfinance as _yf
-        _tickers = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
-        if ticker in _tickers.columns and "SPY" in _tickers.columns:
-            _sr = float(_tickers[ticker].iloc[-1] / _tickers[ticker].iloc[0])
-            _sb = float(_tickers["SPY"].iloc[-1] / _tickers["SPY"].iloc[0])
-            _rs = _sr / _sb if _sb > 0 else 1.0
-            if _rs >= 1.15:   rs_bonus = 8   # strong leader: +15% vs SPY
-            elif _rs >= 1.05: rs_bonus = 4   # mild outperformance
-            elif _rs <= 0.90: rs_bonus = -5  # laggard: penalize
+        import threading as _thr
+        _rs_now = _time_module.time()
+        _cached_rs = _rs_cache.get(ticker)
+        if _cached_rs and _rs_now - _cached_rs[1] < _RS_CACHE_TTL:
+            _rs = _cached_rs[0]
+        else:
+            _tickers_dl = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
+            if ticker in _tickers_dl.columns and "SPY" in _tickers_dl.columns:
+                _sr = float(_tickers_dl[ticker].iloc[-1] / _tickers_dl[ticker].iloc[0])
+                _sb = float(_tickers_dl["SPY"].iloc[-1] / _tickers_dl["SPY"].iloc[0])
+                _rs = _sr / _sb if _sb > 0 else 1.0
+                _rs_cache[ticker] = (_rs, _rs_now)
+            else:
+                _rs = 1.0
+        if _rs >= 1.15:   rs_bonus = 8   # strong leader: +15% vs SPY
+        elif _rs >= 1.05: rs_bonus = 4   # mild outperformance
+        elif _rs <= 0.90: rs_bonus = -5  # laggard: penalize
     except Exception:
         pass
     composite = round(min(100, max(0, composite + rs_bonus)), 1)
