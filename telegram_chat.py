@@ -520,6 +520,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/risk — ניתוח סיכון\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
             "/score AAPL — ניתוח עם Progress Bars\n"
+            "/52week AAPL — מיקום ב-52 שבועות\n"
             "/price AAPL — מחיר מיידי\n"
             "/news AAPL — חדשות + סנטימנט AI\n"
             "/newscheck — בדיקת חדשות לכל הפוזיציות\n"
@@ -557,7 +558,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/next — מתי השוק נפתח\n"
             "/uptime — כמה זמן הבוט רץ\n\n"
             "━━ 🧠 <b>AI</b> ━━\n"
+            "/ask מה לעשות עם AAPL? — שאלה חופשית\n"
             "/advice — ייעוץ AI על התיק\n"
+            "/explain RSI — הסבר מונח פיננסי\n"
             "/streak — רצף ניצחונות/הפסדות\n\n"
             "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
@@ -598,6 +601,22 @@ def _handle_command(text: str, context: dict) -> str | None:
             for p in positions:
                 icon = "🟢" if p["pnl"] >= 0 else "🔴"
                 lines.append(f"  {icon} <b>{p['ticker']}</b>  {p['pct']:+.1f}%  |  {_fmt_pnl(p['pnl'], False)}")
+
+        # Smart action suggestion based on state
+        lines.append(f"\n━━━━━━━━━━━━━━━━\n💡 <i>")
+        if not positions and cash > 0 and not context.get("circuit_breaker"):
+            lines.append("אין פוזיציות — נסה /top לראות הזדמנויות</i>")
+        elif positions and len(positions) >= max_pos:
+            best_win = max(positions, key=lambda p: p["pct"]) if positions else None
+            if best_win and best_win["pct"] >= 5:
+                lines.append(f"ברווח יפה ב-{best_win['ticker']} — שקול /stop {best_win['ticker']}</i>")
+            else:
+                lines.append("תיק מלא — /risk לניתוח סיכון | /newscheck לחדשות</i>")
+        elif context.get("circuit_breaker"):
+            lines.append("Circuit Breaker פעיל — /diagnose לבדיקה</i>")
+        else:
+            lines.append("/top לסריקה | /market למצב שוק | /risk לניתוח</i>")
+
         return "\n".join(lines)
 
     if cmd in ("/pause", "עצור", "עצור קניות", "pause"):
@@ -713,6 +732,132 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception as e:
             logger.error(f"[/market] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
+
+    # /ask QUESTION — explicit AI question (always goes to LLM)
+    if cmd in ("/ask", "ask", "שאל", "שאלה") and len(t.split()) > 1:
+        question = text[len(t.split()[0]):].strip()
+        if not question:
+            return "💬 שאל כל שאלה!\nדוגמה: <code>/ask האם כדאי לקנות AAPL עכשיו?</code>"
+        client = _get_client()
+        if not client:
+            return "⚙️ Groq API לא מוגדר"
+        try:
+            ctx       = context
+            ils_rate  = _get_usd_ils()
+            positions = ctx.get("open_positions", [])
+            pos_brief = ", ".join(f"{p['ticker']} {p['pct']:+.1f}%" for p in positions) or "אין"
+            equity    = ctx.get("equity", 0)
+            vix       = ctx.get("vix", "N/A")
+            resp = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[
+                    {"role": "system", "content":
+                        f"אתה מנהל השקעות מקצועי. ענה בעברית בלבד, קצר וממוקד (עד 5 שורות).\n"
+                        f"תיק: ${equity:,.0f} | VIX: {vix} | פוזיציות: {pos_brief}\n"
+                        f"שער דולר: ₪{ils_rate:.2f}"},
+                    {"role": "user", "content": question},
+                ],
+                max_tokens=300, temperature=0.4,
+            )
+            answer = resp.choices[0].message.content.strip()
+            return f"🤖 <b>AI</b>\n━━━━━━━━━━━━━━━━\n{answer}"
+        except Exception as e:
+            logger.error(f"[/ask] Error: {type(e).__name__}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /52week TICKER — 52-week context
+    if cmd in ("/52week", "/52", "52week", "שיא", "שפל") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /52week AAPL"
+        try:
+            import yfinance as _yf
+            tk   = _yf.Ticker(_ticker)
+            info = tk.fast_info
+            cur  = float(getattr(info, "last_price", 0) or 0)
+            hi52 = float(getattr(info, "year_high",  0) or 0)
+            lo52 = float(getattr(info, "year_low",   0) or 0)
+            if cur <= 0 or hi52 <= 0:
+                return f"❌ לא הצלחתי לקבל נתונים עבור {_ticker}"
+            # Where is current price in 52w range?
+            rng  = hi52 - lo52
+            pos  = (cur - lo52) / rng * 100 if rng else 50
+            bar_fill = round(pos / 5)
+            bar  = "░" * (20 - bar_fill) + "▌" + ""
+            bar  = "▓" * bar_fill + "│" + "░" * (20 - bar_fill)
+            # Signal
+            if pos >= 90:   signal = "🔴 ליד שיא — שים לב לתנגדות"
+            elif pos >= 70: signal = "🟡 טוב, מעל אמצע הטווח"
+            elif pos <= 20: signal = "🟢 ליד שפל — הזדמנות פוטנציאלית"
+            else:           signal = "⚪ אמצע הטווח"
+            pct_from_high = (hi52 - cur) / hi52 * 100
+            pct_from_low  = (cur - lo52) / lo52 * 100
+            return (
+                f"📏 <b>52 שבועות — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🏔️  שיא:    {_fmt_price(hi52)}  (-{pct_from_high:.1f}% ממנו)\n"
+                f"📍  עכשיו:  <b>{_fmt_price(cur)}</b>\n"
+                f"🏔️  שפל:   {_fmt_price(lo52)}  (+{pct_from_low:.1f}% ממנו)\n\n"
+                f"<code>שפל{bar}שיא</code>\n"
+                f"מיקום: <b>{pos:.0f}%</b> מהטווח\n\n"
+                f"{signal}"
+            )
+        except Exception as e:
+            logger.error(f"[/52week] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /explain TERM — explain financial terms in simple Hebrew
+    if cmd in ("/explain", "explain", "הסבר", "מה זה") and len(t.split()) > 1:
+        term = " ".join(t.split()[1:]).strip().lower()
+        explanations = {
+            "rsi":         ("📊 RSI — מדד כוח יחסי",
+                            "מספר בין 0-100. מתחת ל-30 = מניה 'מכורה יתר' (קנייה פוטנציאלית). "
+                            "מעל 70 = 'קנייה יתר' (שים לב). הבוט מחפש RSI 35-65 — לא קיצוני."),
+            "atr":         ("📐 ATR — טווח אמיתי ממוצע",
+                            "כמה דולר המניה זזה בממוצע ביום. TSLA עם ATR=$10 = נורמלי לזוז $10 ביום. "
+                            "הבוט מגדיר Stop Loss לפי ATR — מניות תנודתיות מקבלות stop רחב יותר."),
+            "stop loss":   ("🛑 Stop Loss — עצירת הפסד",
+                            "מחיר שמתחתיו הבוט מוכר אוטומטית. דוגמה: קנית ב-$100, Stop ב-$95 — "
+                            "אם המחיר יורד ל-$95 הבוט מוכר מיד. מגן מהפסדים גדולים."),
+            "trailing stop": ("🔄 Trailing Stop — עצירה נגררת",
+                              "Stop שעולה עם המחיר. קנית ב-$100, Stop ב-$95. מחיר עלה ל-$110 — "
+                              "Stop עולה ל-$105. כך נועל רווחים תוך כדי ריצה."),
+            "vix":         ("🌡️ VIX — מדד הפחד",
+                            "מודד פחד/תנודתיות בשוק. מתחת ל-20 = שוק רגוע. 20-28 = דאגה. "
+                            "מעל 28 = פחד — הבוט עוצר קניות. מעל 30 = בהלה."),
+            "macd":        ("📈 MACD — המגמה הנגררת",
+                            "אות מגמה: כשקו MACD חוצה מעלה את קו האות = אות קנייה. "
+                            "הבוט בודק שהמניה בתנופה חיובית לפני כל קנייה."),
+            "kelly":       ("📐 Kelly Criterion — גודל פוזיציה",
+                            "נוסחה מתמטית לגודל פוזיציה אופטימלי. מחשבת כמה להשקיע לפי "
+                            "אחוז הצלחה וממוצע רווח/הפסד. מתחיל לפעול אחרי 30 עסקאות."),
+            "fear greed":  ("😨 Fear & Greed — פחד וחמדנות",
+                            "מדד 0-100. מתחת ל-25 = פחד קיצוני (הזדמנות קנייה!). "
+                            "מעל 75 = חמדנות קיצונית (שוק מוגזם). הבוט עדיף לקנות בפחד."),
+            "sma":         ("📉 SMA — ממוצע נע פשוט",
+                            "ממוצע מחיר לאורך תקופה. SMA50 = ממוצע 50 יום אחרונים. "
+                            "מחיר מעל SMA50 = מגמה עולה. הבוט לא קונה כש-SPY מתחת ל-SMA50."),
+            "sharpe":      ("⚖️ Sharpe Ratio — יחס שארפ",
+                            "מדד לאיכות התשואה. מעל 1 = טוב. מעל 2 = מצוין. "
+                            "מחשב תשואה חלקי סטיית תקן — עדיף רווח יציב על רווח גדול ותנודתי."),
+        }
+        # Find best match
+        result = None
+        for key, val in explanations.items():
+            if key in term or term in key:
+                result = val
+                break
+        if result:
+            title, explanation = result
+            return f"{title}\n━━━━━━━━━━━━━━━━\n{explanation}"
+        else:
+            available = " · ".join(explanations.keys())
+            return (
+                f"❓ <b>הסבר מונח</b>\n━━━━━━━━━━━━━━━━\n"
+                f"לא מצאתי הסבר ל-\"{term}\"\n\n"
+                f"<b>מונחים זמינים:</b>\n{available}\n\n"
+                f"דוגמה: <code>/explain RSI</code>"
+            )
 
     # /gainers — top movers from watchlist today
     if cmd in ("/gainers", "gainers", "עולים", "מנצחים היום"):
@@ -1001,9 +1146,13 @@ def _handle_command(text: str, context: dict) -> str | None:
             from scanner import get_watchlist
             from scoring import get_composite_score, MIN_BUY_SCORE
             from sentiment import score_sentiment
+            import database as _db
             import random
             wl      = get_watchlist()
-            sample  = random.sample(wl, min(15, len(wl)))  # scan 15 instead of 8
+            # Exclude already-held tickers
+            held    = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
+            wl      = [tk for tk in wl if tk not in held]
+            sample  = random.sample(wl, min(15, len(wl)))
             results = []
             for _tk in sample:
                 try:

@@ -195,7 +195,8 @@ async def notify_trade_open(
         f"🎯  ציון:           <b>{score:.0f}/100</b>  {q}\n"
         f"🧠  סנטימנט:     {sentiment_score}/10  {sent_label}"
         f"{iceberg_line}"
-        f"{id_line}"
+        f"{id_line}\n\n"
+        f"💡 <i>/stop {ticker}  |  /news {ticker}  |  /score {ticker}</i>"
     )
 
 
