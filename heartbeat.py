@@ -201,6 +201,16 @@ async def _close_position(
         except Exception as retry_err:
             _create_background_task(notify_error("stop_loss_fail", ticker, f"timeout+retry: {retry_err}"))
             return False
+    except TypeError as sig_err:
+        # Signature mismatch (e.g. broker wrapper missing price param) — retry without price
+        logger.warning(f"[SELL] {ticker}: signature error ({sig_err}), retrying without price...")
+        try:
+            order = await asyncio.wait_for(
+                asyncio.to_thread(broker.submit_sell, ticker), timeout=30
+            )
+        except Exception as retry_err:
+            _create_background_task(notify_error("stop_loss_fail", ticker, f"sig+retry: {retry_err}"))
+            return False
     except Exception as sell_err:
         _create_background_task(notify_error("stop_loss_fail", ticker, str(sell_err)))
         return False
