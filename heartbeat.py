@@ -338,18 +338,28 @@ async def stop_loss_monitor():
                             )
                             # Notify Telegram when stop is raised significantly (≥0.5%)
                             if atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
-                                _pnl_now = (cur_price - trade["entry_price"]) * trade["qty"]
+                                _entry   = trade["entry_price"]
+                                _qty     = trade["qty"]
+                                _pnl_now = (cur_price - _entry) * _qty
+                                _pnl_pct = (cur_price - _entry) / _entry * 100
+                                _stop_dist = (cur_price - new_stop) / cur_price * 100
+                                _raised_pct = (new_stop - atr_stop) / atr_stop * 100
                                 _pnl_icon = "🟢 רווח" if _pnl_now >= 0 else "🔴 הפסד"
                                 _create_background_task(send_message(
-                                    f"🛡️ <b>Stop Loss הועלה</b>\n"
+                                    f"🛡️ <b>Stop Loss הועלה — {ticker}</b>\n"
                                     f"━━━━━━━━━━━━━━━━\n"
                                     f"📊 מניה: <b>{ticker}</b>\n"
-                                    f"💵 מחיר קנייה: ${trade['entry_price']:.2f}\n"
-                                    f"📈 מחיר עכשיו: ${cur_price:.2f}\n"
-                                    f"🏆 מחיר גבוה: ${new_wm:.2f}\n"
+                                    f"📦 כמות: {_qty} מניות\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"💵 מחיר קנייה: ${_entry:.2f}\n"
+                                    f"📈 מחיר עכשיו: ${cur_price:.2f} ({_pnl_pct:+.1f}%)\n"
+                                    f"🏆 שיא: ${new_wm:.2f}\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
                                     f"🛑 Stop ישן: ${atr_stop:.2f}\n"
-                                    f"🛡️ Stop חדש: <b>${new_stop:.2f}</b>\n"
-                                    f"💰 {_pnl_icon}: ${abs(_pnl_now):.2f}"
+                                    f"🛡️ Stop חדש: <b>${new_stop:.2f}</b> (+{_raised_pct:.1f}%)\n"
+                                    f"📏 מרחק מ-Stop: {_stop_dist:.1f}%\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"💰 {_pnl_icon}: <b>${abs(_pnl_now):.2f}</b>"
                                 ))
                         atr_stop = new_stop
                         high_wm  = new_wm
