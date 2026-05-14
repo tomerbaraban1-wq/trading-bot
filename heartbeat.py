@@ -364,8 +364,7 @@ async def stop_loss_monitor():
                                 )
                                 await _close_position(
                                     trade, cur_price, "time_exit",
-                                    f"Time-based exit ({hours_held:.1f}h held, "
-                                    f"limit={MAX_HOLD_HOURS}h)",
+                                    f"יציאה לפי זמן ({hours_held:.1f} שעות, מגבלה={MAX_HOLD_HOURS}ש')",
                                 )
                                 continue
                         except Exception as te:
@@ -1152,7 +1151,7 @@ async def eod_sweep_loop():
 
                 if swept:
                     await send_message(
-                        f"🌙 <b>סיכום EOD Sweep</b>\n"
+                        f"🌙 <b>סיכום סוף יום</b>\n"
                         f"מכרתי {swept} פוזיציות 'כסף מת' — שטוחות + ציון נמוך\n"
                         f"✅ ניפינו הון לחר מחר"
                     )
@@ -1244,10 +1243,10 @@ async def _emergency_exit(trade: dict):
         _smart_sell_last_check.pop(ticker, None)
         _position_alert_sent.pop(ticker, None)
 
-        await notify_emergency(ticker, f"Critically bearish sentiment | PnL=${pnl_gross:+.2f}")
+        await notify_emergency(ticker, f"סנטימנט שלילי קיצוני | רווח/הפסד=${pnl_gross:+.2f}")
         logger.warning(
             f"EMERGENCY EXIT COMPLETE: {ticker} | PnL=${pnl_gross:+.2f} | "
-            f"Reason: Critically bearish sentiment"
+            f"סיבה: סנטימנט שלילי קיצוני"
         )
     except Exception as e:
         logger.error(f"Emergency exit FAILED for {ticker}: {e}")
@@ -1413,7 +1412,7 @@ async def backtest_learning_loop():
                 f"🎓 <b>למידה מהיסטוריה</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📊 {result.tickers_analyzed} מניות | {result.total_signals} סיגנלים\n"
-                f"✅ WR היסטורי: <b>{result.overall_win_rate:.1f}%</b> | תשואה: {result.avg_return:+.2f}%\n"
+                f"✅ אחוז הצלחה היסטורי: <b>{result.overall_win_rate:.1f}%</b> | תשואה: {result.avg_return:+.2f}%\n"
                 f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
                 + (f"🔄 עודכן: {update['old_score']} → <b>{update['new_score']}</b>" if update.get('applied') else "✅ ציון נוכחי אופטימלי")
             )
