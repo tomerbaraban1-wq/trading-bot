@@ -234,6 +234,86 @@ def score_sentiment(ticker: str) -> SentimentResult:
     return result
 
 
+def score_sentiment_live(ticker: str) -> "SentimentResult":
+    """
+    Force a FRESH sentiment check — bypasses the 5-minute cache.
+    Used by news_monitor_loop to check open positions for breaking news.
+    """
+    from news_service import get_headlines as _gh
+    # Clear cache so score_sentiment fetches fresh headlines
+    with _cache_lock:
+        _sentiment_cache.pop(ticker, None)
+    # Also bypass news_service cache for truly fresh data
+    headlines = _gh(ticker, limit=8, bypass_cache=True)
+    reddit   = _get_reddit_mentions(ticker)
+    if reddit:
+        headlines = headlines + reddit
+
+    now = time.time()
+    if not headlines:
+        result = SentimentResult(
+            ticker=ticker, score=5, headlines=[],
+            reasoning="No recent news — neutral", timestamp=now,
+        )
+        with _cache_lock:
+            _sentiment_cache[ticker] = result
+        return result
+
+    client = _get_client()
+    if not client:
+        score, reasoning = _keyword_sentiment(headlines)
+        result = SentimentResult(
+            ticker=ticker, score=score, headlines=headlines,
+            reasoning=f"[keyword] {reasoning}", timestamp=now,
+        )
+        with _cache_lock:
+            _sentiment_cache[ticker] = result
+        return result
+
+    headlines_text = "\n".join(f"- {h}" for h in headlines[:8])
+    system_prompt = (
+        "You are a financial news analyst. Rate news sentiment 1-10:\n"
+        "1-2: Critical (fraud, bankruptcy, SEC investigation, disaster)\n"
+        "3-4: Bearish (miss earnings, downgrade, lawsuit, layoffs)\n"
+        "5-6: Neutral (mixed or no clear direction)\n"
+        "7-8: Bullish (beat earnings, upgrade, new contract)\n"
+        "9-10: Very bullish (major breakthrough, explosive growth)\n"
+        'Respond ONLY: {"score": N, "reasoning": "one sentence"}'
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Stock: {ticker}\nHeadlines:\n{headlines_text}"},
+            ],
+            max_tokens=150, temperature=0.2,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        data = json.loads(raw)
+        score = max(1, min(10, int(data.get("score", 5))))
+        reasoning = data.get("reasoning", "")
+    except Exception as e:
+        logger.warning(f"[LIVE SENTIMENT] {ticker}: LLM failed ({type(e).__name__}) — keyword fallback")
+        score, reasoning = _keyword_sentiment(headlines)
+        reasoning = f"[keyword fallback] {reasoning}"
+
+    result = SentimentResult(
+        ticker=ticker, score=score, headlines=headlines,
+        reasoning=reasoning, timestamp=now,
+    )
+    with _cache_lock:
+        if len(_sentiment_cache) >= _SENTIMENT_CACHE_MAX:
+            oldest = min(_sentiment_cache.items(), key=lambda x: x[1].timestamp)
+            del _sentiment_cache[oldest[0]]
+        _sentiment_cache[ticker] = result
+
+    logger.info(f"[LIVE SENTIMENT] {ticker}: {score}/10 — {reasoning}")
+    return result
+
+
 def check_emergency_sentiment(ticker: str) -> bool:
     """
     Check if sentiment is critically bearish for an open position.

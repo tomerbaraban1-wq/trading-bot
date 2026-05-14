@@ -19,7 +19,24 @@ RSS_FEEDS = [
     ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
     ("Investopedia",  "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"),
     ("Google News",   "https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US&ceid=US:en"),
+    ("Bloomberg",     "https://feeds.bloomberg.com/markets/news.rss"),
+    ("WSJ Markets",   "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
 ]
+
+
+def _ticker_feeds(ticker: str) -> list[tuple[str, str]]:
+    """Return ticker-specific RSS feeds — direct search for this stock."""
+    t = ticker.upper()
+    return [
+        ("Google News Ticker",
+         f"https://news.google.com/rss/search?q={t}+stock&hl=en-US&gl=US&ceid=US:en"),
+        ("Yahoo Finance Ticker",
+         f"https://finance.yahoo.com/rss/headline?s={t}"),
+        ("Seeking Alpha Ticker",
+         f"https://seekingalpha.com/symbol/{t}.xml"),
+        ("Benzinga",
+         f"https://www.benzinga.com/stock/{t.lower()}/feed"),
+    ]
 
 _news_cache: dict = {}
 _cache_time: dict = {}
@@ -101,19 +118,57 @@ def _dedup(headlines: list[str]) -> list[str]:
     return unique
 
 
-def get_headlines(ticker: str, limit: int = 5) -> list[str]:
-    """Get top N news headlines for a ticker — all feeds fetched in parallel."""
+def get_headlines(ticker: str, limit: int = 8, bypass_cache: bool = False) -> list[str]:
+    """
+    Get top N news headlines for a ticker.
+    Sources: general RSS feeds (filtered by ticker) + ticker-specific feeds.
+    bypass_cache=True forces a fresh fetch (used by news monitor loop).
+    """
     cache_key = ticker.upper()
-    cached = _cache_get(cache_key)
-    if cached is not None:
-        return cached[:limit]
+    if not bypass_cache:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached[:limit]
 
     pattern = re.compile(rf"\b{re.escape(ticker)}\b", re.IGNORECASE)
-    items = _fetch_all_feeds()
-    matched = [
-        item["headline"] for item in items
-        if pattern.search(item["headline"] + " " + item.get("summary", ""))
-    ]
+
+    # Fetch general feeds + ticker-specific feeds concurrently
+    from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FT
+    all_items: list[dict] = []
+    ticker_feed_list = _ticker_feeds(ticker)
+    all_feed_list = RSS_FEEDS + ticker_feed_list
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {
+            ex.submit(_fetch_one_feed, name, url): name
+            for name, url in all_feed_list
+        }
+        processed = set()
+        try:
+            for fut in as_completed(futures, timeout=8):
+                processed.add(fut)
+                try:
+                    all_items.extend(fut.result())
+                except Exception:
+                    pass
+        except _FT:
+            for fut in futures:
+                if fut.done() and fut not in processed:
+                    try:
+                        all_items.extend(fut.result())
+                    except Exception:
+                        pass
+
+    # From ticker-specific feeds: accept all headlines
+    # From general feeds: filter to those mentioning the ticker
+    ticker_source_names = {name for name, _ in ticker_feed_list}
+    matched = []
+    for item in all_items:
+        if item.get("source") in ticker_source_names:
+            matched.append(item["headline"])  # already ticker-specific
+        elif pattern.search(item["headline"] + " " + item.get("summary", "")):
+            matched.append(item["headline"])  # general feed mentioning ticker
+
     unique = _dedup(matched)
     _cache_set(cache_key, unique)
     return unique[:limit]

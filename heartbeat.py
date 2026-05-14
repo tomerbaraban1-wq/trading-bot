@@ -1339,6 +1339,183 @@ async def news_refresh_loop():
         await asyncio.sleep(300)   # refresh every 5 minutes (was 60s) — reduces memory pressure
 
 
+async def news_monitor_loop():
+    """
+    Real-time news monitor for open positions — runs every 10 minutes.
+
+    Logic per position:
+      score ≤ 2  → IMMEDIATE SELL  (breaking disaster: fraud/bankruptcy/SEC)
+      score ≤ 3  → SELL if position already in profit, else tighten stop 50%
+      score ≤ 4  → Tighten ATR stop by 30% (protect against further drop)
+      score ≥ 8  → Extend TP target by +2% (great news = let it run further)
+      score ≥ 9  → Loosen trailing stop slightly (give big winner more room)
+
+    Sends Telegram alert for every news event that changes the trade plan.
+    """
+    await asyncio.sleep(3 * 60)   # wait 3 min after startup
+    _last_checked: dict[str, float] = {}   # ticker → last check timestamp
+    _NEWS_CHECK_INTERVAL = 10 * 60         # 10 minutes per ticker
+
+    while True:
+        try:
+            if not await asyncio.to_thread(broker.is_market_open):
+                await asyncio.sleep(5 * 60)
+                continue
+
+            open_trades = await asyncio.to_thread(database.get_open_trades)
+            if not open_trades:
+                await asyncio.sleep(5 * 60)
+                continue
+
+            import time as _t
+            from sentiment import score_sentiment_live as _sent_live
+
+            for trade in open_trades:
+                ticker = trade.get("ticker", "")
+                if not ticker:
+                    continue
+
+                # Rate-limit: check each ticker at most once per 10 minutes
+                now = _t.time()
+                if now - _last_checked.get(ticker, 0) < _NEWS_CHECK_INTERVAL:
+                    continue
+                _last_checked[ticker] = now
+
+                try:
+                    # Get fresh sentiment — bypasses cache
+                    sent = await asyncio.wait_for(
+                        asyncio.to_thread(_sent_live, ticker), timeout=25
+                    )
+                    score    = sent.score
+                    headlines = sent.headlines[:3]
+                    reasoning = sent.reasoning
+
+                    # Get current price for P&L context
+                    pos = await asyncio.to_thread(broker.get_position, ticker)
+                    if not pos:
+                        continue
+                    cur_price = float(pos.get("current_price", trade["entry_price"]))
+                    entry     = trade["entry_price"]
+                    plpc      = (cur_price - entry) / entry * 100
+                    atr_stop  = trade.get("atr_stop_price") or (entry * 0.97)
+
+                    news_preview = "\n".join(f"📰 {h[:80]}" for h in headlines) if headlines else "אין כותרות"
+
+                    # ── 1. CRITICAL (1-2): emergency sell immediately ─────────
+                    if score <= 2:
+                        logger.warning(
+                            f"[NEWS SELL] {ticker}: CRITICAL sentiment={score}/10 "
+                            f"— emergency exit | reason: {reasoning}"
+                        )
+                        await _close_position(
+                            trade, cur_price, "news_exit",
+                            f"חדשות קריטיות (ציון={score}/10) — {reasoning[:60]}"
+                        )
+                        await send_message(
+                            f"🚨 <b>יציאה חירום — חדשות קריטיות!</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📌  <b>{ticker}</b>  ·  ציון חדשות: <b>{score}/10</b> 🔴\n\n"
+                            f"{news_preview}\n\n"
+                            f"💬 <b>ניתוח AI:</b> {reasoning[:120]}\n\n"
+                            f"⚡ מכרתי מיד — הפסד/רווח: <b>{plpc:+.1f}%</b>"
+                        )
+                        continue
+
+                    # ── 2. BEARISH (3): sell if in profit, tighten if in loss ─
+                    if score == 3:
+                        if plpc >= 0:
+                            logger.warning(
+                                f"[NEWS SELL] {ticker}: bearish={score}/10 + in profit "
+                                f"({plpc:+.1f}%) — selling to protect gains"
+                            )
+                            await _close_position(
+                                trade, cur_price, "news_exit",
+                                f"חדשות שליליות (ציון={score}/10) + ברווח — מוגן"
+                            )
+                            await send_message(
+                                f"📉 <b>מכירה מחדשות שליליות — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📌  ציון חדשות: <b>{score}/10</b> 🔴\n\n"
+                                f"{news_preview}\n\n"
+                                f"💬 {reasoning[:120]}\n\n"
+                                f"✅ מכרתי בזמן — רווח שמור: <b>{plpc:+.1f}%</b>"
+                            )
+                            continue
+                        else:
+                            # In loss — tighten stop by 50%
+                            _dist = cur_price - atr_stop
+                            _new_stop = round(atr_stop + _dist * 0.5, 4)
+                            if _new_stop > atr_stop:
+                                await asyncio.to_thread(
+                                    database.update_trade_stop, trade["id"], _new_stop,
+                                    trade.get("high_watermark", entry)
+                                )
+                                await send_message(
+                                    f"⚠️ <b>חדשות שליליות — סטופ הוידוק — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📌  ציון חדשות: <b>{score}/10</b> 🔴\n\n"
+                                    f"{news_preview}\n\n"
+                                    f"💬 {reasoning[:100]}\n\n"
+                                    f"🛑  סטופ חדש: <b>${_new_stop:.2f}</b>  (הוידוק 50%)"
+                                )
+                            continue
+
+                    # ── 3. MILDLY BEARISH (4): tighten stop by 30% ───────────
+                    if score == 4:
+                        _dist = cur_price - atr_stop
+                        if _dist > 0:
+                            _new_stop = round(atr_stop + _dist * 0.3, 4)
+                            if _new_stop > atr_stop:
+                                await asyncio.to_thread(
+                                    database.update_trade_stop, trade["id"], _new_stop,
+                                    trade.get("high_watermark", entry)
+                                )
+                                logger.info(
+                                    f"[NEWS TIGHTEN] {ticker}: score={score}/10 "
+                                    f"— stop tightened ${atr_stop:.2f}→${_new_stop:.2f}"
+                                )
+                                await send_message(
+                                    f"📰 <b>חדשות מעט שליליות — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📌  ציון חדשות: <b>{score}/10</b> 🟡\n\n"
+                                    f"{news_preview}\n\n"
+                                    f"🛡️  הידוק סטופ: ${atr_stop:.2f} → <b>${_new_stop:.2f}</b>"
+                                )
+                        continue
+
+                    # ── 4. VERY BULLISH (8-9): loosen stop slightly ───────────
+                    if score >= 8:
+                        _dist = cur_price - atr_stop
+                        # Give 15% more room so big winner doesn't get stopped out
+                        _new_stop = round(atr_stop - _dist * 0.15, 4)
+                        if _new_stop < atr_stop and _new_stop > entry:
+                            await asyncio.to_thread(
+                                database.update_trade_stop, trade["id"], _new_stop,
+                                trade.get("high_watermark", entry)
+                            )
+                        emoji = "🚀" if score >= 9 else "📈"
+                        await send_message(
+                            f"{emoji} <b>חדשות מצוינות — {ticker}</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📌  ציון חדשות: <b>{score}/10</b> 🟢\n\n"
+                            f"{news_preview}\n\n"
+                            f"💬 {reasoning[:120]}\n\n"
+                            f"✅  סטופ הורחב קלות — ממשיכים לרוץ עם הרוח 🌬️"
+                        )
+
+                except asyncio.TimeoutError:
+                    logger.debug(f"[NEWS MONITOR] {ticker}: sentiment check timed out — skip")
+                except Exception as e:
+                    logger.debug(f"[NEWS MONITOR] {ticker}: error — {e}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[NEWS MONITOR] loop error: {e}")
+
+        await asyncio.sleep(60)   # check every minute — per-ticker rate limited to 10 min
+
+
 async def shadow_monitor_loop():
     """
     Background task: tick all open shadow paper positions every 5 minutes.

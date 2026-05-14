@@ -210,8 +210,9 @@ async def lifespan(app: FastAPI):
     from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
                            auto_invest_loop, keep_alive_loop, daily_summary_loop,
                            weekly_report_loop, shadow_monitor_loop, portfolio_update_loop,
-                           news_refresh_loop, morning_briefing_loop, position_alert_loop,
-                           backtest_learning_loop, eod_sweep_loop, price_alert_loop)
+                           news_refresh_loop, news_monitor_loop, morning_briefing_loop,
+                           position_alert_loop, backtest_learning_loop, eod_sweep_loop,
+                           price_alert_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -225,6 +226,7 @@ async def lifespan(app: FastAPI):
     price_alert_task       = asyncio.create_task(price_alert_loop())
     morning_briefing_task  = asyncio.create_task(morning_briefing_loop())
     news_refresh_task      = asyncio.create_task(news_refresh_loop())
+    news_monitor_task      = asyncio.create_task(news_monitor_loop())   # 🆕 real-time news → sell/tighten
 
     # ── Optional tasks (disabled on free tier to save memory) ────────
     import os as _os
@@ -244,8 +246,8 @@ async def lifespan(app: FastAPI):
     all_tasks = [t for t in [
         heartbeat_task, heartbeat_cleanup_task, sentiment_task, stop_loss_task, auto_invest_task,
         keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
-        portfolio_update_task, news_refresh_task, morning_briefing_task, position_alert_task,
-        backtest_task, eod_sweep_task, price_alert_task,
+        portfolio_update_task, news_refresh_task, news_monitor_task, morning_briefing_task,
+        position_alert_task, backtest_task, eod_sweep_task, price_alert_task,
     ] if t is not None]
 
     # Cancel all background tasks
