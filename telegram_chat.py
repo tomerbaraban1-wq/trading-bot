@@ -815,6 +815,53 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"📏 מרחק: <b>{dist:.1f}%</b>"
         )
 
+    # /compare AAPL MSFT — compare two stocks
+    if cmd in ("/compare", "compare", "השווה") and len(t.split()) >= 3:
+        parts = t.split()
+        t1, t2 = parts[1].upper(), parts[2].upper()
+        try:
+            from scoring import get_composite_score
+            from sentiment import score_sentiment
+            r1 = get_composite_score(t1, score_sentiment(t1).score)
+            r2 = get_composite_score(t2, score_sentiment(t2).score)
+            s1, s2 = r1["composite_score"], r2["composite_score"]
+            winner = t1 if s1 > s2 else t2
+            diff = abs(s1 - s2)
+            return (
+                f"⚔️ <b>השוואה: {t1} vs {t2}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 <b>{t1}</b>: {s1:.0f}/100 {'✅' if r1['should_buy'] else '❌'}\n"
+                f"📊 <b>{t2}</b>: {s2:.0f}/100 {'✅' if r2['should_buy'] else '❌'}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🏆 עדיף: <b>{winner}</b> (פער {diff:.0f} נקודות)"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /correlation — portfolio correlation
+    if cmd in ("/correlation", "correlation", "קורלציה", "מתאם"):
+        try:
+            import requests as _req, os as _os
+            base = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
+            r = _req.get(f"{base}/correlation", timeout=10)
+            data = r.json()
+            matrix = data.get("matrix", {})
+            max_corr = data.get("max_correlation", 0)
+            max_pair = data.get("max_pair", [])
+            if not matrix:
+                return "📊 צריך לפחות 2 פוזיציות לחישוב קורלציה"
+            lines = [f"📊 <b>קורלציה בתיק</b>\n━━━━━━━━━━━━━━━━"]
+            for t_a, row in matrix.items():
+                for t_b, corr in row.items():
+                    if t_a < t_b:
+                        icon = "🔴" if abs(corr) > 0.7 else ("🟡" if abs(corr) > 0.4 else "🟢")
+                        lines.append(f"{icon} {t_a}↔{t_b}: {corr:.2f}")
+            if max_pair:
+                lines.append(f"━━━━━━━━━━━━━━━━\n⚠️ הכי מתואמות: {max_pair[0]}↔{max_pair[1]} ({max_corr:.2f})")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
     # /next — next market open time
     if cmd in ("/next", "next", "מתי שוק", "מתי נפתח", "פתיחה"):
         try:

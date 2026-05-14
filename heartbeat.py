@@ -1053,6 +1053,48 @@ async def morning_briefing_loop():
 
 
 _position_alert_sent: dict[str, float] = {}   # ticker → last alert pct
+_price_alerts_fired: set = set()              # "TICKER:PRICE" already fired
+
+
+async def price_alert_loop():
+    """
+    Check user-defined price alerts every 2 minutes.
+    Alerts set via /alert TICKER PRICE command stored in USER_ALERTS env var.
+    """
+    await asyncio.sleep(120)
+    while True:
+        try:
+            import os as _os
+            alerts_str = _os.getenv("USER_ALERTS", "")
+            if alerts_str:
+                alerts = [a.strip() for a in alerts_str.split(",") if ":" in a.strip()]
+                for alert in alerts:
+                    try:
+                        ticker, target_str = alert.split(":", 1)
+                        target = float(target_str)
+                        key = f"{ticker}:{target}"
+                        if key in _price_alerts_fired:
+                            continue
+                        cur = await asyncio.wait_for(
+                            asyncio.to_thread(broker.get_price, ticker), timeout=8
+                        )
+                        if cur and abs(cur - target) / target < 0.01:  # within 1%
+                            _price_alerts_fired.add(key)
+                            direction = "📈 עלה" if cur >= target else "📉 ירד"
+                            await send_message(
+                                f"🔔 <b>התראת מחיר — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"🎯 יעד: ${target:.2f}\n"
+                                f"💵 מחיר עכשיו: ${cur:.2f}\n"
+                                f"{direction} ליעד! ✅"
+                            )
+                    except Exception:
+                        continue
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Price alert loop error: {e}")
+        await asyncio.sleep(2 * 60)
 
 
 async def position_alert_loop():
