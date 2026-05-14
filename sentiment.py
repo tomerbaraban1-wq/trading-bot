@@ -144,7 +144,7 @@ def score_sentiment(ticker: str) -> SentimentResult:
             ticker=ticker,
             score=5,
             headlines=[],
-            reasoning="No recent news found - defaulting to neutral",
+            reasoning="אין חדשות אחרונות — ניטרלי",
             timestamp=now,
         )
         with _cache_lock:
@@ -164,7 +164,7 @@ def score_sentiment(ticker: str) -> SentimentResult:
             ticker=ticker,
             score=score,
             headlines=headlines,
-            reasoning=f"[keyword fallback] {reasoning}",
+            reasoning=f"[ניתוח מילות מפתח] {reasoning}",
             timestamp=now,
         )
         with _cache_lock:
@@ -181,7 +181,8 @@ def score_sentiment(ticker: str) -> SentimentResult:
         "5-6: Neutral (mixed signals, no strong direction)\n"
         "7-8: Bullish (upgrades, good earnings, positive outlook)\n"
         "9-10: Very bullish (breakthrough news, major contracts, explosive growth)\n\n"
-        'Respond with ONLY a JSON object: {"score": N, "reasoning": "brief explanation"}'
+        "IMPORTANT: Write the reasoning field in Hebrew only.\n"
+        'Respond with ONLY a JSON object: {"score": N, "reasoning": "הסבר קצר בעברית"}'
     )
 
     user_prompt = f"Stock: {ticker}\n\nRecent headlines:\n{headlines_text}"
@@ -205,18 +206,18 @@ def score_sentiment(ticker: str) -> SentimentResult:
 
         data = json.loads(raw)
         score = max(1, min(10, int(data.get("score", 5))))
-        reasoning = data.get("reasoning", "No reasoning provided")
+        reasoning = data.get("reasoning", "אין הסבר זמין")
 
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         logger.warning(f"Failed to parse sentiment response for {ticker}: {e}")
         score = 5
-        reasoning = "Failed to parse LLM response - defaulting to neutral"
+        reasoning = "שגיאה בניתוח תגובת AI — ניטרלי"
     except Exception as e:
         # Don't let a transient LLM/network error block trading — fall back
         # to keyword-based sentiment so the bot still uses the actual news.
         logger.error(f"Sentiment scoring failed for {ticker}: {e} — using keyword fallback")
         score, reasoning = _keyword_sentiment(headlines)
-        reasoning = f"[keyword fallback after LLM error] {reasoning}"
+        reasoning = f"[ניתוח מילות מפתח] {reasoning}"
 
     result = SentimentResult(
         ticker=ticker,
@@ -255,7 +256,7 @@ def score_sentiment_live(ticker: str) -> "SentimentResult":
     if not headlines:
         result = SentimentResult(
             ticker=ticker, score=5, headlines=[],
-            reasoning="No recent news — neutral", timestamp=now,
+            reasoning="אין חדשות — ניטרלי", timestamp=now,
         )
         with _cache_lock:
             _sentiment_cache[ticker] = result
@@ -300,7 +301,7 @@ def score_sentiment_live(ticker: str) -> "SentimentResult":
     except Exception as e:
         logger.warning(f"[LIVE SENTIMENT] {ticker}: LLM failed ({type(e).__name__}) — keyword fallback")
         score, reasoning = _keyword_sentiment(headlines)
-        reasoning = f"[keyword fallback] {reasoning}"
+        reasoning = f"[ניתוח מילות מפתח] {reasoning}"
 
     result = SentimentResult(
         ticker=ticker, score=score, headlines=headlines,

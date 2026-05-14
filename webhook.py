@@ -227,7 +227,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             asyncio.to_thread(score_sentiment, ticker), timeout=45
         )
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "Sentiment check timed out after 45s"))
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "ניתוח סנטימנט לקח יותר מדי זמן"))
         return {"status": "rejected", "reason": "Sentiment check timed out"}
     except Exception as e:
         logger.error(f"Sentiment check failed for {ticker}: {e}")
@@ -402,7 +402,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         from iceberg import iceberg_buy
         order = await iceberg_buy(ticker, max_qty, payload.price)
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "Buy order timed out after 15s"))
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "הזמנת קנייה לקחה יותר מדי זמן"))
         return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
         logger.error(f"BUY order failed for {ticker}: {e}")
@@ -482,7 +482,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "Sell order timed out after 15s"))
+        asyncio.ensure_future(notify_error("api_timeout", ticker, "הזמנת מכירה לקחה יותר מדי זמן"))
         return {"status": "error", "reason": "Sell order timed out"}
     except Exception as e:
         logger.error(f"SELL order failed for {ticker}: {e}")
@@ -555,7 +555,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         pnl_gross=pnl_gross, pnl_net=pnl_net,
         tax_reserved=tax_result["tax_amount"],
         duration_hours=duration_hours,
-        reason="TradingView signal",
+        reason="סיגנל TradingView",
         trade_id=trade["id"],
     ))
 
@@ -679,7 +679,7 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
                     result["filters"]["volume"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
 
                 # Position sizing
-                qty, sizing_meta = await asyncio.to_thread(compute_position_size, price)
+                qty, sizing_meta = await asyncio.to_thread(compute_position_size, price, score)
                 result["filters"]["position_size"] = f"✅ qty={qty:.4f}" if qty > 0 else f"❌ BLOCKED — qty=0 at ${price:.2f} ({sizing_meta})"
 
         except Exception as e:
@@ -773,7 +773,7 @@ async def scan_now(secret: str = ""):
                 skipped.append({"ticker": ticker, "score": score, "reason": f"sanity: {sane_reason}"})
                 continue
 
-            qty, sizing_meta = await asyncio.to_thread(compute_position_size, price)
+            qty, sizing_meta = await asyncio.to_thread(compute_position_size, price, score)
             if qty <= 0:
                 skipped.append({"ticker": ticker, "score": score, "reason": f"qty=0 at ${price:.2f}"})
                 continue

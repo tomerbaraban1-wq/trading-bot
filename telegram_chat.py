@@ -367,7 +367,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 💳 רווח ממומש:       {_ils(context.get('realized_pnl_net', 0))}
 🔢 פוזיציות:            {context.get('open_positions_count', 0)}/{context.get('max_positions', 4)}
 🎯 Win Rate:            {context.get('win_rate', 0)}%  ({context.get('total_closed', 0)} עסקאות)
-🌡️ VIX:                   {context.get('vix') or 'N/A'}
+🌡️ VIX:                   {context.get('vix') or '—'}
 🕐 שוק:                  {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 
 ══ פוזיציות פתוחות ══
@@ -401,22 +401,23 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
         )
         reply = response.choices[0].message.content.strip()
 
-        # Verify reply is in Hebrew — if mostly English chars, translate it
+        # Verify reply is in Hebrew — lower threshold: if ANY significant English, translate
         hebrew_chars = sum(1 for c in reply if 'א' <= c <= 'ת')
-        latin_chars = sum(1 for c in reply if c.isalpha() and c.isascii())
-        if latin_chars > hebrew_chars * 2 and len(reply) > 20:
-            # Too much English — ask LLM to translate
-            logger.warning(f"[CHAT] Reply was in English, translating...")
+        latin_chars  = sum(1 for c in reply if c.isalpha() and c.isascii())
+        if latin_chars > hebrew_chars and len(reply) > 15:
+            logger.warning("[CHAT] Reply has too much English — translating to Hebrew")
             try:
                 tr_resp = client.chat.completions.create(
                     model=settings.LLM_MODEL,
                     messages=[{"role": "user",
-                                "content": f"תרגם את הטקסט הבא לעברית בלבד:\n{reply}"}],
-                    max_tokens=500, temperature=0.2,
+                                "content": f"תרגם את הטקסט הבא לעברית בלבד. אל תוסיף כלום:\n{reply}"}],
+                    max_tokens=600, temperature=0.2,
                 )
-                reply = tr_resp.choices[0].message.content.strip()
+                translated = tr_resp.choices[0].message.content.strip()
+                if translated:
+                    reply = translated
             except Exception:
-                pass
+                reply = _simple_fallback(context)  # fallback if translation fails
 
         logger.info(f"[CHAT] LLM reply generated ({len(reply)} chars)")
         return reply
@@ -470,8 +471,8 @@ def _simple_fallback(ctx: dict) -> str:
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
                 f"   🔢 כמות: {p['qty']} מניות\n"
                 f"   📌 מחיר קנייה: {_fmt_price(p['entry'])}\n"
-                f"   📈 יעד רווח: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
-                f"   📉 סטופ לוס: {_fmt_price(stop) if stop else 'N/A'}\n"
+                f"   📈 יעד רווח: {_fmt_price(tp_price) if tp_price else '—'}\n"
+                f"   📉 סטופ לוס: {_fmt_price(stop) if stop else '—'}\n"
                 f"   📍 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}\n"
                 f"   ⏳ זמן החזקה: {_fmt_held(held) if held >= 0.5 else 'כמה דקות'}"
@@ -867,7 +868,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 elif fg <= 75: fg_label = f"😏 חמדנות ({fg})"
                 else:          fg_label = f"🤑 חמדנות קיצונית ({fg})"
             else:
-                fg_label = "N/A"
+                fg_label = "—"
 
             # Overall verdict
             spy_ok  = mkt.get("spy_above_sma50", True)
@@ -1169,7 +1170,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             positions = ctx.get("open_positions", [])
             pos_brief = ", ".join(f"{p['ticker']} {p['pct']:+.1f}%" for p in positions) or "אין"
             equity    = ctx.get("equity", 0)
-            vix       = ctx.get("vix", "N/A")
+            vix       = ctx.get("vix", "—")
             resp = client.chat.completions.create(
                 model=settings.LLM_MODEL,
                 messages=[
@@ -1182,6 +1183,19 @@ def _handle_command(text: str, context: dict) -> str | None:
                 max_tokens=300, temperature=0.4,
             )
             answer = resp.choices[0].message.content.strip()
+            # Ensure Hebrew — translate if too much English
+            _heb = sum(1 for c in answer if 'א' <= c <= 'ת')
+            _lat = sum(1 for c in answer if c.isalpha() and c.isascii())
+            if _lat > _heb and len(answer) > 15:
+                try:
+                    _tr = client.chat.completions.create(
+                        model=settings.LLM_MODEL,
+                        messages=[{"role": "user", "content": f"תרגם לעברית בלבד:\n{answer}"}],
+                        max_tokens=400, temperature=0.2,
+                    )
+                    answer = _tr.choices[0].message.content.strip() or answer
+                except Exception:
+                    pass
             return f"🤖 <b>AI</b>\n━━━━━━━━━━━━━━━━\n{answer}"
         except Exception as e:
             logger.error(f"[/ask] Error: {type(e).__name__}")
@@ -1485,7 +1499,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             tech   = result["scores"]["technicals"]
             mkt    = result["scores"]["market"]
             sent_n = round(sent.score / 10 * 100)   # normalize to 0-100
-            vix    = result.get("vix", "N/A")
+            vix    = result.get("vix", "—")
             buy    = result["should_buy"]
             # Quality label
             if sc >= 80:   qlabel = "🔥 חזק מאוד"
@@ -1663,7 +1677,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📊 ציון: <b>{fg}/100</b>\n"
                 f"💭 מצב: {label}\n"
-                f"🌡️ VIX: {vix or 'N/A'}\n"
+                f"🌡️ VIX: {vix or '—'}\n"
                 + (f"\n{tip}" if tip else "")
             )
         except Exception as e:
@@ -2375,12 +2389,12 @@ def _handle_command(text: str, context: dict) -> str | None:
             mktcap     = info.get("marketCap")
             target     = info.get("targetMeanPrice")
             cur        = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
-            def _bil(v): return f"${v/1e9:.1f}B" if v and v >= 1e9 else (f"${v/1e6:.0f}M" if v else "N/A")
+            def _bil(v): return f"${v/1e9:.1f}B" if v and v >= 1e9 else (f"${v/1e6:.0f}M" if v else "—")
             upside     = (target - cur) / cur * 100 if target and cur else None
             analyst    = info.get("recommendationMean")
             rec_map    = {1:"🟢 קנה חזק", 1.5:"🟢 קנה", 2:"🟡 קנה", 2.5:"🟡 קנה מתון",
                           3:"⚪ החזק", 3.5:"🟡 מכור מתון", 4:"🔴 מכור", 4.5:"🔴 מכור חזק"}
-            rec_str = next((v for k,v in rec_map.items() if analyst and abs(analyst-k)<=0.25), "N/A") if analyst else "N/A"
+            rec_str = next((v for k,v in rec_map.items() if analyst and abs(analyst-k)<=0.25), "—") if analyst else "—"
             lines = [f"📈 <b>פונדמנטלס — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
             if pe:    lines.append(f"💹  P/E Ratio:      <b>{pe:.1f}</b>")
             if eps:   lines.append(f"💰  EPS:              <b>${eps:.2f}</b>")
@@ -2405,7 +2419,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             positions = context.get("open_positions", [])
             if not positions:
                 return "📭 אין פוזיציות לסקירה"
-            vix     = context.get("vix", "N/A")
+            vix     = context.get("vix", "—")
             equity  = context.get("equity", 0)
             ils_r   = _get_usd_ils()
             pos_lines = "\n".join(
@@ -2846,7 +2860,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             positions = context.get("open_positions", [])
             cash      = context.get("cash", 0)
             equity    = context.get("equity", 0)
-            vix       = context.get("vix", "N/A")
+            vix       = context.get("vix", "—")
             realized  = context.get("realized_pnl_net", 0)
             pos_text  = ""
             for p in positions:
@@ -2938,8 +2952,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"   🔢 כמות:                    {p['qty']} מניות\n"
                 f"   📌 מחיר קנייה:         {_fmt_price(p['entry'])}\n"
                 f"   📍 מחיר עכשיו:          {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
-                f"   📈 יעד רווח:        {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
-                f"   📉 סטופ לוס:      {_fmt_price(stop) if stop else 'N/A'}\n"
+                f"   📈 יעד רווח:        {_fmt_price(tp_price) if tp_price else '—'}\n"
+                f"   📉 סטופ לוס:      {_fmt_price(stop) if stop else '—'}\n"
                 f"   ⏳ זמן החזקה:          {held_str}\n"
                 f"   {'💚' if profit else '❤️'} {'רווח' if profit else 'הפסד'}:              {_fmt_pnl(p['pnl'], False)}"
             )

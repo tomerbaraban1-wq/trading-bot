@@ -419,7 +419,7 @@ async def notify_daily_summary(
         f"💸  מכירות היום:  <b>{total_trades}</b>  (✅{wins}  ❌{losses})",
     ]
     if total_trades > 0:
-        lines.append(f"🎯  Win Rate:        <b>{win_rate:.1f}%</b>")
+        lines.append(f"🎯  אחוז הצלחה:        <b>{win_rate:.1f}%</b>")
     lines.append(f"{pnl_emoji}  רווח/הפסד:     <b>{pnl_str}</b>")
     if realized_pnl_net and net_str:
         lines.append(f"💳  נטו אחרי מס:  {net_str}")
