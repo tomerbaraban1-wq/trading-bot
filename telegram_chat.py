@@ -505,40 +505,45 @@ def _handle_command(text: str, context: dict) -> str | None:
     cmd = t.split()[0] if t else ""
 
     # ── /commands ──────────────────────────────────────────────────────────
-    if cmd in ("/start", "/help", "עזרה"):
+    if cmd in ("/start", "/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (
-            "👋 <b>שלום! אני בוט המסחר שלך.</b>\n\n"
-            "<b>📋 כל הפקודות:</b>\n"
-            "📊 /status — מצב התיק המלא\n"
-            "📂 /manioth — איזה מניות יש לי\n"
-            "💰 /revach — מה הרווח שלי\n"
-            "💼 /shovi — שווי התיק\n"
-            "💵 /mazon — כמה מזומן יש לי\n"
-            "🏆 /biztsuim — ביצועים ואחוז הצלחה\n"
-            "🌍 /market — מצב השוק\n"
-            "📈 /sectors — דירוג סקטורים\n"
-            "⏸️ /pause — עצור קניות\n"
-            "▶️ /resume — חדש קניות\n"
-            "🔻 /sell AAPL — מכור מניה ספציפית\n"
-            "📰 /news AAPL — חדשות על מניה\n"
-            "🎯 /score AAPL — ציון מניה עכשיו\n"
-            "📅 /earnings AAPL — מתי הדוח הבא\n"
-            "🛡️ /stop AAPL — Stop Loss של מניה\n"
-            "🏆 /top — מניות עם הציון הגבוה ביותר\n"
-            "📋 /history — עסקאות אחרונות\n"
-            "😨 /fear — Fear & Greed Index\n"
-            "🌡️ /vix — מדד הפחד VIX\n"
-            "⚙️ /budget — הגדרות הבוט\n"
-            "📅 /today — מה קרה היום\n"
-            "🟢 /winners — פוזיציות ברווח\n"
-            "🔴 /losers — פוזיציות בהפסד\n"
-            "🔔 /alert AAPL 200 — התראת מחיר\n"
-            "🔍 /diagnose — למה הבוט לא קונה?\n"
-            "🧠 /backtest — תוצאות למידה היסטורית\n"
-            "📋 /log — לוג סריקות\n"
-            "🔻 /sell AAPL — מכור מניה\n"
-            "❓ /help — הודעה זו\n\n"
-            "<i>אפשר גם לשאול בעברית חופשית!</i>"
+            "👋 <b>בוט המסחר שלך — כל הפקודות</b>\n\n"
+            "━━ 📊 <b>תיק ופוזיציות</b> ━━\n"
+            "/status — מצב התיק המלא\n"
+            "/manioth — פוזיציות פתוחות\n"
+            "/revach — רווח/הפסד\n"
+            "/shovi — שווי התיק\n"
+            "/mazon — מזומן פנוי\n"
+            "/winners — פוזיציות ברווח\n"
+            "/losers — פוזיציות בהפסד\n"
+            "/taxes — סיכום מס\n"
+            "/risk — ניתוח סיכון\n\n"
+            "━━ 📈 <b>ניתוח מניות</b> ━━\n"
+            "/score AAPL — ציון מניה\n"
+            "/news AAPL — חדשות\n"
+            "/earnings AAPL — דוח רווחים\n"
+            "/stop AAPL — Stop Loss\n"
+            "/sector AAPL — איזה סקטור\n"
+            "/watchlist — רשימת המניות\n\n"
+            "━━ 🌍 <b>שוק</b> ━━\n"
+            "/market — מצב השוק\n"
+            "/sectors — דירוג סקטורים\n"
+            "/vix — מדד הפחד\n"
+            "/fear — Fear & Greed\n"
+            "/top — מניות עם ציון גבוה\n\n"
+            "━━ 📅 <b>היסטוריה</b> ━━\n"
+            "/today — מה קרה היום\n"
+            "/history — עסקאות אחרונות\n"
+            "/biztsuim — ביצועים\n"
+            "/backtest — למידה היסטורית\n\n"
+            "━━ ⚙️ <b>שליטה</b> ━━\n"
+            "/pause — עצור קניות\n"
+            "/resume — חדש קניות\n"
+            "/sell AAPL — מכור מניה\n"
+            "/alert AAPL 200 — התראת מחיר\n"
+            "/budget — הגדרות\n"
+            "/diagnose — למה לא קונה?\n\n"
+            "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
 
     if cmd == "/status":
@@ -798,6 +803,84 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"🏆 High: {_fmt_price(wm)}\n"
             f"📏 מרחק: <b>{dist:.1f}%</b>"
         )
+
+    # /taxes — tax summary
+    if cmd in ("/taxes", "taxes", "מס", "מיסים"):
+        import database as _db
+        tax = _db.get_tax_summary()
+        reserved = tax.get("tax_reserved", 0)
+        credit = tax.get("tax_credit", 0)
+        net = max(reserved - credit, 0)
+        gross = tax.get("realized_pnl_gross", 0)
+        lines = [f"🧾 <b>סיכום מס</b>\n━━━━━━━━━━━━━━━━"]
+        lines.append(f"💵 רווח ממומש: {_fmt_price(gross)}")
+        lines.append(f"🧾 מס שהופרש: {_fmt_price(reserved)}")
+        if credit > 0:
+            lines.append(f"🎁 זיכוי מס: {_fmt_price(credit)}")
+        lines.append(f"💳 חוב מס נטו: <b>{_fmt_price(net)}</b>")
+        return "\n".join(lines)
+
+    # /risk — portfolio risk analysis
+    if cmd in ("/risk", "risk", "סיכון", "ניתוח סיכון"):
+        positions = context.get("open_positions", [])
+        cash = context.get("cash", 0)
+        equity = context.get("equity", 1)
+        if not positions:
+            return "✅ אין פוזיציות פתוחות — אין סיכון"
+        lines = [f"⚠️ <b>ניתוח סיכון</b>\n━━━━━━━━━━━━━━━━"]
+        total_at_risk = 0.0
+        for p in positions:
+            stop = p.get("atr_stop") or 0
+            if stop and p["entry"]:
+                at_risk = (p["entry"] - stop) * p["qty"]
+                risk_pct = at_risk / equity * 100 if equity else 0
+                total_at_risk += at_risk
+                lines.append(f"📊 <b>{p['ticker']}</b>: מסוכן {_fmt_price(at_risk)} ({risk_pct:.1f}%)")
+        lines.append(f"━━━━━━━━━━━━━━━━")
+        total_risk_pct = total_at_risk / equity * 100 if equity else 0
+        icon = "🟢" if total_risk_pct < 5 else ("🟡" if total_risk_pct < 10 else "🔴")
+        lines.append(f"{icon} סה״כ בסיכון: <b>{_fmt_price(total_at_risk)} ({total_risk_pct:.1f}%)</b>")
+        return "\n".join(lines)
+
+    # /sector TICKER
+    if cmd in ("/sector", "sector", "סקטור") and len(t.split()) > 1:
+        _ticker = t.split()[1].upper()
+        try:
+            from sector_rotation import get_sector_for_ticker, SECTOR_ETFS, get_leading_sectors
+            etf = get_sector_for_ticker(_ticker)
+            if not etf:
+                return f"❌ לא מצאתי סקטור עבור <b>{_ticker}</b>"
+            name = SECTOR_ETFS.get(etf, etf)
+            sectors = get_leading_sectors()
+            rank = next((s["rank"] for s in sectors if s["etf"] == etf), "?")
+            ret = next((s["return_pct"] for s in sectors if s["etf"] == etf), 0)
+            return (
+                f"📊 <b>סקטור — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🏢 סקטור: <b>{name}</b> ({etf})\n"
+                f"🏆 דירוג: <b>#{rank}</b> מתוך 11\n"
+                f"📈 מומנטום 20 יום: <b>{ret:+.1f}%</b>"
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
+    # /watchlist — show top watchlist stocks
+    if cmd in ("/watchlist", "watchlist", "רשימה", "מניות לסריקה"):
+        try:
+            from scanner import get_watchlist
+            wl = get_watchlist()
+            total = len(wl)
+            sample = wl[:20]
+            return (
+                f"👁️ <b>רשימת הסריקה</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 סה״כ: <b>{total} מניות</b>\n"
+                f"🔍 סריקה כל 5 דקות (10 מניות לסבב)\n\n"
+                f"<b>דוגמה (20 ראשונות):</b>\n"
+                + " | ".join(sample)
+            )
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
 
     # /vix — VIX level
     if cmd in ("/vix", "vix"):
