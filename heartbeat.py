@@ -425,7 +425,24 @@ async def stop_loss_monitor():
                         atr_stop = new_stop
                         high_wm  = new_wm
 
-                    # ── 1a. Time-Based Exit — free capital after MAX_HOLD_HOURS ─────
+                    # ── 1a. Minimum hold guard — never sell within MIN_HOLD_MINUTES ──
+                    # Prevents immediate sell-after-buy caused by brief score dips or
+                    # ATR stop calculated before price stabilises after fill.
+                    _MIN_HOLD_MIN = int(_os.getenv("MIN_HOLD_MINUTES", "10"))
+                    try:
+                        from datetime import datetime, timezone as _tz0
+                        _et0 = trade.get("entry_time")
+                        if _et0:
+                            _ed0 = datetime.strptime(str(_et0)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz0.utc)
+                            _held_min = (datetime.now(_tz0.utc) - _ed0).total_seconds() / 60
+                            if _held_min < _MIN_HOLD_MIN:
+                                # Too new — skip all sell checks this cycle
+                                logger.debug(f"[MIN HOLD] {ticker}: held {_held_min:.1f}m < {_MIN_HOLD_MIN}m — skip sell checks")
+                                continue
+                    except Exception:
+                        pass
+
+                    # ── 1b. Time-Based Exit — free capital after MAX_HOLD_HOURS ─────
                     from datetime import datetime, timezone as _tz
                     entry_ts = trade.get("entry_time")
                     if entry_ts:

@@ -68,7 +68,7 @@ MIN_SLICES:       int   = int(os.getenv("ICEBERG_MIN_SLICES",         "2"))
 MAX_SLICES:       int   = int(os.getenv("ICEBERG_MAX_SLICES",        "20"))
 INTERVAL_SEC:     float = float(os.getenv("ICEBERG_INTERVAL_SEC",    "30"))
 JITTER_PCT:       float = float(os.getenv("ICEBERG_JITTER_PCT",      "0.3"))
-TIMEOUT_SEC:      float = float(os.getenv("ICEBERG_TIMEOUT_SEC",     "20"))
+TIMEOUT_SEC:      float = float(os.getenv("ICEBERG_TIMEOUT_SEC",     "45"))  # raised 20→45s
 
 
 # ── Live execution tracker (for /status) ──────────────────────────────────────
@@ -143,10 +143,18 @@ async def iceberg_buy(
         # Wrap sync function in thread to prevent blocking event loop
         lim = await asyncio.to_thread(limit_buy_price, initial_price, ticker)
         from utils import retry_sync
-        order = await asyncio.wait_for(
-            asyncio.to_thread(retry_sync, broker.submit_buy, ticker, total_qty, lim, max_retries=2),
-            timeout=TIMEOUT_SEC,
-        )
+        # Two attempts: first with limit price, retry with market price on timeout
+        try:
+            order = await asyncio.wait_for(
+                asyncio.to_thread(retry_sync, broker.submit_buy, ticker, total_qty, lim, max_retries=2),
+                timeout=TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[ICEBERG] {ticker}: first attempt timed out, retrying with market order...")
+            order = await asyncio.wait_for(
+                asyncio.to_thread(broker.submit_buy, ticker, total_qty, None),
+                timeout=TIMEOUT_SEC,
+            )
         fill = float(order.get("price") or lim)
         return {
             "price":      fill,
