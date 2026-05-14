@@ -1120,13 +1120,49 @@ async def morning_briefing_loop():
 
             candidates = ""
             for ticker, score, sent in top[:3]:
-                candidates += f"\n📊 <b>{ticker}</b> — ציון {score:.0f}/100 | סנטימנט {sent}/10"
+                bar = "█" * round(score/10) + "░" * (10 - round(score/10))
+                candidates += f"\n  📊 <b>{ticker}</b>  {score:.0f}/100  <code>{bar}</code>"
+
+            # Israel time & open positions context
+            import datetime as _dt2
+            _now_il = _dt2.datetime.now(_dt2.timezone.utc) + _dt2.timedelta(hours=3)
+            _il_time = _now_il.strftime("%H:%M")
+            _open_trades = database.get_open_trades()
+            open_pos_text = ""
+            if _open_trades:
+                for _ot in _open_trades[:3]:
+                    try:
+                        _pos = broker.get_position(_ot["ticker"])
+                        _pct = float(_pos.get("unrealized_plpc", 0)) * 100 if _pos else 0
+                        _icon = "🟢" if _pct >= 0 else "🔴"
+                        open_pos_text += f"\n  {_icon} <b>{_ot['ticker']}</b>  {_pct:+.1f}%"
+                    except Exception:
+                        open_pos_text += f"\n  📌 <b>{_ot['ticker']}</b>"
+
+            # VIX
+            try:
+                from indicators import get_vix as _gvix, get_fear_greed as _gfg
+                _vix = _gvix()
+                _fg  = _gfg()
+                _vix_str = f"🌡️ VIX: {_vix:.1f}" if _vix else ""
+                _fg_str  = f"  |  😨 F&G: {_fg}" if _fg else ""
+                market_line = f"{_vix_str}{_fg_str}"
+            except Exception:
+                market_line = ""
+
+            _is_edt = 3 <= _now_il.month <= 10
+            _open_time  = "16:30" if _is_edt else "15:30"
+            _close_time = "23:00" if _is_edt else "22:00"
 
             await send_message(
-                f"☀️ <b>תדרוך בוקר — שוק נפתח בעוד 30 דקות</b>\n"
+                f"☀️ <b>בוקר טוב! שוק נפתח בעוד 30 דקות</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"📰 <b>חדשות מובילות:</b>\n{news_text}\n\n"
-                f"🎯 <b>מועמדים מובילים היום:</b>{candidates if candidates else chr(10) + 'טרם חושב'}"
+                f"🕐  שעה: {_il_time} ישראל  |  פתיחה: {_open_time}  סגירה: {_close_time}\n"
+                + (f"{market_line}\n" if market_line else "")
+                + (f"\n📂 <b>פוזיציות פתוחות:</b>{open_pos_text}\n" if open_pos_text else "")
+                + f"\n📰 <b>חדשות בולטות:</b>\n{news_text}\n\n"
+                f"🎯 <b>מועמדים מובילים:</b>"
+                + (candidates if candidates else "\n  טרם חושב")
             )
             _briefing_sent_date = today_str
             logger.info("Morning briefing sent")

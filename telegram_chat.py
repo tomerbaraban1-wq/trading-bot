@@ -571,6 +571,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/taxes — סיכום מס\n"
             "/backtest — למידה היסטורית\n\n"
             "━━ ⚙️ <b>שליטה</b> ━━\n"
+            "/scan — הפעל סריקה מיידית\n"
             "/pause — עצור קניות חדשות\n"
             "/resume — חדש קניות\n"
             "/sell AAPL — מכור מניה עכשיו\n"
@@ -580,6 +581,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/diagnose — למה הבוט לא קונה?\n"
             "/next — מתי השוק נפתח\n"
             "/uptime — כמה זמן הבוט רץ\n\n"
+            "━━ 🧠 <b>AI</b> ━━\n"
+            "/advice — ייעוץ AI על התיק\n"
+            "/streak — רצף ניצחונות/הפסדות\n\n"
             "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
 
@@ -911,15 +915,33 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/history", "history", "היסטוריה", "עסקאות"):
         try:
             import database as _db
-            trades = _db.get_trade_history(limit=5) or []
+            trades = _db.get_trade_history(limit=8) or []
             closed = [t for t in trades if t.get("status") != "open"]
             if not closed:
                 return "📋 אין עסקאות סגורות עדיין"
-            lines = [f"📋 <b>עסקאות אחרונות</b>\n━━━━━━━━━━━━━━━━"]
-            for _t in closed[:5]:
-                pnl = float(_t.get("pnl_gross") or 0)
+            lines = [f"📋 <b>עסקאות אחרונות ({len(closed)})</b>\n━━━━━━━━━━━━━━━━"]
+            total_pnl = 0.0
+            for _t in closed[:7]:
+                pnl  = float(_t.get("pnl_gross") or 0)
+                ep   = float(_t.get("entry_price") or 0)
+                xp   = float(_t.get("exit_price") or 0)
+                pct  = (xp - ep) / ep * 100 if ep else 0
                 icon = "🟢" if pnl >= 0 else "🔴"
-                lines.append(f"{icon} <b>{_t['ticker']}</b>: {_fmt_pnl(pnl, False)} | {_t.get('status','')}")
+                date = str(_t.get("exit_time") or "")[:10]
+                reason = _t.get("status", "")
+                reason_map = {
+                    "take_profit": "🎯יעד", "stop_loss": "🛑סטופ",
+                    "smart_sell": "🧠AI", "news_exit": "📰חדשות",
+                    "time_exit": "⏱זמן", "manual": "✋ידני"
+                }
+                reason_str = reason_map.get(reason, reason[:6] if reason else "")
+                total_pnl += pnl
+                lines.append(
+                    f"\n{icon} <b>{_t.get('ticker','?')}</b>  {pct:+.1f}%  |  {_fmt_pnl(pnl, False)}\n"
+                    f"   📌 {_fmt_price(ep)} → {_fmt_price(xp)}  ·  {reason_str}  ·  {date}"
+                )
+            tot_icon = "💰" if total_pnl >= 0 else "📉"
+            lines.append(f"\n━━━━━━━━━━━━━━━━\n{tot_icon} סה״כ: {_fmt_pnl(total_pnl)}")
             return "\n".join(lines)
         except Exception as _e:
             logger.error(f"[/history] Error: {_e}")
@@ -1407,6 +1429,121 @@ def _handle_command(text: str, context: dict) -> str | None:
         for p in sorted(losers, key=lambda x: x["pct"]):
             lines.append(f"🔴 <b>{p['ticker']}</b>: {p['pct']:+.1f}% | {_fmt_pnl(p['pnl'], False)}")
         return "\n".join(lines)
+
+    # /scan — trigger immediate buy scan
+    if cmd in ("/scan", "scan", "סרוק", "סריקה"):
+        try:
+            import requests as _req, os as _os
+            base = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+            secret = settings.WEBHOOK_SECRET
+            if not base or not secret:
+                return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+            r = _req.post(f"{base}/scan/now",
+                          headers={"X-Webhook-Secret": secret}, timeout=60)
+            if r.status_code == 200:
+                data = r.json()
+                bought = data.get("bought", 0)
+                scanned = data.get("scanned", 0)
+                cash = data.get("remaining_cash", 0)
+                if bought > 0:
+                    return (
+                        f"🔍 <b>סריקה הושלמה</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"✅  נקנו: <b>{bought} מניות</b>\n"
+                        f"🔎  נסרקו: {scanned}\n"
+                        f"💵  מזומן נותר: ${cash:,.2f}"
+                    )
+                else:
+                    reason = data.get("reason", "לא נמצאו הזדמנויות")
+                    return (
+                        f"🔍 <b>סריקה הושלמה</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"⏭️  {reason}\n"
+                        f"🔎  נסרקו: {scanned} מניות"
+                    )
+            else:
+                return f"⚠️ סריקה נכשלה (קוד {r.status_code})"
+        except Exception as e:
+            logger.error(f"[/scan] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /streak — current win/loss streak
+    if cmd in ("/streak", "streak", "רצף", "כמה ברצף"):
+        try:
+            import database as _db
+            trades = _db.get_trade_history(limit=30) or []
+            closed = [t for t in trades if t.get("status") != "open" and t.get("pnl_gross") is not None]
+            if not closed:
+                return "📊 <b>רצף</b>\n━━━━━━━━━━━━━━━━\nאין עסקאות סגורות עדיין"
+            # Count current streak
+            current_streak = 0
+            current_type = None
+            for tr in closed:
+                win = float(tr.get("pnl_gross") or 0) > 0
+                if current_type is None:
+                    current_type = win
+                    current_streak = 1
+                elif win == current_type:
+                    current_streak += 1
+                else:
+                    break
+            # Overall stats
+            wins  = sum(1 for t in closed if float(t.get("pnl_gross") or 0) > 0)
+            total = len(closed)
+            wr    = round(wins / total * 100, 1) if total else 0
+            if current_type:
+                streak_line = f"🔥 רצף ניצחונות: <b>{current_streak}</b>"
+                streak_icon = "🏆"
+            else:
+                streak_line = f"❌ רצף הפסדות: <b>{current_streak}</b>"
+                streak_icon = "📉"
+            # Visual streak dots
+            dots = ""
+            for tr in reversed(closed[:10]):
+                dots += "🟢" if float(tr.get("pnl_gross") or 0) > 0 else "🔴"
+            return (
+                f"{streak_icon} <b>רצף נוכחי</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{streak_line}\n\n"
+                f"📊 10 עסקאות אחרונות:\n{dots}\n\n"
+                f"🎯 Win Rate: <b>{wr}%</b>  ({wins}/{total})"
+            )
+        except Exception as e:
+            logger.error(f"[/streak] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /advice — AI advice on current portfolio
+    if cmd in ("/advice", "advice", "ייעוץ", "מה לעשות", "המלצה"):
+        try:
+            client = _get_client()
+            if not client:
+                return "⚙️ Groq API לא מוגדר — לא ניתן לקבל ייעוץ AI"
+            positions = context.get("open_positions", [])
+            cash      = context.get("cash", 0)
+            equity    = context.get("equity", 0)
+            vix       = context.get("vix", "N/A")
+            realized  = context.get("realized_pnl_net", 0)
+            pos_text  = ""
+            for p in positions:
+                pos_text += f"- {p['ticker']}: {p['pct']:+.1f}% ({p['pnl']:+.2f}$)\n"
+            prompt = (
+                f"אתה יועץ השקעות. ענה בעברית קצרה (עד 120 מילה). "
+                f"תיק: equity=${equity:.0f}, cash=${cash:.0f}, VIX={vix}\n"
+                f"פוזיציות פתוחות:\n{pos_text or 'אין'}\n"
+                f"רווח ממומש: ${realized:+.2f}\n\n"
+                f"שאלה: {text}\n\n"
+                f"תן המלצה קצרה, ספציפית ומעשית."
+            )
+            resp = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=250, temperature=0.4,
+            )
+            advice = resp.choices[0].message.content.strip()
+            return f"🤖 <b>ייעוץ AI</b>\n━━━━━━━━━━━━━━━━\n{advice}"
+        except Exception as e:
+            logger.error(f"[/advice] Error: {type(e).__name__}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     if cmd in ("/log", "לוג", "log"):
         return (
