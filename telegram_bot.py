@@ -152,14 +152,24 @@ async def notify_trade_open(
     except Exception:
         _price_str = f"${price:.2f}"
         _notional_str = f"${notional:,.2f}"
+    # Score quality label
+    if score >= 75:   q = "🔥 מצוין"
+    elif score >= 65: q = "✅ טוב"
+    elif score >= 58: q = "⚠️ גבולי"
+    else:             q = "📊 רגיל"
+
+    sent_label = "😨 פחד — הזדמנות" if sentiment_score <= 4 else ("🟢 חיובי" if sentiment_score >= 7 else "😐 ניטרלי")
+
     await send_message(
-        f"🟢 <b>קנייה — {ticker}</b>\n"
+        f"🟢 <b>קנייה בוצעה!</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
+        f"📊 מניה: <b>{ticker}</b>\n"
         f"📦 כמות: {qty_str} מניות\n"
-        f"💵 מחיר: {_price_str}\n"
-        f"💰 סה״כ: {_notional_str}\n"
-        f"🎯 ציון: {score:.0f}/100\n"
-        f"🧠 סנטימנט: {sentiment_score}/10"
+        f"💵 מחיר קנייה: {_price_str}\n"
+        f"💰 סה״כ הושקע: {_notional_str}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🎯 ציון: <b>{score:.0f}/100</b> — {q}\n"
+        f"🧠 סנטימנט: {sentiment_score}/10 — {sent_label}"
         f"{iceberg_line}"
         f"{id_line}"
     )
@@ -180,23 +190,39 @@ async def notify_trade_close(
     """Rich SELL notification with full P&L breakdown and trade duration."""
     win      = pnl_gross >= 0
     emoji    = "💰" if win else "🔴"
+    result   = "🏆 רווח!" if win else "📉 הפסד"
     pct      = ((exit_price - entry_price) / entry_price * 100) if entry_price else 0
     dur_str  = _fmt_duration(duration_hours)
     reason_line = f"\n📌 סיבה: {reason}" if reason else ""
     id_line     = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
+    try:
+        from telegram_chat import _fmt_price as _fp, _fmt_pnl as _fpnl
+        _entry_str  = _fp(entry_price)
+        _exit_str   = _fp(exit_price)
+        _pnl_str    = _fpnl(pnl_gross)
+        _net_str    = _fp(abs(pnl_net))
+        _tax_str    = _fp(abs(tax_reserved))
+    except Exception:
+        _entry_str  = f"${entry_price:.2f}"
+        _exit_str   = f"${exit_price:.2f}"
+        _pnl_str    = f"{'+'  if win else '-'}${abs(pnl_gross):.2f}"
+        _net_str    = f"${abs(pnl_net):.2f}"
+        _tax_str    = f"${abs(tax_reserved):.2f}"
 
     await send_message(
-        f"{emoji} <b>מכירה — {ticker}</b>\n"
+        f"{emoji} <b>מכירה בוצעה — {result}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
+        f"📊 מניה: <b>{ticker}</b>\n"
         f"📦 כמות: {qty} מניות\n"
-        f"💵 כניסה: ${entry_price:.2f}\n"
-        f"💵 יציאה: ${exit_price:.2f}\n"
-        f"📊 שינוי: {pct:+.2f}%\n"
-        f"⏱ זמן: {dur_str}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
-        f"💳 נטו: ${pnl_net:+.2f}\n"
-        f"🧾 מס: ${tax_reserved:.2f}"
+        f"💵 מחיר קנייה: {_entry_str}\n"
+        f"💵 מחיר מכירה: {_exit_str}\n"
+        f"📊 שינוי: <b>{pct:+.2f}%</b>\n"
+        f"⏱ זמן החזקה: {dur_str}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💰 רווח/הפסד: {_pnl_str}\n"
+        f"💳 נטו (אחרי מס): {_net_str}\n"
+        f"🧾 מס שהופרש: {_tax_str}"
         f"{reason_line}"
         f"{id_line}"
     )

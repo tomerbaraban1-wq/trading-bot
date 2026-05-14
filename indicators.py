@@ -419,9 +419,46 @@ def get_market_conditions() -> dict:
         pcr = get_put_call_ratio()
         if pcr is not None:
             result["put_call_ratio"] = pcr
+
+        # Market Breadth — % of last 20 days SPY+QQQ closed positive
+        breadth = get_market_breadth()
+        if breadth is not None:
+            result["breadth_score"] = breadth
     except Exception as e:
         logger.warning(f"Market conditions error: {e}")
 
     _market_cache["data"] = result
     _market_cache["ts"] = now
     return result
+
+
+def get_market_breadth() -> float | None:
+    """
+    Calculate market breadth as the percentage of the last 20 trading days
+    where both SPY and QQQ closed positive (daily return > 0).
+
+    Returns a 0–100 score, or None on failure.
+    Shares the existing 5-minute market cache TTL (called inside get_market_conditions).
+    """
+    try:
+        import yfinance as _yf
+        import pandas as _pd
+        hist = _yf.download(["SPY", "QQQ"], period="2mo", interval="1d", progress=False, auto_adjust=True)["Close"]
+        if hist is None or hist.empty:
+            return None
+        if "SPY" not in hist.columns or "QQQ" not in hist.columns:
+            return None
+
+        hist = hist.dropna().tail(20)
+        if len(hist) < 5:
+            return None
+
+        spy_pos = hist["SPY"].pct_change().dropna() > 0
+        qqq_pos = hist["QQQ"].pct_change().dropna() > 0
+        both_pos = spy_pos & qqq_pos
+        breadth = round(float(both_pos.mean()) * 100, 1)
+        logger.debug(f"[BREADTH] {breadth:.1f}% of last {len(both_pos)} days SPY+QQQ both up")
+        return breadth
+    except Exception as e:
+        logger.debug(f"[BREADTH] fetch failed: {e}")
+        return None

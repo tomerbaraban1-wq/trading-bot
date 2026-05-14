@@ -17,6 +17,67 @@ logger = logging.getLogger(__name__)
 _htf_cache: dict[str, tuple[float, bool]] = {}
 _HTF_CACHE_TTL = 4 * 3600  # seconds
 
+# ── Pre-Market Gap Cache ──────────────────────────────────────────────────────
+# Stores (timestamp, result_dict) per ticker; TTL = 30 minutes
+_premarket_gap_cache: dict[str, tuple[float, dict]] = {}
+_PREMARKET_GAP_TTL = 30 * 60  # 30 minutes
+
+
+def get_premarket_gap(ticker: str) -> dict | None:
+    """
+    Calculate pre-market gap for *ticker* relative to previous close.
+    Uses 1-minute bars with prepost=True to get current pre-market price.
+
+    Returns:
+        {"gap_pct": float, "gap_up": bool, "gap_down": bool}
+        or None on any error (fail-open).
+    """
+    now_ts = _time_module.time()
+    cached = _premarket_gap_cache.get(ticker)
+    if cached is not None:
+        ts, result = cached
+        if now_ts - ts < _PREMARKET_GAP_TTL:
+            return result
+
+    try:
+        import yfinance as _yf
+        # Fetch 1-minute intraday bars including pre/post market
+        hist = _yf.Ticker(ticker).history(period="2d", interval="1m", prepost=True, timeout=10)
+        if hist is None or hist.empty:
+            return None
+
+        # Previous regular-session close: last bar where Time is during market hours
+        # Use the last Close of the prior calendar day as prev_close
+        hist.index = hist.index.tz_convert("America/New_York") if hist.index.tzinfo else hist.index
+        import pandas as _pd
+        today = _pd.Timestamp.now(tz="America/New_York").date()
+        prior_bars = hist[hist.index.date < today]
+        if prior_bars.empty:
+            return None
+        prev_close = float(prior_bars["Close"].iloc[-1])
+
+        # Current premarket price: latest bar from today
+        today_bars = hist[hist.index.date == today]
+        if today_bars.empty:
+            return None
+        current_price = float(today_bars["Close"].iloc[-1])
+
+        if prev_close <= 0:
+            return None
+
+        gap_pct = (current_price - prev_close) / prev_close * 100
+        result = {
+            "gap_pct": round(gap_pct, 2),
+            "gap_up":   gap_pct > 0,
+            "gap_down": gap_pct < 0,
+        }
+        _premarket_gap_cache[ticker] = (now_ts, result)
+        logger.debug(f"[PREMARKET] {ticker}: prev_close={prev_close:.2f} current={current_price:.2f} gap={gap_pct:.2f}%")
+        return result
+    except Exception as e:
+        logger.debug(f"[PREMARKET] {ticker}: gap fetch failed — {e}")
+        return None
+
 
 def _get_weekly_bearish(ticker: str) -> bool:
     """
@@ -446,6 +507,13 @@ def score_market(market: dict) -> tuple[float, dict]:
         elif pcr <= 0.7:  score -= 8;  breakdown["pcr"] = f"❌ Complacency ({pcr:.2f}) — market too bullish"
         elif pcr <= 0.85: score -= 3;  breakdown["pcr"] = f"⚠️ Low fear ({pcr:.2f})"
 
+    # Market Breadth — % of last 20 days SPY+QQQ both closed up
+    breadth = market.get("breadth_score")
+    if breadth is not None:
+        if breadth > 60:   score += 5;  breakdown["breadth"] = f"✅ Healthy breadth ({breadth:.0f}% days up)"
+        elif breadth < 40: score -= 5;  breakdown["breadth"] = f"❌ Weak breadth ({breadth:.0f}% days up)"
+        else:              breakdown["breadth"] = f"⚪ Neutral breadth ({breadth:.0f}% days up)"
+
     # Fear & Greed Index — CNN market sentiment
     fg = market.get("fear_greed")
     if fg is not None:
@@ -571,6 +639,27 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         pass
 
     composite = round(composite, 1)
+
+    # ── Pre-Market Gap Adjustment ─────────────────────────────────────────────
+    # Only relevant during pre-market / early market (6:00–10:00 AM ET)
+    try:
+        from trading_hours import _now_et
+        _now = _now_et()
+        _mins = _now.hour * 60 + _now.minute
+        if 6 * 60 <= _mins < 10 * 60:
+            _gap = get_premarket_gap(ticker)
+            if _gap is not None:
+                _gap_pct = _gap["gap_pct"]
+                _vol = tech_breakdown  # volume already in tech pass
+                if _gap["gap_up"] and _gap_pct >= 2:
+                    composite = round(min(100, composite + 6), 1)
+                    logger.info(f"[GAP] {ticker}: gap up {_gap_pct:.2f}% — momentum entering +6")
+                elif _gap["gap_down"] and abs(_gap_pct) >= 2:
+                    composite = round(max(0, composite - 8), 1)
+                    logger.info(f"[GAP] {ticker}: gap down {_gap_pct:.2f}% — avoid gap down -8")
+    except Exception:
+        pass
+
     # ── Time-of-Day Bias ─────────────────────────────────────────────────────
     # Avoid buying during chaotic market open (9:30-10:00 ET) and MOC noise (3:30-4:00)
     try:
