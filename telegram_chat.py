@@ -537,7 +537,10 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/compare AAPL MSFT — השוואה\n\n"
             "━━ 🌍 <b>מצב השוק</b> ━━\n"
             "/market — מצב כללי (SPY/QQQ/DIA)\n"
+            "/trending — מניות בתנופה חזקה\n"
             "/gainers — מניות מובילות היום\n"
+            "/exposure — חשיפת תיק לסקטורים\n"
+            "/volatility AAPL — ATR ו-Beta\n"
             "/sectors — דירוג סקטורים\n"
             "/macro — אירועים כלכליים קרובים\n"
             "/vix — מדד הפחד VIX\n"
@@ -1507,7 +1510,14 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"    <code>{_score_bar(sent_n)}</code>\n\n"
                 f"🌡️  VIX: {vix}\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"{'✅ <b>המלצה: קנה</b>' if buy else '⏭️ <b>המלצה: דלג</b>'}"
+                f"{'✅ <b>המלצה: קנה</b>' if buy else '⏭️ <b>המלצה: דלג</b>'}\n\n"
+                f"<i>💡 "
+                + (
+                    "ציון גבוה + סנטימנט חיובי + שוק תומך" if buy and sc >= 70 and sent.score >= 7 else
+                    "ציון טוב אבל סנטימנט ניטרלי — כדאי לבדוק חדשות" if buy and sent.score < 6 else
+                    "ציון גבולי — ממתין לאות חזק יותר" if not buy and sc >= 55 else
+                    "ציון נמוך — הבוט ידלג על המניה"
+                ) + "</i>"
             )
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -2438,6 +2448,152 @@ def _handle_command(text: str, context: dict) -> str | None:
         import os as _os
         _os.environ.pop("QUIET_MODE", None)
         return "🔔 <b>כל ההתראות הופעלו מחדש</b> ✅"
+
+    # /exposure — sector exposure of open portfolio
+    if cmd in ("/exposure", "exposure", "חשיפה", "סקטורים בתיק"):
+        try:
+            positions = context.get("open_positions", [])
+            equity    = context.get("equity", 1) or 1
+            if not positions:
+                return "📭 אין פוזיציות פתוחות"
+            from sector_rotation import get_sector_for_ticker, SECTOR_ETFS
+            sector_vals: dict[str, float] = {}
+            no_sector = []
+            for p in positions:
+                tk  = p["ticker"]
+                val = p.get("value", p["qty"] * p["current"])
+                etf = get_sector_for_ticker(tk)
+                if etf:
+                    name = SECTOR_ETFS.get(etf, etf)
+                    sector_vals[name] = sector_vals.get(name, 0) + val
+                else:
+                    sector_vals["אחר"] = sector_vals.get("אחר", 0) + val
+            lines = [f"🏢 <b>חשיפת תיק לסקטורים</b>\n━━━━━━━━━━━━━━━━"]
+            total_invested = sum(sector_vals.values())
+            for sec, val in sorted(sector_vals.items(), key=lambda x: -x[1]):
+                pct  = val / equity * 100
+                bar  = "█" * max(1, round(pct / 5)) + "░" * max(0, 20 - round(pct / 5))
+                lines.append(f"🏢 <b>{sec}</b>  {pct:.1f}%\n   <code>{bar}</code>  {_fmt_price(val)}")
+            cash     = context.get("cash", 0)
+            cash_pct = cash / equity * 100
+            lines.append(f"\n💵 <b>מזומן</b>  {cash_pct:.1f}%  |  <b>סה\"כ: {_fmt_price(equity)}</b>")
+            # Diversification tip
+            if len(sector_vals) == 1:
+                lines.append(f"\n⚠️ כל הכסף בסקטור אחד — שקול פיזור")
+            elif len(sector_vals) >= 3:
+                lines.append(f"\n✅ מפוזר טוב — {len(sector_vals)} סקטורים")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/exposure] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /volatility TICKER — ATR-based volatility vs market
+    if cmd in ("/volatility", "volatility", "תנודתיות") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /volatility AAPL"
+        try:
+            import yfinance as _yf
+            hist = _yf.Ticker(_ticker).history(period="30d", auto_adjust=True)
+            spy  = _yf.Ticker("SPY").history(period="30d", auto_adjust=True)
+            if hist.empty or len(hist) < 10:
+                return f"❌ אין מספיק נתונים עבור {_ticker}"
+            # ATR%
+            def _atr_pct(h):
+                hi, lo, cl = h["High"], h["Low"], h["Close"]
+                tr = (hi - lo).combine((hi - cl.shift(1)).abs(), max).combine((lo - cl.shift(1)).abs(), max)
+                return float(tr.ewm(span=14, adjust=False).mean().iloc[-1] / cl.iloc[-1] * 100)
+            atr_stock = _atr_pct(hist)
+            atr_spy   = _atr_pct(spy)
+            ratio     = atr_stock / atr_spy if atr_spy else 1
+            # 30-day std dev %
+            daily_ret = hist["Close"].pct_change().dropna()
+            std_pct   = float(daily_ret.std() * 100)
+            # Beta approx
+            spy_ret   = spy["Close"].pct_change().dropna()
+            if len(daily_ret) == len(spy_ret):
+                cov   = float(daily_ret.cov(spy_ret))
+                var   = float(spy_ret.var())
+                beta  = cov / var if var else 1.0
+            else:
+                beta = ratio
+            # Labels
+            if ratio < 0.7:   vol_label = "🟢 נמוכה מהשוק"
+            elif ratio < 1.3: vol_label = "⚪ דומה לשוק"
+            elif ratio < 2.0: vol_label = "🟡 גבוהה מהשוק"
+            else:             vol_label = "🔴 תנודתית מאוד"
+            cur = float(hist["Close"].iloc[-1])
+            return (
+                f"📐 <b>תנודתיות — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊  ATR%:       <b>{atr_stock:.2f}%</b>  (SPY: {atr_spy:.2f}%)\n"
+                f"📈  סטיית תקן: <b>{std_pct:.2f}%</b> ביום\n"
+                f"⚡  Beta:        <b>{beta:.2f}</b>\n"
+                f"🏷️  {vol_label}\n\n"
+                f"📍  מחיר:  {_fmt_price(cur)}"
+            )
+        except Exception as e:
+            logger.error(f"[/volatility] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /morning — manually trigger morning briefing
+    if cmd in ("/morning", "morning", "תדרוך בוקר", "בריפינג"):
+        try:
+            import requests as _req, os as _os
+            base   = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+            secret = settings.WEBHOOK_SECRET
+            if not base or not secret:
+                return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+            r = _req.post(f"{base}/telegram/briefing",
+                          headers={"X-Webhook-Secret": secret}, timeout=60)
+            if r.status_code in (200, 202):
+                return "☀️ <b>שולח תדרוך בוקר...</b>\n📨 ההודעה תגיע תוך שניות"
+            return f"⚠️ לא הצלחתי לשלוח (קוד {r.status_code})"
+        except Exception as e:
+            logger.error(f"[/morning] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /trending — top momentum stocks from watchlist (price-based, fast)
+    if cmd in ("/trending", "trending", "טרנד", "מומנטום"):
+        try:
+            import yfinance as _yf
+            from scanner import get_watchlist
+            import database as _db
+            import random
+            wl   = get_watchlist()
+            held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
+            wl   = [tk for tk in wl if tk not in held]
+            sample = random.sample(wl, min(40, len(wl)))
+            prices = _yf.download(sample, period="5d", progress=False, auto_adjust=True)
+            trending = []
+            _cols = prices.columns.get_level_values(0) if hasattr(prices.columns, "get_level_values") else prices.columns
+            if not prices.empty and "Close" in _cols:
+                close = prices["Close"]
+                for tk in sample:
+                    try:
+                        s = close[tk].dropna()
+                        if len(s) >= 5:
+                            chg5d = (float(s.iloc[-1]) - float(s.iloc[0])) / float(s.iloc[0]) * 100
+                            chg1d = (float(s.iloc[-1]) - float(s.iloc[-2])) / float(s.iloc[-2]) * 100
+                            # Strong momentum: up 5 days in a row OR 3%+ in 5 days
+                            if chg5d >= 3.0 or (chg5d >= 1.5 and chg1d > 0):
+                                trending.append((tk, chg5d, chg1d, float(s.iloc[-1])))
+                    except Exception:
+                        pass
+            trending.sort(key=lambda x: x[1], reverse=True)
+            if not trending:
+                return "📉 <b>טרנדינג</b>\n━━━━━━━━━━━━━━━━\n😴 אין מניות בתנופה עכשיו"
+            lines = [f"🚀 <b>מניות בתנופה ({len(trending[:8])})</b>\n━━━━━━━━━━━━━━━━"]
+            for tk, chg5, chg1, cur in trending[:8]:
+                icon = "🔥" if chg5 >= 5 else "📈"
+                lines.append(
+                    f"{icon} <b>{tk}</b>  5י: <b>{chg5:+.1f}%</b>  |  היום: {chg1:+.1f}%  |  {_fmt_price(cur)}"
+                )
+            lines.append(f"\n💡 /score TICKER לניתוח מלא")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/trending] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /vix — VIX level
     if cmd in ("/vix", "vix"):
