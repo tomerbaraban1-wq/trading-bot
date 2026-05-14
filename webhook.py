@@ -231,7 +231,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         return {"status": "rejected", "reason": "Sentiment check timed out"}
     except Exception as e:
         logger.error(f"Sentiment check failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("sentiment_fail", ticker, str(e)))
+        asyncio.ensure_future(notify_error("sentiment_fail", ticker, f"שגיאה"))
         return {"status": "rejected", "reason": f"Sentiment check failed: {e}"}
 
     _sent = sentiment.score
@@ -406,7 +406,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
         logger.error(f"BUY order failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
+        asyncio.ensure_future(notify_error("order_failed", ticker, f"שגיאה"))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Log trade
@@ -486,7 +486,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         return {"status": "error", "reason": "Sell order timed out"}
     except Exception as e:
         logger.error(f"SELL order failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("order_failed", ticker, str(e)))
+        asyncio.ensure_future(notify_error("order_failed", ticker, f"שגיאה"))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Calculate PnL
@@ -1001,7 +1001,7 @@ async def set_broker(payload: BrokerSwitch, request: Request):
         return {"status": "ok", "active_broker": payload.broker}
     except Exception as e:
         logger.error(f"Broker switch failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"שגיאה")
 
 
 @router.post("/emergency-exit/{ticker}")
@@ -1068,7 +1068,7 @@ async def emergency_exit(ticker: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Emergency exit failed for {ticker}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"שגיאה")
 
 
 @router.get("/scan")
@@ -1568,7 +1568,7 @@ async def send_morning_briefing_now(secret: str = ""):
         return {"status": "sent", "headlines": len(headlines), "candidates": len(top)}
     except Exception as e:
         logger.error(f"Manual briefing failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"שגיאה")
 
 
 @router.get("/telegram/setup")

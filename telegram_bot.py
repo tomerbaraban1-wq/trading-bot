@@ -307,7 +307,17 @@ async def notify_error(
     error_label = error_labels_he.get(error_type, error_type.replace('_', ' '))
 
     ticker_line = f"  •  מניה: <b>{ticker}</b>" if ticker else ""
-    detail_line = f"\n💬 {detail[:300]}"          if detail  else ""
+
+    # Only show detail if it contains Hebrew — suppress raw English exception text
+    detail_line = ""
+    if detail:
+        heb_chars = sum(1 for c in detail if 'א' <= c <= 'ת')
+        if heb_chars > 5:
+            # Has meaningful Hebrew content — show it
+            detail_line = f"\n💬 {detail[:200]}"
+        else:
+            # English/technical exception — log it but don't spam Telegram with English
+            logger.debug(f"[NOTIFY_ERROR] Suppressed English detail: {detail[:200]}")
 
     await send_message(
         f"⚠️ <b>שגיאה — {error_label}</b>"

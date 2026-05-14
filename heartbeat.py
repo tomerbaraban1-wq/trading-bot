@@ -180,7 +180,7 @@ async def sentiment_monitor():
             raise
         except Exception as e:
             logger.error(f"Sentiment monitor error: {e}")
-            _create_background_task(notify_error("loop_error", "", f"sentiment_monitor: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"שגיאה ב-sentiment_monitor"))
 
 
 async def _close_position(
@@ -208,7 +208,7 @@ async def _close_position(
                 asyncio.to_thread(broker.submit_sell, ticker), timeout=30
             )
         except Exception as retry_err:
-            _create_background_task(notify_error("stop_loss_fail", ticker, f"timeout+retry: {retry_err}"))
+            _create_background_task(notify_error("stop_loss_fail", ticker, f"timeout + retry נכשל"))
             return False
     except TypeError as sig_err:
         # Signature mismatch (e.g. broker wrapper missing price param) — retry without price
@@ -218,10 +218,10 @@ async def _close_position(
                 asyncio.to_thread(broker.submit_sell, ticker), timeout=30
             )
         except Exception as retry_err:
-            _create_background_task(notify_error("stop_loss_fail", ticker, f"sig+retry: {retry_err}"))
+            _create_background_task(notify_error("stop_loss_fail", ticker, f"חתימה שגויה + retry נכשל"))
             return False
     except Exception as sell_err:
-        _create_background_task(notify_error("stop_loss_fail", ticker, str(sell_err)))
+        _create_background_task(notify_error("stop_loss_fail", ticker, f"שגיאת מכירה"))
         return False
 
     exit_price = float(order.get("price") or lim_sell)
@@ -621,7 +621,10 @@ async def stop_loss_monitor():
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
-                        continue  # skip Smart Sell this cycle after partial exit
+                                # Do NOT continue — let ATR stop / take-profit / smart-sell run this cycle
+                                # so a failing partial sell doesn't suppress critical exit checks.
+                            else:
+                                continue  # sell succeeded — skip Smart Sell this cycle
 
                     elif _stage1_done and not _stage2_done and plpc >= _stage2_pct and _s2_guard_key not in _partial_sell_done:
                         # Stage 2: sell 25% of ORIGINAL (= 50% of what's left after Stage 1)
@@ -670,7 +673,9 @@ async def stop_loss_monitor():
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
-                        continue  # skip Smart Sell this cycle after partial exit
+                                # Do NOT continue — let ATR stop / take-profit / smart-sell run this cycle
+                            else:
+                                continue  # sell succeeded — skip Smart Sell this cycle
 
                     elif plpc >= _atr_tp_pct:
                         # Stage 3 (full TP): sell remaining position
@@ -735,18 +740,18 @@ async def stop_loss_monitor():
                     except Exception as se:
                         logger.warning(f"Smart sell check error for {ticker}: {se}")
                         _create_background_task(
-                                notify_error("stop_loss_fail", ticker, f"Smart sell: {se}")
+                                notify_error("stop_loss_fail", ticker, f"מכירה חכמה נכשלה")
                             )
 
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
-                    _create_background_task(notify_error("stop_loss_fail", ticker, str(e)))
+                    _create_background_task(notify_error("stop_loss_fail", ticker, f"שגיאה"))
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Stop loss monitor error: {e}")
-            _create_background_task(notify_error("loop_error", "", f"stop_loss_monitor: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"שגיאה ב-stop_loss_monitor"))
 
 
 async def auto_invest_loop():
@@ -1120,7 +1125,7 @@ async def auto_invest_loop():
                         logger.warning(f"AUTO-INVEST: {ticker} timed out — skipping (will retry next cycle)")
                     except Exception as e:
                         logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
-                        _create_background_task(notify_error("order_failed", ticker, str(e)))
+                        _create_background_task(notify_error("order_failed", ticker, f"שגיאה"))
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
@@ -1142,7 +1147,7 @@ async def auto_invest_loop():
             raise
         except Exception as e:
             logger.error(f"AUTO-INVEST loop error: {e}")
-            _create_background_task(notify_error("loop_error", "", f"auto_invest_loop: {e}"))
+            _create_background_task(notify_error("loop_error", "", f"שגיאה ב-auto_invest_loop"))
 
         await asyncio.sleep(5 * 60)  # run every 5 minutes
 
