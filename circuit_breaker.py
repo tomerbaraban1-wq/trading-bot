@@ -67,6 +67,8 @@ def _reset_if_new_day():
             return
 
         max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
+        if max_loss <= 0:
+            return   # misconfigured MAX_BUDGET — don't trip
         # Determine new tripped state BEFORE writing it (atomic decision)
         should_trip = daily_pnl <= -max_loss
         trip_reason = (

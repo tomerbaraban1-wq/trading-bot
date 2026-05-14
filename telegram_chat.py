@@ -749,7 +749,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             wl   = get_watchlist()
             held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
             wl   = [tk for tk in wl if tk not in held]
-            sample = random.sample(wl, min(20, len(wl)))
+            # Limit to 5 tickers — each call takes ~3s, 20 tickers = 60s blocking
+            sample = random.sample(wl, min(5, len(wl)))
             signals = []
             for tk in sample:
                 try:

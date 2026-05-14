@@ -582,7 +582,21 @@ async def stop_loss_monitor():
                                 )
                                 trade = dict(trade)   # make mutable copy
                                 trade["qty"] = _new_qty   # update in-memory too
+                                # Tax + P&L tracking for partial close
+                                try:
+                                    from tax_tracker import process_trade_close as _ptc
+                                    _ptc(trade["id"], _half_pnl)
+                                except Exception:
+                                    pass
                                 record_trade_result(_half_pnl)   # update circuit breaker
+                                # Mark Stage 1 done by pushing watermark above stage-1 level
+                                # so next cycle evaluates _stage1_done = True and doesn't re-sell
+                                _s1_wm_mark = round(trade["entry_price"] * (1 + _stage1_pct / 100 + 0.003), 4)
+                                await asyncio.to_thread(
+                                    database.update_trade_stop, trade["id"], atr_stop,
+                                    max(new_wm, _s1_wm_mark)
+                                )
+                                high_wm = max(new_wm, _s1_wm_mark)
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(
@@ -614,6 +628,11 @@ async def stop_loss_monitor():
                                 )
                                 trade = dict(trade)
                                 trade["qty"] = _new_qty
+                                try:
+                                    from tax_tracker import process_trade_close as _ptc2
+                                    _ptc2(trade["id"], _s2_pnl)
+                                except Exception:
+                                    pass
                                 record_trade_result(_s2_pnl)
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
@@ -841,7 +860,14 @@ async def auto_invest_loop():
                     _sample = [t for t in shuffled[:30] if not database.get_open_trade_by_ticker(t)]
                     if _sample:
                         _prices = _yf.download(_sample, period="2d", progress=False, auto_adjust=True)
-                        if not _prices.empty and "Close" in _prices.columns:
+                        # yf.download returns MultiIndex columns for multiple tickers
+                        # Check top-level with get_level_values to avoid always-False bug
+                        _has_close = (
+                            "Close" in _prices.columns.get_level_values(0)
+                            if hasattr(_prices.columns, "get_level_values")
+                            else "Close" in _prices.columns
+                        )
+                        if not _prices.empty and _has_close:
                             _close = _prices["Close"]
                             for _t in _sample:
                                 try:
@@ -906,12 +932,8 @@ async def auto_invest_loop():
                             pass  # fail-open: proceed if learning check fails
 
                         if not composite["should_buy"]:
-                            # price not yet fetched at this point — pass 0.0 as placeholder
-                            _create_background_task(_asyncio.to_thread(
-                                _shadow.evaluate, ticker, 0.0, score, sentiment.score,
-                                None, "score",
-                                f"composite_score={score:.0f} below threshold", "auto_invest",
-                            ))
+                            # Skip shadow eval when price=0.0 to avoid ZeroDivisionError
+                            # shadow.evaluate is only useful with a real price
                             continue
 
                         price = await _asyncio.wait_for(
