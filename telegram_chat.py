@@ -648,12 +648,20 @@ def _handle_command(text: str, context: dict) -> str | None:
             sectors = get_leading_sectors()
             if not sectors:
                 return "❌ לא הצלחתי לקבל נתוני סקטורים"
-            lines = ["📊 <b>סקטורים — דירוג מומנטום (20 יום)</b>\n━━━━━━━━━━━━━━━━"]
             medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟","1️⃣1️⃣"]
+            lines  = ["📊 <b>סקטורים — מומנטום 20 יום</b>\n━━━━━━━━━━━━━━━━"]
+            # Normalize bars: max return → full bar
+            max_ret = max(abs(s["return_pct"]) for s in sectors) or 1
             for s in sectors:
-                m = medals[s["rank"]-1] if s["rank"] <= len(medals) else "▪️"
-                bar = "▓" * max(1, int((s["return_pct"] + 10) / 2)) if s["return_pct"] > -10 else "░"
-                lines.append(f"{m} <b>{s['name']}</b>: {s['return_pct']:+.1f}%")
+                m    = medals[s["rank"]-1] if s["rank"] <= len(medals) else "▪️"
+                ret  = s["return_pct"]
+                fill = max(1, round(abs(ret) / max_ret * 10))
+                bar  = ("█" if ret >= 0 else "░") * fill + ("░" if ret >= 0 else "█") * (10 - fill)
+                icon = "🟢" if ret > 1 else ("🔴" if ret < -1 else "⚪")
+                lines.append(f"{m} {icon} <b>{s['name']}</b>  {ret:+.1f}%\n   <code>{bar}</code>")
+            # Tip: which sector the bot favors
+            top = sectors[0]
+            lines.append(f"\n━━━━━━━━━━━━━━━━\n🎯 <b>הבוט מעדיף:</b> {top['name']} ({top['return_pct']:+.1f}%)")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -661,27 +669,72 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     if cmd in ("/market", "שוק", "market", "מצב שוק"):
         try:
+            import yfinance as _yf
             from indicators import get_market_conditions, get_fear_greed
             mkt = get_market_conditions()
             vix = mkt.get("vix")
             fg  = mkt.get("fear_greed") or get_fear_greed()
-            spy = "📈 עולה" if mkt.get("spy_above_sma50") else "📉 יורד"
-            vix_str = f"🌡️ VIX: {vix:.1f}" if vix else "🌡️ VIX: N/A"
-            fg_label = ""
+
+            # Fetch SPY, QQQ, DIA daily change
+            def _chg(sym):
+                try:
+                    fi = _yf.Ticker(sym).fast_info
+                    c  = float(getattr(fi, "last_price", 0) or 0)
+                    p  = float(getattr(fi, "previous_close", c) or c)
+                    return (c - p) / p * 100 if p else 0
+                except Exception:
+                    return None
+            spy_chg = _chg("SPY")
+            qqq_chg = _chg("QQQ")
+            dia_chg = _chg("DIA")
+
+            def _idx_line(name, chg):
+                if chg is None:
+                    return f"  {name}: N/A"
+                icon = "📈" if chg >= 0 else "📉"
+                return f"  {icon} {name}: <b>{chg:+.2f}%</b>"
+
+            # VIX bar
+            vix_val  = vix or 20
+            vix_bar  = "█" * min(20, round(vix_val / 2)) + "░" * max(0, 20 - round(vix_val / 2))
+            vix_icon = "😌" if vix_val < 15 else ("🙂" if vix_val < 20 else ("😟" if vix_val < 28 else "😱"))
+
+            # Fear & Greed
             if fg is not None:
                 if fg <= 25:   fg_label = f"😨 פחד קיצוני ({fg})"
                 elif fg <= 45: fg_label = f"😟 פחד ({fg})"
                 elif fg <= 55: fg_label = f"😐 ניטרלי ({fg})"
                 elif fg <= 75: fg_label = f"😏 חמדנות ({fg})"
                 else:          fg_label = f"🤑 חמדנות קיצונית ({fg})"
-            return (
-                f"🌍 <b>מצב השוק</b>\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"📊 SPY: {spy}\n"
-                f"{vix_str}\n"
-                + (f"💭 Fear & Greed: {fg_label}\n" if fg_label else "")
-                + f"{'✅ אפשר לקנות' if mkt.get('spy_above_sma50') and (vix or 20) < 28 else '⚠️ שוק לא אידיאלי לקנייה'}"
-            )
+            else:
+                fg_label = "N/A"
+
+            # Overall verdict
+            spy_ok  = mkt.get("spy_above_sma50", True)
+            vix_ok  = vix_val < 28
+            fg_ok   = fg is None or fg >= 25
+            buy_env = spy_ok and vix_ok
+            if buy_env and (fg is None or fg <= 70):
+                verdict = "✅ <b>סביבה טובה לקנייה</b>"
+            elif not spy_ok:
+                verdict = "⚠️ <b>SPY מתחת ל-SMA50 — הבוט לא קונה</b>"
+            elif not vix_ok:
+                verdict = "⚠️ <b>VIX גבוה — הבוט לא קונה</b>"
+            else:
+                verdict = "⚠️ <b>שוק חמדני — זהירות</b>"
+
+            lines = [
+                f"🌍 <b>מצב השוק</b>\n━━━━━━━━━━━━━━━━",
+                f"<b>מדדים עיקריים:</b>",
+                _idx_line("SPY (S&P500)", spy_chg),
+                _idx_line("QQQ (נאסד\"ק)", qqq_chg),
+                _idx_line("DIA (דאו)", dia_chg),
+                f"\n<b>מדד הפחד:</b>",
+                f"  {vix_icon} VIX: <b>{vix_val:.1f}</b>\n  <code>{vix_bar}</code>",
+                f"\n💭 Fear & Greed: <b>{fg_label}</b>",
+                f"\n━━━━━━━━━━━━━━━━\n{verdict}",
+            ]
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"[/market] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
@@ -1297,23 +1350,49 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /risk — portfolio risk analysis
     if cmd in ("/risk", "risk", "סיכון", "ניתוח סיכון"):
         positions = context.get("open_positions", [])
-        cash = context.get("cash", 0)
-        equity = context.get("equity", 1)
+        equity    = context.get("equity", 1) or 1
+        vix       = context.get("vix") or 20
         if not positions:
-            return "✅ אין פוזיציות פתוחות — אין סיכון"
+            return "✅ אין פוזיציות פתוחות — אפס סיכון"
         lines = [f"⚠️ <b>ניתוח סיכון</b>\n━━━━━━━━━━━━━━━━"]
         total_at_risk = 0.0
+        total_worst   = 0.0
         for p in positions:
-            stop = p.get("atr_stop") or 0
-            if stop and p["entry"]:
-                at_risk = (p["entry"] - stop) * p["qty"]
+            stop  = p.get("atr_stop") or 0
+            entry = p.get("entry", 0)
+            cur   = p.get("current", entry)
+            qty   = p.get("qty", 0)
+            val   = p.get("value", cur * qty)
+            # Risk to stop
+            if stop and entry:
+                at_risk  = (cur - stop) * qty
                 risk_pct = at_risk / equity * 100 if equity else 0
-                total_at_risk += at_risk
-                lines.append(f"📊 <b>{p['ticker']}</b>: מסוכן {_fmt_price(at_risk)} ({risk_pct:.1f}%)")
-        lines.append(f"━━━━━━━━━━━━━━━━")
-        total_risk_pct = total_at_risk / equity * 100 if equity else 0
-        icon = "🟢" if total_risk_pct < 5 else ("🟡" if total_risk_pct < 10 else "🔴")
-        lines.append(f"{icon} סה״כ בסיכון: <b>{_fmt_price(total_at_risk)} ({total_risk_pct:.1f}%)</b>")
+                total_at_risk += max(at_risk, 0)
+            else:
+                at_risk  = val * 0.05   # assume 5% risk if no stop
+                risk_pct = at_risk / equity * 100
+            # Worst-case: -20% from current (market crash scenario)
+            worst    = val * 0.20
+            total_worst += worst
+            icon = "🟢" if p["pnl"] >= 0 else "🔴"
+            lines.append(
+                f"{icon} <b>{p['ticker']}</b>\n"
+                f"   🛑 סיכון לסטופ:  <b>{_fmt_price(at_risk)}</b>  ({risk_pct:.1f}%)\n"
+                f"   💥 תרחיש קיצון: {_fmt_price(worst)}"
+            )
+        lines.append(f"\n━━━━━━━━━━━━━━━━")
+        total_risk_pct  = total_at_risk / equity * 100
+        total_worst_pct = total_worst   / equity * 100
+        risk_icon = "🟢" if total_risk_pct < 5 else ("🟡" if total_risk_pct < 10 else "🔴")
+        lines.append(f"{risk_icon} סיכון לסטופ:  <b>{_fmt_price(total_at_risk)} ({total_risk_pct:.1f}%)</b>")
+        lines.append(f"💥 תרחיש -20%:  <b>{_fmt_price(total_worst)} ({total_worst_pct:.1f}%)</b>")
+        # VIX context
+        if vix >= 28:
+            lines.append(f"\n🚨 VIX={vix:.1f} — שוק תנודתי, הסיכון גבוה מהרגיל!")
+        elif vix >= 20:
+            lines.append(f"\n⚠️ VIX={vix:.1f} — תנודתיות מוגברת")
+        else:
+            lines.append(f"\n✅ VIX={vix:.1f} — שוק רגוע")
         return "\n".join(lines)
 
     # /sector TICKER
@@ -1341,21 +1420,33 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /watchlist — show top watchlist stocks
+    # /watchlist — show watchlist grouped by sector
     if cmd in ("/watchlist", "watchlist", "רשימה", "מניות לסריקה"):
         try:
             from scanner import get_watchlist
-            wl = get_watchlist()
+            from sector_rotation import get_sector_for_ticker, SECTOR_ETFS
+            wl    = get_watchlist()
             total = len(wl)
-            sample = wl[:20]
-            return (
-                f"👁️ <b>רשימת הסריקה</b>\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"📊 סה״כ: <b>{total} מניות</b>\n"
-                f"🔍 סריקה כל 5 דקות (10 מניות לסבב)\n\n"
-                f"<b>דוגמה (20 ראשונות):</b>\n"
-                + " | ".join(sample)
-            )
+            # Group by sector
+            sectors_map: dict[str, list[str]] = {}
+            no_sector = []
+            for tk in wl:
+                etf = get_sector_for_ticker(tk)
+                if etf:
+                    name = SECTOR_ETFS.get(etf, etf)
+                    sectors_map.setdefault(name, []).append(tk)
+                else:
+                    no_sector.append(tk)
+            lines = [
+                f"👁️ <b>רשימת הסריקה</b>\n━━━━━━━━━━━━━━━━",
+                f"📊 סה״כ: <b>{total} מניות</b>  |  סריקה כל 5 דקות",
+                "",
+            ]
+            for sec_name, tickers in sorted(sectors_map.items(), key=lambda x: -len(x[1])):
+                lines.append(f"<b>{sec_name}:</b>  {' · '.join(tickers[:8])}")
+            if no_sector:
+                lines.append(f"<b>אחר:</b>  {' · '.join(no_sector[:8])}")
+            return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
@@ -1749,21 +1840,53 @@ def _handle_command(text: str, context: dict) -> str | None:
     # ── שאלות ביצועים ──────────────────────────────────────────────────────
     perf_keywords = ["ביצועים", "סטטיסטיקה", "כמה עסקאות", "win rate", "אחוז הצלחה", "biztsuim", "/biztsuim"]
     if any(k in t for k in perf_keywords):
-        closed = context.get("closed_trades", [])
-        total  = len(closed)
-        wins   = sum(1 for x in closed if x.get("pnl", 0) > 0)
-        wr     = round(wins / total * 100, 1) if total > 0 else 0
-        total_pnl = sum(x.get("pnl", 0) for x in closed)
-        if total == 0:
-            return "📊 <b>עדיין אין עסקאות סגורות</b>\nהבוט צריך לפחות 10 עסקאות לסטטיסטיקה"
-        return (
-            f"📊 <b>ביצועים</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"🔢 עסקאות סגורות: {total}\n"
-            f"✅ זכיות: {wins}  |  ❌ הפסדים: {total - wins}\n"
-            f"🎯 אחוז הצלחה: <b>{wr}%</b>\n"
-            f"💰 רווח כולל: <b>${total_pnl:+.2f}</b>"
-        )
+        try:
+            import database as _db
+            all_closed = _db.get_trade_history(limit=200) or []
+            closed = [x for x in all_closed if x.get("status") != "open" and x.get("pnl_gross") is not None]
+            total  = len(closed)
+            if total == 0:
+                return "📊 <b>ביצועים</b>\n━━━━━━━━━━━━━━━━\n😴 אין עסקאות סגורות עדיין"
+            wins   = [x for x in closed if float(x.get("pnl_gross") or 0) > 0]
+            losses = [x for x in closed if float(x.get("pnl_gross") or 0) <= 0]
+            wr     = round(len(wins) / total * 100, 1)
+            total_pnl  = sum(float(x.get("pnl_gross") or 0) for x in closed)
+            avg_win    = sum(float(x.get("pnl_gross") or 0) for x in wins) / len(wins) if wins else 0
+            avg_loss   = sum(float(x.get("pnl_gross") or 0) for x in losses) / len(losses) if losses else 0
+            rr_ratio   = abs(avg_win / avg_loss) if avg_loss else 0
+            best_trade = max(closed, key=lambda x: float(x.get("pnl_gross") or 0))
+            worst_trade= min(closed, key=lambda x: float(x.get("pnl_gross") or 0))
+            # Avg hold time
+            hold_times = []
+            for x in closed:
+                try:
+                    from datetime import datetime, timezone as _tz2
+                    ed = datetime.strptime(str(x.get("entry_time",""))[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz2.utc)
+                    xd = datetime.strptime(str(x.get("exit_time",""))[:19],  "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz2.utc)
+                    hold_times.append((xd - ed).total_seconds() / 3600)
+                except Exception:
+                    pass
+            avg_hold = sum(hold_times) / len(hold_times) if hold_times else 0
+            hold_str = f"{avg_hold:.1f}ש'" if avg_hold < 24 else f"{avg_hold/24:.1f} ימים"
+            # WR bar
+            wr_bar = "🟢" * round(wr / 10) + "⚪" * (10 - round(wr / 10))
+            return (
+                f"📊 <b>ביצועים מלאים</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔢  עסקאות:         <b>{total}</b>  (✅{len(wins)} ❌{len(losses)})\n"
+                f"🎯  Win Rate:       <b>{wr}%</b>\n"
+                f"    {wr_bar}\n\n"
+                f"💰  רווח כולל:       {_fmt_pnl(total_pnl)}\n"
+                f"📈  ממוצע ניצחון:  <b>${avg_win:+.2f}</b>\n"
+                f"📉  ממוצע הפסד:   <b>${avg_loss:+.2f}</b>\n"
+                f"⚖️   R:R Ratio:      <b>{rr_ratio:.2f}</b>\n"
+                f"⏱️   זמן ממוצע:     <b>{hold_str}</b>\n\n"
+                f"🏆  הכי טוב:  <b>{best_trade['ticker']}</b>  ${float(best_trade.get('pnl_gross',0)):+.2f}\n"
+                f"📉  הכי גרוע: <b>{worst_trade['ticker']}</b>  ${float(worst_trade.get('pnl_gross',0)):+.2f}"
+            )
+        except Exception as e:
+            logger.error(f"[/biztsuim] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # ── Auto-detect ticker in free Hebrew text ─────────────────────────────────
     # e.g. "מה ציון של AAPL?" → run /score AAPL

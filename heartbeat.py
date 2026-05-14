@@ -995,15 +995,16 @@ async def auto_invest_loop():
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
-                # Send scan summary to Telegram (only if something notable happened)
-                if bought > 0 or len(candidates) > 0:
+                # Send scan summary to Telegram when something was bought
+                if bought > 0:
                     try:
-                        _scan_lines = [f"🔍 <b>סיכום סריקה</b>"]
-                        if bought > 0:
-                            _scan_lines.append(f"✅ נקנו {bought} מניות")
-                        else:
-                            _scan_lines.append(f"⏭️ לא נמצאו הזדמנויות ({len(candidates)} מניות נסרקו)")
-                        _scan_lines.append(f"💵 מזומן: ${remaining:.2f}")
+                        _scan_lines = [
+                            f"🔍 <b>סיכום סריקה</b>",
+                            f"━━━━━━━━━━━━━━━━",
+                            f"✅  נקנו: <b>{bought} מניות</b>",
+                            f"🔎  נסרקו: {len(candidates)}",
+                            f"💵  מזומן נותר: ${remaining:.2f}",
+                        ]
                         _create_background_task(send_message("\n".join(_scan_lines)))
                     except Exception:
                         pass
