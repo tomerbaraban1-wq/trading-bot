@@ -880,12 +880,12 @@ async def auto_invest_loop():
                         except Exception:
                             pass  # fail-open: proceed if earnings check fails
 
-                        # Score with timeout protection
+                        # Score with timeout protection (60s — yfinance can be slow)
                         sentiment = await _asyncio.wait_for(
-                            _asyncio.to_thread(score_sentiment, ticker), timeout=30
+                            _asyncio.to_thread(score_sentiment, ticker), timeout=60
                         )
                         composite = await _asyncio.wait_for(
-                            _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=30
+                            _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=60
                         )
                         score = composite["composite_score"]
                         _vol_ratio: float | None = None   # set after volume check
@@ -1065,8 +1065,9 @@ async def auto_invest_loop():
                         await notify_buy(ticker, filled_qty, actual_price, score, sentiment.score)
 
                     except _asyncio.TimeoutError:
-                        logger.warning(f"AUTO-INVEST: {ticker} timed out, skipping")
-                        _create_background_task(notify_error("api_timeout", ticker, "Auto-invest order timed out"))
+                        # Timeout during scan is normal — just skip this ticker silently.
+                        # The bot will retry in the next 5-minute cycle. No Telegram alert needed.
+                        logger.warning(f"AUTO-INVEST: {ticker} timed out — skipping (will retry next cycle)")
                     except Exception as e:
                         logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
                         _create_background_task(notify_error("order_failed", ticker, str(e)))
