@@ -87,7 +87,10 @@ async def send_message(text: str) -> bool:
         from discord_bot import send_discord as _send_discord
         import asyncio as _asyncio
         task = _asyncio.create_task(_send_discord(text))
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        task.add_done_callback(
+            lambda t: logger.debug(f"Discord send failed: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
     except Exception:
         pass
 

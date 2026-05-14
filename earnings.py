@@ -237,7 +237,7 @@ def _fetch_earnings_data(ticker: str) -> dict:
                             # Find the next trading day's price change
                             close_before = price_hist["Close"].asof(date_dt - pd.Timedelta(days=1))
                             close_after  = price_hist["Close"].asof(date_dt + pd.Timedelta(days=1))
-                            if close_before and close_before > 0 and close_after and close_after > 0:
+                            if pd.notna(close_before) and close_before > 0 and pd.notna(close_after) and close_after > 0:
                                 move_pct = (close_after - close_before) / close_before * 100
                                 all_moves.append(abs(move_pct))
                                 if beat:

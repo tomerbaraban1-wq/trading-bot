@@ -251,8 +251,8 @@ def compute_position_size(
     streak_mult = _get_streak_multiplier()
     if streak_mult != 1.0:
         qty = round(qty * streak_mult, 6)
-        # Re-apply notional cap after multiplier
-        max_notional = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
+        # Re-apply notional cap after multiplier (based on actual equity, not fixed budget)
+        max_notional = equity * (settings.MAX_POSITION_PCT / 100)
         qty = min(qty, max_notional / entry_price)
 
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
@@ -283,8 +283,8 @@ def compute_position_size(
 
     if conviction_mult != 1.0:
         proposed_qty = round(qty * conviction_mult, 6)
-        # Hard cap: never exceed MAX_POSITION_PCT notional
-        max_notional_final = settings.MAX_BUDGET * (settings.MAX_POSITION_PCT / 100)
+        # Hard cap: never exceed MAX_POSITION_PCT of actual equity (not fixed budget)
+        max_notional_final = equity * (settings.MAX_POSITION_PCT / 100)
         max_qty_by_pct = max_notional_final / entry_price if entry_price > 0 else proposed_qty
         qty = round(min(proposed_qty, max_qty_by_pct), 6)
         logger.info(

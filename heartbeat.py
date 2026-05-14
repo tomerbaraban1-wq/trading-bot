@@ -28,6 +28,11 @@ _background_tasks = set()
 # Smart sell: track consecutive low-score cycles per ticker (confirmation buffer)
 _smart_sell_low_count: dict[str, int] = {}
 
+# Stop-raise alert deduplication: ticker → last alert pct
+_position_alert_sent: dict[str, float] = {}
+# Price-target alerts already fired: "TICKER:PRICE" strings
+_price_alerts_fired: set = set()
+
 def _create_background_task(coro):
     """Create a background task and track it to prevent garbage collection."""
     task = asyncio.create_task(coro)
@@ -473,11 +478,12 @@ async def stop_loss_monitor():
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
+                        continue  # skip Smart Sell this cycle after partial exit
 
                     elif _stage1_done and not _stage2_done and plpc >= _stage2_pct:
                         # Stage 2: sell another 25% of original position (= 50% of current remaining)
-                        # After Stage 1, remaining qty ≈ 50% of original, so we sell half of that
-                        _quarter_qty = round(trade["qty"] * 0.5, 6)   # 50% of what's left
+                        # After Stage 1 sold 50% of original, remaining = 50%. We sell half of that = 25% of original.
+                        _quarter_qty = round(trade["qty"] * 0.25, 6)   # 25% of original = 50% of remaining
                         if _quarter_qty > 0:
                             try:
                                 _s2_order = await asyncio.wait_for(
@@ -496,6 +502,7 @@ async def stop_loss_monitor():
                                 )
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
+                        continue  # skip Smart Sell this cycle after partial exit
 
                     elif plpc >= _atr_tp_pct:
                         # Stage 3 (full TP): sell remaining position
@@ -1069,8 +1076,7 @@ async def morning_briefing_loop():
             await asyncio.sleep(3600)
 
 
-_position_alert_sent: dict[str, float] = {}   # ticker → last alert pct
-_price_alerts_fired: set = set()              # "TICKER:PRICE" already fired
+# (Moved to top of file — defined near _smart_sell_low_count)
 
 
 async def price_alert_loop():

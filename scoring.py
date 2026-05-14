@@ -287,8 +287,8 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     else:
         breakdown["bb"] = "⚪ N/A"
 
-    # ── Moving Averages trend (0-15 points) ────────────────────────────
-    max_score += 15
+    # ── Moving Averages trend (0-18 points) ────────────────────────────
+    max_score += 18
     ma_score = 0
     above_20 = indicators.get("above_sma20")
     above_50 = indicators.get("above_sma50")

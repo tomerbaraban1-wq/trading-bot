@@ -254,7 +254,14 @@ def _analyze_ticker(ticker: str, lookback_days: int) -> list[dict]:
         # Extract indicator conditions as discrete buckets
         rsi = row.get("rsi_14")
         macd_bullish = row.get("macd", 0) > row.get("macd_signal", 0)
-        bb_pos = row.get("bb_position") if hasattr(row, 'get') else None
+        # bb_position not stored as a column — compute inline from Bollinger Band bounds
+        _bb_upper = row.get("bb_upper")
+        _bb_lower = row.get("bb_lower")
+        if (_bb_upper and _bb_lower and _bb_upper > _bb_lower
+                and not np.isnan(_bb_upper) and not np.isnan(_bb_lower)):
+            bb_pos = (cur_close - _bb_lower) / (_bb_upper - _bb_lower)
+        else:
+            bb_pos = None
         vol_ratio = row.get("volume_ratio", 1.0)
         above_sma50 = row.get("close", 0) > row.get("sma_50", 0) if row.get("sma_50") else None
 
