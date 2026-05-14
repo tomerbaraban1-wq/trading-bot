@@ -518,58 +518,90 @@ def _handle_command(text: str, context: dict) -> str | None:
     # ── /commands ──────────────────────────────────────────────────────────
     if cmd in ("/start", "/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (
-            "👋 <b>בוט המסחר שלך — כל הפקודות</b>\n\n"
+            "👋 <b>מנהל ההשקעות שלך — כל הפקודות</b>\n\n"
             "━━ 📊 <b>תיק ופוזיציות</b> ━━\n"
-            "/status — מצב התיק המלא\n"
-            "/manioth — פוזיציות פתוחות\n"
-            "/revach — רווח/הפסד\n"
+            "/status — מצב מלא של התיק\n"
+            "/manioth — איזה מניות פתוחות\n"
+            "/revach — רווח/הפסד פירוט\n"
             "/shovi — שווי התיק\n"
             "/mazon — מזומן פנוי\n"
+            "/portfolio — הקצאה באחוזים\n"
             "/winners — פוזיציות ברווח\n"
             "/losers — פוזיציות בהפסד\n"
-            "/taxes — סיכום מס\n"
             "/risk — ניתוח סיכון\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
-            "/score AAPL — ציון מניה\n"
-            "/news AAPL — חדשות\n"
+            "/score AAPL — ציון המניה\n"
+            "/news AAPL — חדשות בזמן אמת\n"
+            "/newscheck — בדיקת חדשות לכל הפוזיציות\n"
             "/earnings AAPL — דוח רווחים\n"
-            "/stop AAPL — Stop Loss\n"
+            "/stop AAPL — מצב ה-Stop Loss\n"
             "/sector AAPL — איזה סקטור\n"
-            "/watchlist — רשימת המניות\n\n"
-            "━━ 🌍 <b>שוק</b> ━━\n"
-            "/market — מצב השוק\n"
+            "/compare AAPL MSFT — השוואה\n\n"
+            "━━ 🌍 <b>מצב השוק</b> ━━\n"
+            "/market — מצב כללי\n"
             "/sectors — דירוג סקטורים\n"
-            "/vix — מדד הפחד\n"
-            "/fear — Fear & Greed\n"
-            "/top — מניות עם ציון גבוה\n\n"
-            "━━ 📅 <b>היסטוריה</b> ━━\n"
+            "/vix — מדד הפחד VIX\n"
+            "/fear — Fear & Greed Index\n"
+            "/top — מניות עם ציון גבוה\n"
+            "/watchlist — רשימת הסריקה\n\n"
+            "━━ 📅 <b>היסטוריה וביצועים</b> ━━\n"
             "/today — מה קרה היום\n"
             "/history — עסקאות אחרונות\n"
-            "/biztsuim — ביצועים\n"
-            "/backtest — למידה היסטורית\n\n"
-            "━━ ⚙️ <b>שליטה</b> ━━\n"
-            "/pause — עצור קניות\n"
-            "/resume — חדש קניות\n"
-            "/sell AAPL — מכור מניה\n"
-            "/alert AAPL 200 — התראת מחיר\n"
-            "/budget — הגדרות\n"
-            "/diagnose — למה לא קונה?\n\n"
-            "━━ 📊 <b>עוד פקודות</b> ━━\n"
-            "/portfolio — הקצאת תיק (%)\n"
-            "/next — מתי השוק נפתח\n"
             "/summary — סיכום 7 ימים\n"
+            "/biztsuim — ביצועים ו-Win Rate\n"
             "/best — העסקה הטובה ביותר\n"
             "/worst — העסקה הגרועה ביותר\n"
-            "/uptime — כמה זמן הבוט רץ\n"
             "/taxes — סיכום מס\n"
-            "/risk — ניתוח סיכון\n"
-            "/sector AAPL — סקטור המניה\n"
-            "/watchlist — רשימת הסריקה\n\n"
+            "/backtest — למידה היסטורית\n\n"
+            "━━ ⚙️ <b>שליטה</b> ━━\n"
+            "/pause — עצור קניות חדשות\n"
+            "/resume — חדש קניות\n"
+            "/sell AAPL — מכור מניה עכשיו\n"
+            "/alert AAPL 200 — התראת מחיר\n"
+            "/budget — הגדרות הבוט\n"
+            "/diagnose — למה הבוט לא קונה?\n"
+            "/next — מתי השוק נפתח\n"
+            "/uptime — כמה זמן הבוט רץ\n\n"
             "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
 
     if cmd == "/status":
-        return _simple_fallback(context)
+        positions = context.get("open_positions", [])
+        cash      = context.get("cash", 0)
+        equity    = context.get("equity", 0)
+        pnl       = context.get("open_pnl", 0)
+        realized  = context.get("realized_pnl_net", 0)
+        vix       = context.get("vix")
+        mkt_open  = context.get("market_open", False)
+        cb        = context.get("circuit_breaker", False)
+        n_pos     = len(positions)
+        max_pos   = settings.MAX_OPEN_POSITIONS
+        pnl_icon  = "📈" if pnl >= 0 else "📉"
+        mkt_icon  = "🟢" if mkt_open else "🔴"
+        lines = [f"📊 <b>סטטוס הבוט</b>\n━━━━━━━━━━━━━━━━"]
+        lines.append(f"💼  שווי תיק:     <b>{_fmt_price(equity)}</b>")
+        lines.append(f"💵  מזומן:          {_fmt_price(cash)}")
+        lines.append(f"{pnl_icon}  רווח/הפסד פתוח:  {_fmt_pnl(pnl)}")
+        if realized != 0:
+            lines.append(f"🏆  ממומש:          {_fmt_pnl(realized)}")
+        lines.append(f"📂  פוזיציות:      <b>{n_pos}/{max_pos}</b>")
+        lines.append(f"{mkt_icon}  שוק:            {'פתוח' if mkt_open else 'סגור'}")
+        if vix:
+            vix_icon = "😌" if vix < 20 else ("😟" if vix < 28 else "😱")
+            lines.append(f"{vix_icon}  VIX:              {vix:.1f}")
+        if cb:
+            lines.append(f"⛔  Circuit Breaker: פעיל — קניות מושהות")
+        import os as _os
+        if _os.getenv("BOT_PAUSED"):
+            lines.append(f"⏸️  הבוט: מושהה — שלח /resume להמשך")
+        else:
+            lines.append(f"✅  הבוט: פעיל וסורק")
+        if positions:
+            lines.append(f"\n<b>פוזיציות:</b>")
+            for p in positions:
+                icon = "🟢" if p["pnl"] >= 0 else "🔴"
+                lines.append(f"  {icon} <b>{p['ticker']}</b>  {p['pct']:+.1f}%  |  {_fmt_pnl(p['pnl'], False)}")
+        return "\n".join(lines)
 
     if cmd in ("/pause", "עצור", "עצור קניות", "pause"):
         import os as _os
@@ -629,11 +661,14 @@ def _handle_command(text: str, context: dict) -> str | None:
                 + f"{'✅ אפשר לקנות' if mkt.get('spy_above_sma50') and (vix or 20) < 28 else '⚠️ שוק לא אידיאלי לקנייה'}"
             )
         except Exception as e:
-            return f"❌ לא הצלחתי לקבל מצב שוק: {e}"
+            logger.error(f"[/market] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /news TICKER
     if cmd in ("/news", "news", "חדשות") and len(t.split()) > 1:
-        _ticker = t.split()[1].upper()
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /news AAPL"
         try:
             from news_service import get_headlines
             headlines = get_headlines(_ticker, limit=5)
@@ -649,7 +684,9 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /score TICKER
     if cmd in ("/score", "score", "ציון") and len(t.split()) > 1:
-        _ticker = t.split()[1].upper()
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /score AAPL"
         try:
             from scoring import get_composite_score
             from sentiment import score_sentiment
@@ -794,7 +831,9 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /earnings TICKER
     if cmd in ("/earnings", "earnings", "דוחות") and len(t.split()) > 1:
-        _ticker = t.split()[1].upper()
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /earnings AAPL"
         try:
             from earnings import check_earnings_risk, get_earnings_impact
             risky, reason, days = check_earnings_risk(_ticker)
@@ -1005,17 +1044,19 @@ def _handle_command(text: str, context: dict) -> str | None:
     # /uptime — bot running time
     if cmd in ("/uptime", "uptime", "כמה זמן רץ", "זמן פעילות"):
         try:
-            import requests as _req, os as _os
-            base = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
-            r = _req.get(f"{base}/health?t=up", timeout=5)
-            secs = r.json().get("uptime_seconds", 0)
-            h, rem = divmod(int(secs), 3600)
+            import time as _t
+            from main import START_TIME as _st
+            secs = int(_t.time() - _st)
+            h, rem = divmod(secs, 3600)
             m = rem // 60
+            import os as _os
+            paused = bool(_os.getenv("BOT_PAUSED"))
+            status_str = "⏸️ מושהה" if paused else "✅ פעיל וסורק"
             return (
                 f"🤖 <b>זמן פעילות הבוט</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"⏱ פעיל: <b>{h} שעות ו-{m} דקות</b>\n"
-                f"✅ הבוט רץ ברציפות"
+                f"⏱  פעיל: <b>{h} שעות ו-{m} דקות</b>\n"
+                f"🔄  מצב: {status_str}"
             )
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -1023,19 +1064,25 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /taxes — tax summary
     if cmd in ("/taxes", "taxes", "מס", "מיסים"):
-        import database as _db
-        tax = _db.get_tax_summary()
-        reserved = tax.get("tax_reserved", 0)
-        credit = tax.get("tax_credit", 0)
-        net = max(reserved - credit, 0)
-        gross = tax.get("realized_pnl_gross", 0)
-        lines = [f"🧾 <b>סיכום מס</b>\n━━━━━━━━━━━━━━━━"]
-        lines.append(f"💵 רווח ממומש: {_fmt_price(gross)}")
-        lines.append(f"🧾 מס שהופרש: {_fmt_price(reserved)}")
-        if credit > 0:
-            lines.append(f"🎁 זיכוי מס: {_fmt_price(credit)}")
-        lines.append(f"💳 חוב מס נטו: <b>{_fmt_price(net)}</b>")
-        return "\n".join(lines)
+        try:
+            import database as _db
+            tax = _db.get_tax_summary() or {}
+            reserved = float(tax.get("tax_reserved") or 0)
+            credit   = float(tax.get("tax_credit") or 0)
+            net      = max(reserved - credit, 0)
+            gross    = float(tax.get("realized_pnl_gross") or 0)
+            lines    = [f"🧾 <b>סיכום מס</b>\n━━━━━━━━━━━━━━━━"]
+            lines.append(f"💵  רווח ממומש:   {_fmt_price(gross)}")
+            lines.append(f"🧾  מס שהופרש:   {_fmt_price(reserved)}")
+            if credit > 0:
+                lines.append(f"🎁  זיכוי מס:      {_fmt_price(credit)}")
+            lines.append(f"💳  חוב מס נטו:  <b>{_fmt_price(net)}</b>")
+            if gross == 0:
+                lines.append("\n💡 עדיין לא ממשת רווחים — אין חבות מס")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/taxes] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /risk — portfolio risk analysis
     if cmd in ("/risk", "risk", "סיכון", "ניתוח סיכון"):
@@ -1061,7 +1108,9 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /sector TICKER
     if cmd in ("/sector", "sector", "סקטור") and len(t.split()) > 1:
-        _ticker = t.split()[1].upper()
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /sector AAPL"
         try:
             from sector_rotation import get_sector_for_ticker, SECTOR_ETFS, get_leading_sectors
             etf = get_sector_for_ticker(_ticker)
@@ -1131,6 +1180,40 @@ def _handle_command(text: str, context: dict) -> str | None:
             f"🎯 יעד רווח/הפסד: {settings.TAKE_PROFIT_PCT}%\n"
             f"🤖 ברוקר: {settings.ACTIVE_BROKER}"
         )
+
+    # /newscheck — force immediate news sentiment check on all open positions
+    if cmd in ("/newscheck", "newscheck", "בדוק חדשות", "חדשות חדשות"):
+        try:
+            import database as _db
+            open_trades = _db.get_open_trades() or []
+            if not open_trades:
+                return "📭 אין פוזיציות פתוחות לבדיקה"
+            from sentiment import score_sentiment_live as _sl
+            lines = [f"📰 <b>בדיקת חדשות בזמן אמת</b>\n━━━━━━━━━━━━━━━━"]
+            for tr in open_trades:
+                tk = tr.get("ticker", "")
+                if not tk:
+                    continue
+                try:
+                    sent = _sl(tk)
+                    sc   = sent.score
+                    if sc <= 3:   icon, label = "🔴", "שלילי מאוד"
+                    elif sc <= 4: icon, label = "🟠", "שלילי"
+                    elif sc <= 6: icon, label = "⚪", "ניטרלי"
+                    elif sc <= 8: icon, label = "🟡", "חיובי"
+                    else:         icon, label = "🟢", "חיובי מאוד"
+                    top_hl = sent.headlines[0][:70] if sent.headlines else "אין כותרות"
+                    lines.append(
+                        f"\n{icon} <b>{tk}</b>  ציון: {sc}/10  ({label})\n"
+                        f"   📰 {top_hl}"
+                    )
+                except Exception:
+                    lines.append(f"\n⚪ <b>{tk}</b>: לא הצלחתי לבדוק")
+            lines.append(f"\n━━━━━━━━━━━━━━━━\n💡 בדיקה אוטומטית כל 10 דקות")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/newscheck] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /today — what happened today
     if cmd in ("/today", "today", "היום", "מה היה היום"):
@@ -1238,6 +1321,12 @@ def _handle_command(text: str, context: dict) -> str | None:
             )
         except Exception as e:
             return f"❌ שגיאה בבדיקת {ticker_to_sell}: {e}"
+
+    # ── Explicit command aliases (faster path than keyword scan) ──────────
+    if cmd in ("/manioth", "/revach", "/shovi", "/mazon"):
+        t = cmd[1:]  # strip "/" so keyword scan below picks it up
+    if cmd in ("/biztsuim",):
+        t = "biztsuim"
 
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה", "manioth", "/manioth"]
