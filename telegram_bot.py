@@ -370,26 +370,76 @@ async def notify_daily_summary(
     realized_pnl_net:   float = 0.0,
     buys_today:         int   = 0,
 ) -> None:
-    """Enhanced daily summary including equity, tax, and net P&L."""
-    win_rate   = (wins / total_trades * 100) if total_trades > 0 else 0
-    pnl_emoji  = "📈" if total_pnl >= 0 else "📉"
-    tax_line   = f"\n🧾 מס שהופרש היום: ${tax_reserved:.2f}" if tax_reserved > 0 else ""
-    net_line   = f"\n💳 רווח נטו (אחרי מס): ${realized_pnl_net:+.2f}" if realized_pnl_net else ""
+    """Rich daily summary with per-trade breakdown, open positions, and ILS values."""
+    from datetime import datetime, timezone, timedelta
+    win_rate  = (wins / total_trades * 100) if total_trades > 0 else 0
+    pnl_emoji = "📈" if total_pnl >= 0 else "📉"
 
-    await send_message(
-        f"📊 <b>סיכום יומי</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🛒 <b>קניות היום:</b> {buys_today} עסקאות\n"
-        f"💰 <b>מכירות היום:</b> {total_trades} עסקאות\n"
-        f"   ✅ רווח: {wins}  |  ❌ הפסד: {losses}\n"
-        f"🎯 אחוז הצלחה: {win_rate:.1f}%\n"
-        f"{pnl_emoji} רווח/הפסד: <b>${total_pnl:+.2f}</b>"
-        f"{net_line}"
-        f"{tax_line}\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📂 פוזיציות פתוחות: {open_positions}\n"
-        f"💼 שווי תיק: ${equity:,.2f}"
-    )
+    # ILS formatting
+    try:
+        from telegram_chat import _fmt_price as _fp, _fmt_pnl as _fpnl
+        equity_str  = _fp(equity)
+        pnl_str     = _fpnl(total_pnl)
+        net_str     = _fpnl(realized_pnl_net) if realized_pnl_net else ""
+    except Exception:
+        equity_str  = f"${equity:,.2f}"
+        pnl_str     = f"${total_pnl:+.2f}"
+        net_str     = f"${realized_pnl_net:+.2f}" if realized_pnl_net else ""
+
+    lines = [
+        f"🌙 <b>סיכום יומי</b>\n━━━━━━━━━━━━━━━━",
+        f"🛒  קניות היום:    <b>{buys_today}</b>",
+        f"💸  מכירות היום:  <b>{total_trades}</b>  (✅{wins}  ❌{losses})",
+    ]
+    if total_trades > 0:
+        lines.append(f"🎯  Win Rate:        <b>{win_rate:.1f}%</b>")
+    lines.append(f"{pnl_emoji}  רווח/הפסד:     <b>{pnl_str}</b>")
+    if realized_pnl_net and net_str:
+        lines.append(f"💳  נטו אחרי מס:  {net_str}")
+    if tax_reserved > 0:
+        lines.append(f"🧾  מס שהופרש:    ${tax_reserved:.2f}")
+
+    # Per-trade breakdown (today's closed trades from DB)
+    try:
+        import database as _db
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        all_t = _db.get_trade_history(limit=30) or []
+        today_closed = [x for x in all_t
+                        if str(x.get("exit_time", ""))[:10] == today
+                        and x.get("pnl_gross") is not None]
+        if today_closed:
+            lines.append("\n<b>עסקאות היום:</b>")
+            for tr in today_closed[:5]:
+                p     = float(tr.get("pnl_gross") or 0)
+                ep    = float(tr.get("entry_price") or 0)
+                xp    = float(tr.get("exit_price") or 0)
+                pct   = (xp - ep) / ep * 100 if ep else 0
+                icon  = "🟢" if p >= 0 else "🔴"
+                lines.append(f"  {icon} <b>{tr['ticker']}</b>  {pct:+.1f}%  |  ${p:+.2f}")
+    except Exception:
+        pass
+
+    lines.append(f"\n━━━━━━━━━━━━━━━━")
+    lines.append(f"📂  פוזיציות פתוחות: <b>{open_positions}</b>")
+    lines.append(f"💼  שווי תיק:           <b>{equity_str}</b>")
+
+    # Open positions quick status
+    try:
+        import broker as _br, database as _db2
+        open_trades = _db2.get_open_trades()
+        if open_trades:
+            for ot in open_trades[:3]:
+                try:
+                    pos = _br.get_position(ot["ticker"])
+                    pct = float(pos.get("unrealized_plpc", 0)) * 100 if pos else 0
+                    icon = "🟢" if pct >= 0 else "🔴"
+                    lines.append(f"  {icon} <b>{ot['ticker']}</b>  {pct:+.1f}%")
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    await send_message("\n".join(lines))
 
 
 async def notify_weekly_report(report_html: str) -> None:
@@ -423,17 +473,76 @@ async def notify_sell(
     reason:    str,
 ) -> None:
     """
-    Legacy alias used by heartbeat stop_loss / take_profit / smart_sell.
-    Sends a concise sell message (no entry price / duration available here).
+    Rich sell notification — pulls entry price + hold duration from DB
+    so even the legacy heartbeat call-sites get a full breakdown.
     """
-    win   = pnl_gross >= 0
-    emoji = "💰" if win else "🔴"
+    win    = pnl_gross >= 0
+    emoji  = "💰" if win else "📉"
+    result = "מכרנו ברווח! 🎉" if win else "מכרנו בהפסד"
+
+    # Pull entry details from DB for a richer message
+    entry_price  = price   # fallback if DB lookup fails
+    hold_str     = ""
+    pct_str      = ""
+    pnl_ils_str  = ""
+    try:
+        import database as _db
+        trade = _db.get_open_trade_by_ticker(ticker)
+        if not trade:
+            # Already closed — try recent history
+            hist = _db.get_trade_history(ticker=ticker, limit=1)
+            trade = hist[0] if hist else None
+        if trade:
+            entry_price = float(trade.get("entry_price") or price)
+            pct = (price - entry_price) / entry_price * 100 if entry_price else 0
+            pct_str = f"{'📈' if pct >= 0 else '📉'}  שינוי:          <b>{pct:+.2f}%</b>\n"
+            # Duration
+            from datetime import datetime, timezone as _tz
+            entry_ts = trade.get("entry_time")
+            if entry_ts:
+                try:
+                    ed = datetime.strptime(str(entry_ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz.utc)
+                    hrs = (datetime.now(_tz.utc) - ed).total_seconds() / 3600
+                    hold_str = f"⏱  זמן החזקה:  {_fmt_duration(hrs)}\n"
+                except Exception:
+                    pass
+        # ILS
+        try:
+            from telegram_chat import _fmt_price as _fp, _fmt_pnl as _fpnl
+            entry_str = _fp(entry_price)
+            exit_str  = _fp(price)
+            pnl_ils   = _fpnl(pnl_gross)
+        except Exception:
+            entry_str = f"${entry_price:.2f}"
+            exit_str  = f"${price:.2f}"
+            pnl_ils   = f"${pnl_gross:+.2f}"
+    except Exception:
+        entry_str = f"${entry_price:.2f}"
+        exit_str  = f"${price:.2f}"
+        pnl_ils   = f"${pnl_gross:+.2f}"
+
+    # Reason labels
+    reason_map = {
+        "take_profit":    "🎯 יעד רווח הושג",
+        "stop_loss":      "🛑 סטופ לוס",
+        "smart_sell":     "🧠 מכירה חכמה (ציון נפל)",
+        "news_exit":      "📰 חדשות שליליות",
+        "time_exit":      "⏱ יציאה לפי זמן",
+        "manual":         "✋ יציאה ידנית",
+        "eod_sweep":      "🌙 ניקוי סוף יום",
+    }
+    reason_label = reason_map.get(reason, f"📌 {reason}")
+
     await send_message(
-        f"{emoji} <b>מכירה — {ticker}</b>\n"
+        f"{emoji} <b>{result}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"💵 מחיר יציאה: ${price:.2f}\n"
-        f"{'📈' if win else '📉'} רווח/הפסד: <b>${pnl_gross:+.2f}</b>\n"
-        f"📌 סיבה: {reason}"
+        f"💹  <b>{ticker}</b>\n\n"
+        f"📌  קנינו ב:       {entry_str}\n"
+        f"💵  מכרנו ב:     {exit_str}\n"
+        f"{pct_str}"
+        f"{hold_str}\n"
+        f"{'💚' if win else '❤️'}  {'רווח' if win else 'הפסד'}:        <b>{pnl_ils}</b>\n\n"
+        f"{reason_label}"
     )
 
 

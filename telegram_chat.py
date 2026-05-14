@@ -999,27 +999,56 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /stop TICKER — show stop loss for a position
-    if cmd in ("/stop", "stop", "סטופ", "עצירה") and len(t.split()) > 1:
-        _ticker = t.split()[1].upper()
+    # /stop [TICKER] — stop loss for one or all positions
+    if cmd in ("/stop", "stop", "סטופ", "עצירה"):
         import database as _db
-        trade = _db.get_open_trade_by_ticker(_ticker)
-        if not trade:
-            return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
-        stop = trade.get("atr_stop_price")
-        entry = trade.get("entry_price", 0)
-        wm = trade.get("high_watermark", entry)
-        if not stop:
-            return f"❌ Stop Loss לא מוגדר עבור {_ticker}"
-        dist = (entry - stop) / entry * 100 if entry else 0
-        return (
-            f"🛡️ <b>Stop Loss — {_ticker}</b>\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"📌 כניסה: {_fmt_price(entry)}\n"
-            f"🛑 Stop: {_fmt_price(stop)}\n"
-            f"🏆 High: {_fmt_price(wm)}\n"
-            f"📏 מרחק: <b>{dist:.1f}%</b>"
-        )
+        parts = t.split()
+        _ticker = _safe_ticker(parts[1]) if len(parts) > 1 else None
+        try:
+            if _ticker:
+                # Single ticker
+                trade = _db.get_open_trade_by_ticker(_ticker)
+                if not trade:
+                    return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
+                trades = [trade]
+            else:
+                # All open positions
+                trades = _db.get_open_trades() or []
+                if not trades:
+                    return "📭 אין פוזיציות פתוחות"
+
+            lines = [f"🛡️ <b>Stop Loss {'— ' + _ticker if _ticker else '— כל הפוזיציות'}</b>\n━━━━━━━━━━━━━━━━"]
+            for trade in trades:
+                tk    = trade.get("ticker", "?")
+                stop  = trade.get("atr_stop_price")
+                entry = float(trade.get("entry_price") or 0)
+                wm    = float(trade.get("high_watermark") or entry)
+                if not stop or not entry:
+                    lines.append(f"⚪ <b>{tk}</b>: סטופ לא מוגדר")
+                    continue
+                stop = float(stop)
+                # Get current price for distance
+                try:
+                    pos = broker.get_position(tk)
+                    cur = float(pos.get("current_price", entry)) if pos else entry
+                except Exception:
+                    cur = entry
+                dist_from_cur  = (cur - stop) / cur * 100 if cur else 0
+                dist_from_entry = (entry - stop) / entry * 100 if entry else 0
+                in_profit = stop > entry
+                stop_status = "💚 ברווח" if in_profit else "❤️ בהפסד"
+                lines.append(
+                    f"\n{'🟢' if cur >= entry else '🔴'} <b>{tk}</b>\n"
+                    f"   📍 עכשיו:    {_fmt_price(cur)}\n"
+                    f"   📌 כניסה:    {_fmt_price(entry)}\n"
+                    f"   🛑 סטופ:     {_fmt_price(stop)}  ({stop_status})\n"
+                    f"   📏 מרחק:    <b>{dist_from_cur:.1f}%</b> מהמחיר\n"
+                    f"   🏆 שיא:      {_fmt_price(wm)}"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/stop] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
 
     # /compare AAPL MSFT — compare two stocks
     if cmd in ("/compare", "compare", "השווה") and len(t.split()) >= 3:
@@ -1031,18 +1060,42 @@ def _handle_command(text: str, context: dict) -> str | None:
         try:
             from scoring import get_composite_score
             from sentiment import score_sentiment
-            r1 = get_composite_score(t1, score_sentiment(t1).score)
-            r2 = get_composite_score(t2, score_sentiment(t2).score)
+            import yfinance as _yf
+            sent1 = score_sentiment(t1)
+            sent2 = score_sentiment(t2)
+            r1    = get_composite_score(t1, sent1.score)
+            r2    = get_composite_score(t2, sent2.score)
             s1, s2 = r1["composite_score"], r2["composite_score"]
-            winner = t1 if s1 > s2 else t2
-            diff = abs(s1 - s2)
+            tech1, tech2 = r1["scores"]["technicals"], r2["scores"]["technicals"]
+            mkt1,  mkt2  = r1["scores"]["market"],     r2["scores"]["market"]
+            winner = t1 if s1 >= s2 else t2
+            diff   = abs(s1 - s2)
+            # Quick price change
+            def _day_chg(sym):
+                try:
+                    fi = _yf.Ticker(sym).fast_info
+                    cur  = float(getattr(fi, "last_price", 0) or 0)
+                    prev = float(getattr(fi, "previous_close", cur) or cur)
+                    return (cur - prev) / prev * 100 if prev else 0
+                except Exception:
+                    return 0
+            chg1 = _day_chg(t1)
+            chg2 = _day_chg(t2)
+            b1 = "✅ קנה" if r1["should_buy"] else "❌ דלג"
+            b2 = "✅ קנה" if r2["should_buy"] else "❌ דלג"
             return (
-                f"⚔️ <b>השוואה: {t1} vs {t2}</b>\n"
+                f"⚔️ <b>{t1}  vs  {t2}</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"📊 <b>{t1}</b>: {s1:.0f}/100 {'✅' if r1['should_buy'] else '❌'}\n"
-                f"📊 <b>{t2}</b>: {s2:.0f}/100 {'✅' if r2['should_buy'] else '❌'}\n"
+                f"<b>{t1}</b>\n"
+                f"  ⭐  ציון:  {s1:.0f}/100  <code>{_score_bar(s1, 8)}</code>\n"
+                f"  🔧  טכני:  {tech1:.0f}  |  🌍 שוק: {mkt1:.0f}  |  🧠 {sent1.score}/10\n"
+                f"  📅  יום:   {chg1:+.2f}%  |  {b1}\n\n"
+                f"<b>{t2}</b>\n"
+                f"  ⭐  ציון:  {s2:.0f}/100  <code>{_score_bar(s2, 8)}</code>\n"
+                f"  🔧  טכני:  {tech2:.0f}  |  🌍 שוק: {mkt2:.0f}  |  🧠 {sent2.score}/10\n"
+                f"  📅  יום:   {chg2:+.2f}%  |  {b2}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🏆 עדיף: <b>{winner}</b> (פער {diff:.0f} נקודות)"
+                f"🏆 <b>עדיף: {winner}</b>  (פער {diff:.0f} נקודות)"
             )
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -1052,8 +1105,12 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/correlation", "correlation", "קורלציה", "מתאם"):
         try:
             import requests as _req, os as _os
-            base = _os.getenv("RENDER_EXTERNAL_URL", "https://tradebot-yc8p.onrender.com").rstrip("/")
-            r = _req.get(f"{base}/correlation", timeout=10)
+            base   = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+            secret = settings.WEBHOOK_SECRET
+            if not base:
+                return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+            r = _req.get(f"{base}/correlation",
+                         headers={"X-Webhook-Secret": secret}, timeout=15)
             data = r.json()
             matrix = data.get("matrix", {})
             max_corr = data.get("max_correlation", 0)
@@ -1099,21 +1156,30 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /portfolio — full allocation breakdown
+    # /portfolio — full allocation breakdown with visual bars
     if cmd in ("/portfolio", "portfolio", "הקצאה", "פיזור"):
         positions = context.get("open_positions", [])
-        equity = context.get("equity", 1)
-        cash = context.get("cash", 0)
+        equity    = context.get("equity", 1) or 1
+        cash      = context.get("cash", 0)
         if not positions and cash == 0:
-            return "📭 התיק ריק"
+            return "📭 התיק ריק כרגע"
         lines = [f"📊 <b>הקצאת תיק</b>\n━━━━━━━━━━━━━━━━"]
+        # Cash row
         cash_pct = cash / equity * 100 if equity else 0
-        lines.append(f"💵 מזומן: {_fmt_price(cash)} ({cash_pct:.1f}%)")
-        for p in positions:
-            val = p.get("value", p["qty"] * p["current"])
-            pct = val / equity * 100 if equity else 0
-            lines.append(f"📈 <b>{p['ticker']}</b>: {_fmt_price(val)} ({pct:.1f}%)")
-        lines.append(f"━━━━━━━━━━━━━━━━\n💎 סה״כ: {_fmt_price(equity)}")
+        cash_bar = "█" * max(1, round(cash_pct / 5)) + "░" * max(0, 20 - round(cash_pct / 5))
+        lines.append(f"💵 <b>מזומן</b>  {cash_pct:.1f}%\n   <code>{cash_bar}</code>  {_fmt_price(cash)}")
+        # Positions sorted by allocation
+        sorted_pos = sorted(positions, key=lambda p: p.get("value", 0), reverse=True)
+        for p in sorted_pos:
+            val  = p.get("value", p["qty"] * p["current"])
+            pct  = val / equity * 100 if equity else 0
+            bar  = "█" * max(1, round(pct / 5)) + "░" * max(0, 20 - round(pct / 5))
+            icon = "🟢" if p["pnl"] >= 0 else "🔴"
+            lines.append(
+                f"\n{icon} <b>{p['ticker']}</b>  {pct:.1f}%  ({p['pct']:+.1f}%)\n"
+                f"   <code>{bar}</code>  {_fmt_price(val)}"
+            )
+        lines.append(f"\n━━━━━━━━━━━━━━━━\n💎 <b>סה״כ:</b>  {_fmt_price(equity)}")
         return "\n".join(lines)
 
     # /summary — weekly performance summary
