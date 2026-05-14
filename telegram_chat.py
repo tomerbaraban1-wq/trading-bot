@@ -461,16 +461,20 @@ def _simple_fallback(ctx: dict) -> str:
             status_icon = "🟢📈" if profit else "🔴📉"
             pnl_label   = f"💰 {_fmt_pnl(p['pnl'])}"
             held_line = f"\n   ⏳ הוחזק: {_fmt_held(held)}" if held >= 0.5 else ""
-            stop_line2 = f"\n   🛡️ Stop: {_fmt_price(stop)}" if stop else ""
+            try:
+                tp_pct = max(3.0, (stop / p["entry"] * 100) * 1.5) if stop and p["entry"] else 5.0
+                tp_price = round(p["entry"] * (1 + tp_pct / 100), 2)
+            except Exception:
+                tp_price = 0
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
-                f"   🪙 כמות: {p['qty']} מניות\n"
-                f"   💸 הושקע: {_fmt_price(invested)}\n"
-                f"   📌 כניסה: {_fmt_price(p['entry'])}\n"
+                f"   📦 כמות: {p['qty']} מניות\n"
+                f"   💵 מחיר קנייה: {_fmt_price(p['entry'])}\n"
+                f"   📈 יציאה ברווח: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
+                f"   📉 יציאה בהפסד: {_fmt_price(stop) if stop else 'N/A'}\n"
                 f"   📊 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
-                f"   {pnl_label}"
-                + stop_line2
-                + held_line
+                f"   {pnl_label}\n"
+                f"   ⏳ זמן החזקה: {_fmt_held(held) if held >= 0.5 else 'כמה דקות'}"
             )
     else:
         lines.append("\nאין פוזיציות פתוחות כרגע.")
