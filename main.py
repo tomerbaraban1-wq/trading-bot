@@ -240,7 +240,7 @@ async def lifespan(app: FastAPI):
     try:
         import asyncio as _asyncio
         from discord_bot import set_event_loop as _set_loop
-        _set_loop(_asyncio.get_event_loop())
+        _set_loop(_asyncio.get_running_loop())
     except Exception:
         pass
 

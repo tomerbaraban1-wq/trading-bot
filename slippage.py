@@ -275,7 +275,7 @@ def _check_rolling_alert(ticker: str) -> None:
                         notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT), _loop
                     )
                 else:
-                    asyncio.ensure_future(notify_slippage_alert(avg, ticker, ROLLING_N, ALERT_PCT))
+                    logger.warning("[SLIPPAGE ALERT] No running loop — alert skipped")
             except RuntimeError:
                 logger.warning(f"[SLIPPAGE ALERT] No event loop — Telegram alert skipped: {msg}")
             except Exception as te:

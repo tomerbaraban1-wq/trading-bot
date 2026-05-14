@@ -457,7 +457,7 @@ async def notify_daily_summary(
         if open_trades:
             for ot in open_trades[:3]:
                 try:
-                    pos = _br.get_position(ot["ticker"])
+                    pos = await asyncio.to_thread(_br.get_position, ot["ticker"])
                     pct = float(pos.get("unrealized_plpc", 0)) * 100 if pos else 0
                     icon = "🟢" if pct >= 0 else "🔴"
                     lines.append(f"  {icon} <b>{ot['ticker']}</b>  {pct:+.1f}%")

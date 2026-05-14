@@ -589,14 +589,14 @@ async def stop_loss_monitor():
                                 except Exception:
                                     pass
                                 record_trade_result(_half_pnl)   # update circuit breaker
-                                # Mark Stage 1 done by pushing watermark above stage-1 level
-                                # so next cycle evaluates _stage1_done = True and doesn't re-sell
+                                # Mark Stage 1 done by pushing watermark above stage-1 threshold.
+                                # Use cur_price (not stale new_wm) to guarantee _stage1_done=True next cycle.
                                 _s1_wm_mark = round(trade["entry_price"] * (1 + _stage1_pct / 100 + 0.003), 4)
+                                _s1_wm_final = max(cur_price, _s1_wm_mark)
                                 await asyncio.to_thread(
-                                    database.update_trade_stop, trade["id"], atr_stop,
-                                    max(new_wm, _s1_wm_mark)
+                                    database.update_trade_stop, trade["id"], atr_stop, _s1_wm_final
                                 )
-                                high_wm = max(new_wm, _s1_wm_mark)
+                                high_wm = _s1_wm_final
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 await send_message(

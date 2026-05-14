@@ -89,8 +89,13 @@ def _reset_if_new_day():
 def record_trade_result(pnl_gross: float):
     """Call this after every trade closes. Updates daily PnL and trips breaker if needed."""
     with _lock:
+        _was_uninitialized = _state["trade_date"] is None
         _reset_if_new_day()
-        _state["daily_pnl"] += pnl_gross
+        # If the bot just restarted, _reset_if_new_day loaded today's PnL from DB —
+        # that DB query already INCLUDES the trade we're about to record (it was just
+        # written). Don't double-count it.
+        if not _was_uninitialized:
+            _state["daily_pnl"] += pnl_gross
 
         max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
         if not _state["tripped"] and _state["daily_pnl"] <= -max_loss:

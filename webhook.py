@@ -356,6 +356,8 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             }
     except asyncio.TimeoutError:
         logger.warning(f"[VOLUME] {ticker} check timed out — proceeding (fail-open)")
+    except Exception as _ve:
+        logger.warning(f"[VOLUME] {ticker} check error ({_ve}) — proceeding (fail-open)")
 
     # Correlation filter — skip if too correlated with an open position
     from correlation import check as corr_check
@@ -665,7 +667,7 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
                     result["filters"]["market_regime"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
 
                 # Sanity
-                sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, None), timeout=20)
+                sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, {}), timeout=20)
                 result["filters"]["sanity_check"] = "✅ PASS" if sane else f"❌ BLOCKED — {sane_reason}"
 
                 # Volume
@@ -765,7 +767,7 @@ async def scan_now(secret: str = ""):
                 skipped.append({"ticker": ticker, "score": score, "reason": "no_price"})
                 continue
 
-            sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, None), timeout=15)
+            sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, {}), timeout=15)
             if not sane:
                 skipped.append({"ticker": ticker, "score": score, "reason": f"sanity: {sane_reason}"})
                 continue
@@ -1162,7 +1164,8 @@ async def auto_invest(data: dict):
                 action=TradeAction.BUY,
                 price=price,
             )
-            trade_id = log_trade_open(fake_payload, sentiment, order, qty)
+            filled_qty = float(order.get("filled_qty", qty))   # use actual fill, not planned
+            trade_id = log_trade_open(fake_payload, sentiment, order, filled_qty)
 
             # Set ATR trailing stop immediately after fill
             try:
