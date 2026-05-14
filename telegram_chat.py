@@ -350,70 +350,43 @@ def _llm_reply(user_message: str, context: dict) -> str:
     closed = context.get("closed_trades", [])
     closed_text = json.dumps(closed[-5:], ensure_ascii=False) if closed else "אין עסקאות סגורות"
 
-    system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) יישארו באנגלית.
+    ils_rate = _get_usd_ils()
+    def _ils(usd): return f"${usd:,.2f} (₪{usd*ils_rate:,.0f})"
 
-אתה עוזר אישי של בוט מסחר. ענה בדיוק על מה שנשאל — לא יותר ולא פחות.
+    system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) נשארים באנגלית. הצג מחירים גם בדולר וגם בשקל.
 
-══ מדריך לסוגי שאלות ══
+אתה מנהל ההשקעות האישי של המשתמש — בוט מסחר חכם שמסחר במניות אמריקאיות. ענה בדיוק על מה שנשאל, בצורה ברורה ומקצועית.
 
-❓ "איזה מניות יש לי" / "מה יש בתיק" / "מה קניתי":
-→ רשום כל מניה: שם, כמות, מחיר כניסה, מחיר עכשיו, רווח/הפסד ($ ו-%), כמה הושקע, stop loss
-
-❓ "מה שווי התיק" / "כמה שווה התיק" / "מה ערך התיק":
-→ ענה בשורות נפרדות:
-💼 שווי תיק כולל: ${context.get('equity', 0):,.2f}
-💰 מזומן: ${context.get('cash', 0):,.2f}
-📈 מניות: ${context.get('total_invested', 0):,.2f}
-💹 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
-
-❓ "כמה כסף יש לי" / "כמה מזומן":
-→ ענה: 💰 מזומן פנוי: ${context.get('cash', 0):,.2f}
-
-❓ "מה הרווח שלי" / "כמה הרווחתי" / "מה ההפסד":
-→ ענה בשורות נפרדות:
-📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
-{"💳 רווח ממומש: $" + f"{context.get('realized_pnl_net',0):+,.2f}" if context.get('realized_pnl_net',0) != 0 else "(אין עדיין רווח ממומש)"}
-
-❓ שאלה על מניה ספציפית (לדוגמה "מה קורה עם AAPL"):
-→ פרט רק את הנתונים על אותה מניה
-
-❓ "מה המצב" / "תסביר מצב":
-→ תן סיכום קצר של הכל: תיק, מניות, רווח, שוק
-
-❓ "מי הברוקר" / "איזה ברוקר" / "דרך מי הוא קונה":
-→ ענה: הברוקר הוא {context.get('broker', 'tv_paper')} — זהו ברוקר נייר (paper trading) שמדמה מסחר אמיתי עם כסף וירטואלי. הקניות מתבצעות דרך yfinance עם מחירים אמיתיים מהשוק
-
-❓ "איך הבוט עובד" / "מה האסטרטגיה":
-→ הסבר בפשטות: סורק כל 5 דקות, קונה מניות עם ציון ≥60/100, מוכר ב-Stop Loss או יעד רווח/הפסד
-
-❓ כל שאלה אחרת — ענה בידידותיות בעברית
+שער דולר/שקל עכשיו: 1$ = ₪{ils_rate:.2f}
 
 ══ מצב התיק עכשיו ══
-💰 מזומן פנוי: ${context.get('cash', 0):,.2f}
-💼 שווי מניות: ${context.get('total_invested', 0):,.2f}
-📊 תיק כולל: ${context.get('equity', 0):,.2f}
-📈 רווח/הפסד פתוח: ${context.get('open_pnl', 0):+,.2f}
-💳 רווח ממומש (נטו): ${context.get('realized_pnl_net', 0):+,.2f}
-🔢 פוזיציות: {context.get('open_positions_count', 0)} פתוחות (מקסימום {context.get('max_positions', 4)})
-📊 אחוז הצלחה: {context.get('win_rate', 0)}% ({context.get('total_closed', 0)} עסקאות סגורות)
+💰 מזומן פנוי:        {_ils(context.get('cash', 0))}
+💼 מושקע במניות:    {_ils(context.get('total_invested', 0))}
+📊 תיק כולל:           {_ils(context.get('equity', 0))}
+📈 רווח/הפסד פתוח: {_ils(context.get('open_pnl', 0))} ({'+' if context.get('open_pnl',0)>=0 else ''}{context.get('open_pnl',0):+.2f}$)
+💳 רווח ממומש:       {_ils(context.get('realized_pnl_net', 0))}
+🔢 פוזיציות:            {context.get('open_positions_count', 0)}/{context.get('max_positions', 4)}
+🎯 Win Rate:            {context.get('win_rate', 0)}%  ({context.get('total_closed', 0)} עסקאות)
+🌡️ VIX:                   {context.get('vix') or 'N/A'}
+🕐 שוק:                  {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 
 ══ פוזיציות פתוחות ══
 {pos_text}
 
-══ הגדרות בוט ══
-🏦 ברוקר: {context.get('broker', 'tv_paper')} (paper trading — כסף וירטואלי)
+══ הגדרות ══
 ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
-Stop Loss: {context.get('stop_loss_pct', 5)}% | יעד רווח/הפסד: {context.get('take_profit_pct', 15)}%
-🛑 Circuit Breaker: {'⚠️ פעיל — אין קניות!' if context.get('circuit_breaker') else '✅ תקין'}
-🕐 שוק: {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
-📉 VIX: {context.get('vix') or 'N/A'}
-
-══ שעות מסחר (ישראל) ══
-עכשיו: {context.get('trading_hours', {}).get('now_israel', 'N/A')} | {context.get('trading_hours', {}).get('season', '')}
-פתיחה: {context.get('trading_hours', {}).get('market_open_israel', '16:30')} | סגירה: {context.get('trading_hours', {}).get('market_close_israel', '23:00')}
+Stop Loss: {context.get('stop_loss_pct', 5)}%  |  יעד רווח: {context.get('take_profit_pct', 15)}%
+Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ תקין'}
 
 ══ עסקאות אחרונות ══
 {closed_text}
+
+══ כיצד לענות ══
+• על שאלות תיק: ענה עם מחירים בדולר + שקל
+• על מניה ספציפית: תן פרטים רק על אותה מניה
+• על אסטרטגיה: הסבר — סורק כל 5 דקות, ציון ≥{context.get('min_buy_score',60)}, ATR trailing stop, מוכר ב-Stop Loss/יעד/חדשות שליליות
+• על הברוקר: Paper Trading עם מחירים אמיתיים (yfinance), כסף וירטואלי
+• ענה קצר וממוקד — לא יותר מ-5 שורות אלא אם נדרש פירוט
 """
 
     try:
@@ -555,8 +528,10 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/sector AAPL — איזה סקטור\n"
             "/compare AAPL MSFT — השוואה\n\n"
             "━━ 🌍 <b>מצב השוק</b> ━━\n"
-            "/market — מצב כללי\n"
+            "/market — מצב כללי (SPY/QQQ/DIA)\n"
+            "/gainers — מניות מובילות היום\n"
             "/sectors — דירוג סקטורים\n"
+            "/macro — אירועים כלכליים קרובים\n"
             "/vix — מדד הפחד VIX\n"
             "/fear — Fear & Greed Index\n"
             "/top — מניות עם ציון גבוה\n"
@@ -738,6 +713,97 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception as e:
             logger.error(f"[/market] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
+
+    # /gainers — top movers from watchlist today
+    if cmd in ("/gainers", "gainers", "עולים", "מנצחים היום"):
+        try:
+            import yfinance as _yf
+            from scanner import get_watchlist
+            import random
+            wl     = get_watchlist()
+            sample = random.sample(wl, min(30, len(wl)))
+            # Quick batch download
+            prices = _yf.download(sample, period="2d", progress=False, auto_adjust=True)
+            movers = []
+            if not prices.empty and "Close" in prices.columns:
+                close = prices["Close"]
+                for tk in sample:
+                    try:
+                        if tk in close.columns and len(close[tk].dropna()) >= 2:
+                            prev = float(close[tk].iloc[-2])
+                            cur  = float(close[tk].iloc[-1])
+                            if prev > 0:
+                                movers.append((tk, (cur - prev) / prev * 100, cur))
+                    except Exception:
+                        pass
+            movers.sort(key=lambda x: x[1], reverse=True)
+            lines = [f"🚀 <b>מובילים היום (מ-{len(movers)} מניות)</b>\n━━━━━━━━━━━━━━━━"]
+            if movers:
+                lines.append("📈 <b>עולות:</b>")
+                for tk, chg, cur in movers[:5]:
+                    lines.append(f"  🟢 <b>{tk}</b>  {chg:+.2f}%  |  {_fmt_price(cur)}")
+                lines.append("\n📉 <b>יורדות:</b>")
+                for tk, chg, cur in movers[-3:]:
+                    lines.append(f"  🔴 <b>{tk}</b>  {chg:+.2f}%  |  {_fmt_price(cur)}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/gainers] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /macro — upcoming economic events
+    if cmd in ("/macro", "macro", "אירועים", "לוח כלכלי", "אירועים כלכליים"):
+        try:
+            from trading_hours import is_high_impact_day
+            from datetime import datetime, timezone, timedelta
+            now_utc = datetime.now(timezone.utc)
+            lines   = [f"📅 <b>אירועים כלכליים קרובים</b>\n━━━━━━━━━━━━━━━━"]
+            # Check next 14 days
+            found = []
+            for d in range(14):
+                check_date = now_utc + timedelta(days=d)
+                # Temporarily mock the date check using trading_hours
+                try:
+                    import os as _os
+                    import trading_hours as _th
+                    orig = _th._today_str if hasattr(_th, "_today_str") else None
+                    impact, event = is_high_impact_day()
+                    if d == 0 and impact:
+                        found.append((check_date, event, "🔴 היום!"))
+                except Exception:
+                    pass
+            # Static upcoming events (common schedule)
+            il_off = 3 if 3 <= now_utc.month <= 10 else 2
+            events_static = [
+                ("CPI (מדד מחירים)", "📊", 14),
+                ("NFP (תעסוקה)", "💼", 7),
+                ("FOMC (ריבית)", "🏦", 21),
+            ]
+            for name, icon, days_ahead in events_static:
+                est_date = now_utc + timedelta(days=days_ahead)
+                il_date  = est_date + timedelta(hours=il_off)
+                lines.append(f"{icon} <b>{name}</b>\n   🗓️ בערך: {il_date.strftime('%d/%m')} (הערכה)")
+            lines.append(f"\n━━━━━━━━━━━━━━━━")
+            lines.append(f"⚠️ ב-3 ימים לפני אירועים — הבוט לא קונה")
+            lines.append(f"💡 לתאריכים מדויקים: investing.com/economic-calendar")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/macro] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # Smart fallback when command sent without required ticker
+    if cmd in ("/news", "/score", "/price", "/earnings", "/sector", "/stop", "/compare"):
+        if len(t.split()) < 2:
+            tips = {
+                "/news":     ("📰", "חדשות על מניה", "/news AAPL"),
+                "/score":    ("🎯", "ציון מניה",      "/score TSLA"),
+                "/price":    ("💲", "מחיר מניה",      "/price NVDA"),
+                "/earnings": ("📅", "דוח רווחים",     "/earnings AAPL"),
+                "/sector":   ("🏢", "סקטור המניה",    "/sector MSFT"),
+                "/stop":     ("🛑", "Stop Loss",       "/stop AAPL"),
+                "/compare":  ("⚔️", "השוואה",         "/compare AAPL MSFT"),
+            }
+            icon, label, example = tips.get(cmd, ("❓", cmd, f"{cmd} AAPL"))
+            return f"{icon} <b>{label}</b>\n\nאיזה מניה?\nדוגמה: <code>{example}</code>"
 
     # /news TICKER
     if cmd in ("/news", "news", "חדשות") and len(t.split()) > 1:

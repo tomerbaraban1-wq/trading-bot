@@ -455,6 +455,33 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
+                    # ── 1c. Near-TP Alert — warn when within 2% of take profit ─
+                    try:
+                        from atr_stop import _fetch_atr as _atr_near
+                        _atr_near_val = await asyncio.to_thread(_atr_near, ticker, trade["entry_price"])
+                        _near_tp_pct  = min(
+                            settings.TAKE_PROFIT_PCT,
+                            max(4.0, (_atr_near_val / trade["entry_price"]) * 100 * 6)
+                        )
+                        _gap_to_tp = _near_tp_pct - plpc   # how far from TP
+                        _near_key  = f"near_tp_{trade['id']}"
+                        if 0 < _gap_to_tp <= 2.0 and not _position_alert_sent.get(_near_key):
+                            _position_alert_sent[_near_key] = True
+                            try:
+                                from telegram_chat import _fmt_price as _fpp
+                                _tp_price = round(trade["entry_price"] * (1 + _near_tp_pct/100), 2)
+                                _create_background_task(send_message(
+                                    f"🎯 <b>קרוב ליעד! — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📍  מחיר עכשיו:  {_fpp(cur_price)}  (<b>{plpc:+.1f}%</b>)\n"
+                                    f"🎯  יעד רווח:      {_fpp(_tp_price)}  ({_near_tp_pct:.1f}%)\n"
+                                    f"⏳  נותרו: <b>{_gap_to_tp:.1f}%</b> ליעד!"
+                                ))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
                     # ── 2. Take Profit — ATR-based (6× ATR) or fixed ceiling ──
                     # ATR-based TP is achievable for low-vol stocks (MO ~2%, V ~4%)
                     # Fixed TP is the safety cap for high-vol stocks
