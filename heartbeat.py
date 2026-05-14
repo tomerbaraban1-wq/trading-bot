@@ -338,10 +338,18 @@ async def stop_loss_monitor():
                             )
                             # Notify Telegram when stop is raised significantly (≥0.5%)
                             if atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
+                                _pnl_now = (cur_price - trade["entry_price"]) * trade["qty"]
+                                _pnl_icon = "🟢 רווח" if _pnl_now >= 0 else "🔴 הפסד"
                                 _create_background_task(send_message(
-                                    f"🛡️ <b>Stop Loss הועלה — {ticker}</b>\n"
-                                    f"   ${atr_stop:.2f} ➜ <b>${new_stop:.2f}</b>\n"
-                                    f"   💵 מחיר: ${cur_price:.2f}  |  🏆 High: ${new_wm:.2f}"
+                                    f"🛡️ <b>Stop Loss הועלה</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📊 מניה: <b>{ticker}</b>\n"
+                                    f"💵 מחיר קנייה: ${trade['entry_price']:.2f}\n"
+                                    f"📈 מחיר עכשיו: ${cur_price:.2f}\n"
+                                    f"🏆 מחיר גבוה: ${new_wm:.2f}\n"
+                                    f"🛑 Stop ישן: ${atr_stop:.2f}\n"
+                                    f"🛡️ Stop חדש: <b>${new_stop:.2f}</b>\n"
+                                    f"💰 {_pnl_icon}: ${abs(_pnl_now):.2f}"
                                 ))
                         atr_stop = new_stop
                         high_wm  = new_wm
