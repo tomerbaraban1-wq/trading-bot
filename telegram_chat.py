@@ -517,7 +517,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/portfolio — הקצאה באחוזים\n"
             "/winners — פוזיציות ברווח\n"
             "/losers — פוזיציות בהפסד\n"
-            "/risk — ניתוח סיכון\n\n"
+            "/risk — ניתוח סיכון\n"
+            "/health — בריאות כל הפוזיציות\n"
+            "/pnl — רווח/הפסד מהיר\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
             "/score AAPL — ניתוח עם Progress Bars\n"
             "/52week AAPL — מיקום ב-52 שבועות\n"
@@ -526,6 +528,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/newscheck — בדיקת חדשות לכל הפוזיציות\n"
             "/earnings AAPL — דוח רווחים\n"
             "/stop AAPL — מצב ה-Stop Loss\n"
+            "/target AAPL 210 — הגדר יעד רווח ידני\n"
+            "/volume AAPL — ניתוח נפח מסחר\n"
             "/sector AAPL — איזה סקטור\n"
             "/compare AAPL MSFT — השוואה\n\n"
             "━━ 🌍 <b>מצב השוק</b> ━━\n"
@@ -1728,6 +1732,134 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[CHAT CMD] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
+    # /health — combined position health: score + news + stop in one view
+    if cmd in ("/health", "health", "בריאות", "מצב פוזיציות"):
+        try:
+            import database as _db
+            open_trades = _db.get_open_trades() or []
+            if not open_trades:
+                return "📭 אין פוזיציות פתוחות"
+            from scoring import get_composite_score
+            from sentiment import score_sentiment
+            lines = [f"🩺 <b>בריאות תיק</b>\n━━━━━━━━━━━━━━━━"]
+            for tr in open_trades:
+                tk    = tr.get("ticker", "?")
+                entry = float(tr.get("entry_price") or 0)
+                stop  = float(tr.get("atr_stop_price") or 0)
+                try:
+                    pos = broker.get_position(tk)
+                    cur = float(pos.get("current_price", entry)) if pos else entry
+                    pct = (cur - entry) / entry * 100 if entry else 0
+                except Exception:
+                    cur, pct = entry, 0
+                # Score
+                try:
+                    sent  = score_sentiment(tk)
+                    comp  = get_composite_score(tk, sent.score)
+                    sc    = comp["composite_score"]
+                    buy   = comp["should_buy"]
+                except Exception:
+                    sc, buy, sent = 0, False, None
+                # Stop distance
+                stop_dist = (cur - stop) / cur * 100 if stop and cur else 0
+                # Health icons
+                score_icon = "🟢" if sc >= 65 else ("🟡" if sc >= 50 else "🔴")
+                pnl_icon   = "📈" if pct >= 0 else "📉"
+                news_icon  = "📰"
+                sent_icon  = ("🟢" if sent and sent.score >= 7 else
+                              "🟡" if sent and sent.score >= 5 else "🔴") if sent else "⚪"
+                lines.append(
+                    f"\n{'🟢' if pct >= 0 else '🔴'} <b>{tk}</b>  {pct:+.1f}%\n"
+                    f"  {score_icon} ציון: <b>{sc:.0f}/100</b>  {'✅' if buy else '⚠️ שקול מכירה'}\n"
+                    f"  {sent_icon} סנטימנט: {sent.score if sent else '?'}/10\n"
+                    f"  🛑 סטופ מרחק: <b>{stop_dist:.1f}%</b>  "
+                    f"({'💚 ברווח' if stop > entry else '❤️ בהפסד'} אם מופעל)"
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/health] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /volume TICKER — volume analysis
+    if cmd in ("/volume", "volume", "נפח", "נפח מסחר") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /volume AAPL"
+        try:
+            from volume_confirm import check as _vol_check, get_current_ratio as _vol_ratio
+            passed, reason, details = _vol_check(_ticker)
+            ratio = details.get("ratio") or _vol_ratio(_ticker) or 0
+            cur_vol = details.get("current_volume", 0)
+            ma_vol  = details.get("ma_volume", 0)
+            # Visual bar
+            fill = min(20, round(ratio * 10)) if ratio else 0
+            bar  = "█" * fill + "░" * (20 - fill)
+            status_icon = "🟢" if passed else "🔴"
+            status_str  = "✅ נפח מאשר אות" if passed else "⚠️ נפח נמוך — אות חלש"
+            return (
+                f"📊 <b>נפח מסחר — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{status_icon} {status_str}\n\n"
+                f"📈  נפח עכשיו:   <b>{cur_vol:,.0f}</b>\n"
+                f"📉  ממוצע 20 יום: {ma_vol:,.0f}\n"
+                f"⚡  יחס:           <b>{ratio:.2f}×</b>  (נדרש ≥ 1.0)\n"
+                f"<code>{bar}</code>"
+            )
+        except Exception as e:
+            logger.error(f"[/volume] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /target TICKER PRICE — set custom take profit
+    if cmd in ("/target", "target", "יעד") and len(t.split()) >= 3:
+        parts   = t.split()
+        _ticker = _safe_ticker(parts[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /target AAPL 210"
+        try:
+            _tp_price = float(parts[2])
+        except ValueError:
+            return "❌ מחיר לא חוקי — דוגמה: /target AAPL 210"
+        try:
+            import database as _db
+            trade = _db.get_open_trade_by_ticker(_ticker)
+            if not trade:
+                return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
+            entry  = float(trade.get("entry_price") or 0)
+            upside = (_tp_price - entry) / entry * 100 if entry else 0
+            # Store as env var (simple persistence)
+            import os as _os
+            key   = f"CUSTOM_TP_{_ticker}"
+            _os.environ[key] = str(_tp_price)
+            return (
+                f"🎯 <b>יעד מותאם אישית — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📌  כניסה:  {_fmt_price(entry)}\n"
+                f"🎯  יעד חדש: <b>{_fmt_price(_tp_price)}</b>\n"
+                f"📈  פוטנציאל: <b>{upside:+.1f}%</b>\n\n"
+                f"✅ הבוט ישמור על עין ויתריע כשמגיעים ליעד"
+            )
+        except Exception as e:
+            logger.error(f"[/target] Error: {e}")
+            return "❌ שגיאה פנימית — נסה שוב"
+
+    # /pnl — quick profit/loss number
+    if cmd in ("/pnl", "pnl", "כמה עשיתי"):
+        positions = context.get("open_positions", [])
+        open_pnl  = context.get("open_pnl", 0)
+        realized  = context.get("realized_pnl_net", 0)
+        total     = open_pnl + realized
+        icon      = "📈" if total >= 0 else "📉"
+        lines     = [f"{icon} <b>רווח/הפסד</b>\n━━━━━━━━━━━━━━━━"]
+        for p in positions:
+            e = "🟢" if p["pnl"] >= 0 else "🔴"
+            lines.append(f"  {e} <b>{p['ticker']}</b>:  {_fmt_pnl(p['pnl'], False)}  ({p['pct']:+.1f}%)")
+        lines.append(f"━━━━━━━━━━━━━━━━")
+        lines.append(f"📂  פתוח:    {_fmt_pnl(open_pnl)}")
+        if realized:
+            lines.append(f"💳  ממומש:  {_fmt_pnl(realized)}")
+        lines.append(f"{icon}  <b>סה״כ:  {_fmt_pnl(total)}</b>")
+        return "\n".join(lines)
+
     # /vix — VIX level
     if cmd in ("/vix", "vix"):
         try:
@@ -2188,20 +2320,27 @@ def _handle_command(text: str, context: dict) -> str | None:
             return "❌ שגיאה פנימית — נסה שוב"
 
     # ── Auto-detect ticker in free Hebrew text ─────────────────────────────────
-    # e.g. "מה ציון של AAPL?" → run /score AAPL
-    # e.g. "מה חדשות על TSLA" → run /news TSLA
     _auto_ticker = _extract_ticker_from_text(text)
     if _auto_ticker:
-        _score_kws = ["ציון", "score", "כמה", "כדאי", "לקנות", "לא לקנות", "מה דעתך"]
-        _news_kws  = ["חדשות", "news", "כותרות", "מה קורה", "מה היה"]
-        _price_kws = ["מחיר", "price", "שווה", "עולה", "יורד"]
+        _score_kws = ["ציון", "score", "כמה", "כדאי", "לקנות", "לא לקנות", "מה דעתך", "להמליץ"]
+        _news_kws  = ["חדשות", "news", "כותרות", "מה קורה", "מה היה", "עדכון"]
+        _price_kws = ["מחיר", "price", "שווה", "עולה", "יורד", "כמה עולה"]
+        _vol_kws   = ["נפח", "volume", "כמה נסחר"]
+        _52w_kws   = ["שיא", "שפל", "52", "גבוה", "נמוך"]
         if any(k in t for k in _score_kws):
-            # Simulate /score TICKER
             return _handle_command(f"/score {_auto_ticker}", context)
         if any(k in t for k in _news_kws):
             return _handle_command(f"/news {_auto_ticker}", context)
         if any(k in t for k in _price_kws):
             return _handle_command(f"/price {_auto_ticker}", context)
+        if any(k in t for k in _vol_kws):
+            return _handle_command(f"/volume {_auto_ticker}", context)
+        if any(k in t for k in _52w_kws):
+            return _handle_command(f"/52week {_auto_ticker}", context)
+        # If user mentions a ticker they OWN → show their position details
+        owned_tickers = {p["ticker"] for p in context.get("open_positions", [])}
+        if _auto_ticker in owned_tickers:
+            return _handle_command(f"/stop {_auto_ticker}", context)
 
     return None  # let LLM handle everything else
 
