@@ -468,11 +468,11 @@ def _simple_fallback(ctx: dict) -> str:
                 tp_price = 0
             lines.append(
                 f"\n{status_icon} <b>{p['ticker']}</b>\n"
-                f"   📦 כמות: {p['qty']} מניות\n"
-                f"   💵 מחיר קנייה: {_fmt_price(p['entry'])}\n"
+                f"   🔢 כמות: {p['qty']} מניות\n"
+                f"   📌 מחיר קנייה: {_fmt_price(p['entry'])}\n"
                 f"   📈 יציאה ברווח: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
                 f"   📉 יציאה בהפסד: {_fmt_price(stop) if stop else 'N/A'}\n"
-                f"   📊 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
+                f"   📍 עכשיו: {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
                 f"   {pnl_label}\n"
                 f"   ⏳ זמן החזקה: {_fmt_held(held) if held >= 0.5 else 'כמה דקות'}"
             )
@@ -1208,13 +1208,14 @@ def _handle_command(text: str, context: dict) -> str | None:
                 tp_price = 0
             total_pnl += p["pnl"]
             lines.append(
-                f"\n{status} <b>{p['ticker']}</b>\n"
-                f"   📦 כמות: {p['qty']} מניות\n"
-                f"   💵 מחיר קנייה: {_fmt_price(p['entry'])}\n"
-                f"   📈 מחיר יציאה ברווח: {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
-                f"   📉 מחיר יציאה בהפסד: {_fmt_price(stop) if stop else 'N/A'}\n"
-                f"   ⏳ זמן החזקה: {held_str}\n"
-                f"   💰 {_fmt_pnl(p['pnl'])}"
+                f"\n{'🟢' if profit else '🔴'} <b>{p['ticker']}</b>\n"
+                f"   🔢 כמות:                    {p['qty']} מניות\n"
+                f"   📌 מחיר קנייה:         {_fmt_price(p['entry'])}\n"
+                f"   📍 מחיר עכשיו:          {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
+                f"   📈 יציאה ברווח:        {_fmt_price(tp_price) if tp_price else 'N/A'}\n"
+                f"   📉 יציאה בהפסד:      {_fmt_price(stop) if stop else 'N/A'}\n"
+                f"   ⏳ זמן החזקה:          {held_str}\n"
+                f"   {'💚' if profit else '❤️'} {'רווח' if profit else 'הפסד'}:              {_fmt_pnl(p['pnl'], False)}"
             )
         total_icon = "🏆" if total_pnl >= 0 else "📉"
         lines.append(f"\n━━━━━━━━━━━━━━━━\n{total_icon} סה״כ: {_fmt_pnl(total_pnl)}")
