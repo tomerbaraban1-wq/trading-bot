@@ -146,7 +146,13 @@ def _build_context() -> dict:
         for t in open_trades:
             ticker = t.get("ticker")
             try:
-                pos = broker.get_position(ticker)
+                # Timeout 4s per position — prevents context from taking 30+ seconds
+                import concurrent.futures as _cf_ctx
+                with _cf_ctx.ThreadPoolExecutor(max_workers=1) as _ex_ctx:
+                    try:
+                        pos = _ex_ctx.submit(broker.get_position, ticker).result(timeout=4)
+                    except Exception:
+                        pos = None
                 cur = float(pos.get("current_price", t["entry_price"])) if pos else t["entry_price"]
                 entry = t["entry_price"]
                 qty = t["qty"]
@@ -3244,7 +3250,7 @@ async def handle_telegram_update(update: dict) -> dict:
                     rep = _simple_fallback(ctx)
             return rep
 
-        reply = await asyncio.wait_for(_generate_reply(), timeout=25)
+        reply = await asyncio.wait_for(_generate_reply(), timeout=22)
 
     except asyncio.TimeoutError:
         logger.warning(f"[CHAT] Reply timed out for: {text[:50]}")
