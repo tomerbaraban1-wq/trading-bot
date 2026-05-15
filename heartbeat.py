@@ -196,6 +196,39 @@ async def _close_position(
     """
     ticker   = trade["ticker"]
     lim_sell = limit_sell_price(cur_price, ticker)
+
+    # ── Pre-action notification — tell user BEFORE executing ─────────────────
+    _entry   = float(trade.get("entry_price") or cur_price)
+    _qty     = float(trade.get("qty") or 0)
+    _pnl_est = (cur_price - _entry) * _qty
+    _pct_est = (cur_price - _entry) / _entry * 100 if _entry else 0
+    _action_labels = {
+        "stop_loss":   "🛑 סטופ לוס הופעל",
+        "take_profit": "🎯 יעד רווח הושג",
+        "smart_sell":  "🧠 מכירה חכמה (ציון נפל)",
+        "news_exit":   "📰 יציאה בגלל חדשות שליליות",
+        "time_exit":   "⏱ יציאה לפי זמן",
+        "eod_sweep":   "🌙 ניקוי סוף יום",
+    }
+    _action_label = _action_labels.get(status, f"📌 {status}")
+    _pnl_icon = "💚" if _pnl_est >= 0 else "❤️"
+    try:
+        from telegram_chat import _fmt_price as _fp_pre
+        _cp_str = _fp_pre(cur_price)
+        _ep_str = _fp_pre(_entry)
+    except Exception:
+        _cp_str = f"${cur_price:.2f}"
+        _ep_str = f"${_entry:.2f}"
+    _create_background_task(send_message(
+        f"⚡ <b>הבוט עומד למכור — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📌  {_action_label}\n"
+        f"💵  מחיר עכשיו:  {_cp_str}\n"
+        f"📍  מחיר קנייה:  {_ep_str}\n"
+        f"{_pnl_icon}  רווח/הפסד משוער: <b>${_pnl_est:+.2f}</b>  ({_pct_est:+.1f}%)\n"
+        f"🔢  כמות: {_qty} מניות"
+    ))
+
     try:
         # Pass cur_price to avoid redundant yfinance fetch inside submit_sell
         order = await asyncio.wait_for(
@@ -575,6 +608,13 @@ async def stop_loss_monitor():
                         _orig_qty = trade["qty"]
                         _half_qty = round(_orig_qty * 0.5, 6)
                         if _half_qty > 0:
+                            _create_background_task(send_message(
+                                f"⚡ <b>הבוט עומד למכור 50% — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"🎯  שלב 1: רווח חלקי ({plpc:+.1f}%)\n"
+                                f"💵  מחיר: ${cur_price:.2f}\n"
+                                f"🔢  מוכר: {_half_qty} מניות (50%)"
+                            ))
                             try:
                                 _half_order = await asyncio.wait_for(
                                     asyncio.to_thread(broker.submit_sell, ticker, _half_qty, cur_price),
@@ -1096,6 +1136,22 @@ async def auto_invest_loop():
 
                         # Slippage estimate (for metadata/audit — iceberg manages actual limit internally)
                         slip = await _asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
+
+                        # ── Pre-buy notification ─────────────────────────────
+                        try:
+                            from telegram_chat import _fmt_price as _fp_buy
+                            _notional_est = price * qty
+                            _create_background_task(send_message(
+                                f"⚡ <b>הבוט עומד לקנות — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"🎯  ציון: <b>{score:.0f}/100</b>  {_score_bar(score, 8) if 'score_bar' in dir() else ''}\n"
+                                f"💵  מחיר: {_fp_buy(price)}\n"
+                                f"🔢  כמות: {qty} מניות\n"
+                                f"💸  שווי משוער: {_fp_buy(_notional_est)}\n"
+                                f"🧠  סנטימנט: {sentiment.score}/10"
+                            ))
+                        except Exception:
+                            pass
 
                         # Execute — iceberg splits large orders automatically
                         from iceberg import iceberg_buy
@@ -1779,6 +1835,13 @@ async def shadow_monitor_loop():
 async def _emergency_exit(trade: dict):
     """Execute an emergency exit for a trade."""
     ticker = trade["ticker"]
+    # Pre-action notification
+    _create_background_task(send_message(
+        f"🚨 <b>הבוט עומד לצאת חירום — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"⚠️  סנטימנט שלילי קיצוני\n"
+        f"💵  מוכר את כל הפוזיציה עכשיו"
+    ))
     try:
         position = await asyncio.wait_for(
             asyncio.to_thread(broker.get_position, ticker), timeout=15
