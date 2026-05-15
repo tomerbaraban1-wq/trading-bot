@@ -3234,6 +3234,20 @@ def _handle_command(text: str, context: dict) -> str | None:
         if _auto_ticker in owned_tickers:
             return _handle_command(f"/stop {_auto_ticker}", context)
 
+        # If message is ONLY a ticker (e.g. user answers "V" after /news asked "which ticker?")
+        # → show quick overview + offer options
+        _clean = text.strip().upper()
+        if _TICKER_RE.match(_clean) and len(_clean) <= 5:
+            return (
+                f"📊 <b>{_clean}</b> — מה תרצה לדעת?\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📰  /news {_clean} — חדשות\n"
+                f"🎯  /score {_clean} — ציון\n"
+                f"💲  /price {_clean} — מחיר\n"
+                f"📏  /52week {_clean} — מיקום בשנה\n"
+                f"📈  /fundamental {_clean} — פונדמנטלס"
+            )
+
     return None  # let LLM handle everything else
 
 
