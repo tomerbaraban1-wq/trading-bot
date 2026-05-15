@@ -49,10 +49,22 @@ def _extract_ticker_from_text(text: str) -> str | None:
     """Try to find a stock ticker in free Hebrew text. e.g. 'מה ציון של AAPL?' → 'AAPL'"""
     # Known single-letter tickers (V=Visa, C=Citi, F=Ford, X=US Steel, T=AT&T, etc.)
     _SINGLE_LETTER_TICKERS = {"V", "C", "F", "X", "T", "B", "K", "D", "R", "S", "W"}
+    # Common abbreviations that should NOT be treated as tickers
+    _NOT_TICKERS = {
+        "VIX", "RSI", "ATR", "SMA", "EMA", "ETF", "ETH", "BTC", "GDP", "BOT",
+        "API", "URL", "CEO", "CFO", "IPO", "SEC", "FED", "CPI", "NFP", "THE",
+        "FOR", "ARE", "AND", "BUT", "NOT", "USD", "ILS", "EUR", "GBP",
+    }
     words = text.upper().split()
     for w in words:
-        clean = _re.sub(r'[^A-Z0-9.\-]', '', w)
-        if not _TICKER_RE.match(clean):
+        # Strip trailing punctuation (AAPL. → AAPL)
+        clean = _re.sub(r'[^A-Z0-9\-]', '', _re.sub(r'[.\-]+$', '', w))
+        if not clean or not _TICKER_RE.match(clean):
+            continue
+        if clean in _NOT_TICKERS:
+            continue
+        # Reject pure numbers
+        if clean.isdigit():
             continue
         if len(clean) >= 2:
             return clean
@@ -561,6 +573,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/losers — פוזיציות בהפסד\n"
             "/risk — ניתוח סיכון\n"
             "/health — בריאות כל הפוזיציות\n"
+            "/correlation — קורלציה בין פוזיציות\n"
             "/pnl — רווח/הפסד מהיר\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
             "/score AAPL — ניתוח עם גרפי ציון\n"
@@ -797,10 +810,14 @@ def _handle_command(text: str, context: dict) -> str | None:
             wl   = get_watchlist()
             held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
             wl   = [tk for tk in wl if tk not in held]
-            # Limit to 5 tickers — each call takes ~3s, 20 tickers = 60s blocking
-            sample = random.sample(wl, min(5, len(wl)))
+            # Limit to 3 tickers — each takes ~3-4s, 3 = max 12s within 22s timeout
+            import time as _t_sig
+            sample = random.sample(wl, min(3, len(wl)))
             signals = []
+            _sig_start = _t_sig.time()
             for tk in sample:
+                if _t_sig.time() - _sig_start > 15:  # hard stop at 15s
+                    break
                 try:
                     sent = score_sentiment(tk)
                     comp = get_composite_score(tk, sent.score)
@@ -1415,20 +1432,30 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[/macro] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # Smart fallback when command sent without required ticker
-    if cmd in ("/news", "/score", "/price", "/earnings", "/sector", "/stop", "/compare"):
-        if len(t.split()) < 2:
-            tips = {
-                "/news":     ("📰", "חדשות על מניה", "/news AAPL"),
-                "/score":    ("🎯", "ציון מניה",      "/score TSLA"),
-                "/price":    ("💲", "מחיר מניה",      "/price NVDA"),
-                "/earnings": ("📅", "דוח רווחים",     "/earnings AAPL"),
-                "/sector":   ("🏢", "סקטור המניה",    "/sector MSFT"),
-                "/stop":     ("🛑", "Stop Loss",       "/stop AAPL"),
-                "/compare":  ("⚔️", "השוואה",         "/compare AAPL MSFT"),
-            }
-            icon, label, example = tips.get(cmd, ("❓", cmd, f"{cmd} AAPL"))
-            return f"{icon} <b>{label}</b>\n\nאיזה מניה?\nדוגמה: <code>{example}</code>"
+    # Smart fallback when command sent without required ticker/args
+    _cmd_tips = {
+        "/news":        ("📰", "חדשות על מניה",      "/news AAPL"),
+        "/score":       ("🎯", "ציון מניה",           "/score TSLA"),
+        "/price":       ("💲", "מחיר מניה",           "/price NVDA"),
+        "/earnings":    ("📅", "דוח רווחים",          "/earnings AAPL"),
+        "/sector":      ("🏢", "סקטור המניה",         "/sector MSFT"),
+        "/stop":        ("🛑", "סטופ לוס",             "/stop AAPL"),
+        "/compare":     ("⚔️", "השוואה",              "/compare AAPL MSFT"),
+        "/watchadd":    ("➕", "הוסף מניה לרשימה",    "/watchadd PLTR"),
+        "/watchremove": ("➖", "הסר מניה מהרשימה",    "/watchremove PLTR"),
+        "/levels":      ("📐", "רמות תמיכה/תנגדות",  "/levels AAPL"),
+        "/remind":      ("⏰", "תזכורת",              "/remind 17:30 לבדוק TSLA"),
+        "/target":      ("🎯", "יעד רווח ידני",       "/target AAPL 210"),
+        "/volume":      ("📊", "נפח מסחר",            "/volume AAPL"),
+        "/chart":       ("📊", "גרף 30 ימים",         "/chart AAPL"),
+        "/dividend":    ("💰", "דיבידנד",             "/dividend AAPL"),
+        "/fundamental": ("📈", "פונדמנטלס",           "/fundamental AAPL"),
+        "/volatility":  ("📐", "תנודתיות",            "/volatility AAPL"),
+        "/alert":       ("🔔", "התראת מחיר",          "/alert AAPL 200"),
+    }
+    if cmd in _cmd_tips and len(t.split()) < (3 if cmd in ("/compare", "/remind", "/target", "/alert") else 2):
+        icon, label, example = _cmd_tips[cmd]
+        return f"{icon} <b>{label}</b>\n\nדוגמה: <code>{example}</code>"
 
     # /news TICKER
     if cmd in ("/news", "news", "חדשות") and len(t.split()) > 1:
