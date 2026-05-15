@@ -2857,8 +2857,28 @@ def _handle_command(text: str, context: dict) -> str | None:
             except Exception as _se:
                 logger.error(f"[/scan background] Error: {_se}")
                 await send_message("❌ סריקה נכשלה — נסה שוב")
+        # _handle_command runs in asyncio.to_thread — can't use create_task directly.
+        # Use run_coroutine_threadsafe to schedule on the main event loop.
         import asyncio as _aio
-        _aio.create_task(_run_scan_and_notify())
+        try:
+            _loop = _aio.get_event_loop()
+        except RuntimeError:
+            _loop = None
+        if _loop and _loop.is_running():
+            _aio.run_coroutine_threadsafe(_run_scan_and_notify(), _loop)
+        else:
+            # Fallback: synchronous scan (blocks but won't crash)
+            import requests as _rq2
+            try:
+                _r = _rq2.post(f"{base}/scan/now",
+                               headers={"X-Webhook-Secret": secret}, timeout=60)
+                if _r.status_code == 200:
+                    _d = _r.json()
+                    _bought = _d.get("bought", 0)
+                    return (f"🔍 <b>סריקה הושלמה</b>\n✅ נקנו: {_bought} מניות"
+                            if _bought else f"🔍 <b>סריקה הושלמה</b>\n⏭️ {_d.get('reason','לא נמצאו')}")
+            except Exception:
+                pass
         return "🔍 <b>סריקה התחילה!</b>\nתקבל תוצאות בעוד כ-30-60 שניות... ⏳"
 
     # /streak — current win/loss streak
