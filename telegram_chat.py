@@ -1710,9 +1710,13 @@ def _handle_command(text: str, context: dict) -> str | None:
             held    = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
             wl      = [tk for tk in wl if tk not in held]
             # סורק 20 מניות — מציג את כולן ממוינות לפי ציון
+            import time as _t_top
             sample  = random.sample(wl, min(20, len(wl)))
             results = []
+            _top_start = _t_top.time()
             for _tk in sample:
+                if _t_top.time() - _top_start > 16:  # hard-stop at 16s (within 22s timeout)
+                    break
                 try:
                     sent = score_sentiment(_tk)
                     comp = get_composite_score(_tk, sent.score)
@@ -2673,10 +2677,12 @@ def _handle_command(text: str, context: dict) -> str | None:
             secret = settings.WEBHOOK_SECRET
             if not base or not secret:
                 return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+            # timeout=8 — just kick off the briefing, don't wait for it to finish
+            # The briefing sends its own message when done (async server-side)
             r = _req.post(f"{base}/telegram/briefing",
-                          headers={"X-Webhook-Secret": secret}, timeout=60)
+                          headers={"X-Webhook-Secret": secret}, timeout=8)
             if r.status_code in (200, 202):
-                return "☀️ <b>שולח תדרוך בוקר...</b>\n📨 ההודעה תגיע תוך שניות"
+                return "☀️ <b>תדרוך בוקר בדרך!</b>\n📨 יגיע תוך 30-60 שניות..."
             return f"⚠️ לא הצלחתי לשלוח (קוד {r.status_code})"
         except Exception as e:
             logger.error(f"[/morning] Error: {e}")
