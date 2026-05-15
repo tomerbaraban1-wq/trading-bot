@@ -935,12 +935,14 @@ async def auto_invest_loop():
 
                 bought = 0
 
-                # Sequential scan — one ticker at a time to avoid memory/thread issues
+                # ── שלב 1: ציון מהיר לכל המועמדים ────────────────────────────
+                # סורקים את כולם ואז קונים רק את הציון הגבוה ביותר
+                _scored_candidates: list[tuple[str, float, object, object]] = []  # (ticker, score, composite, sentiment)
                 for ticker in candidates:
                     if remaining < 10:
                         break
                     try:
-                        # Earnings blackout check — skip if earnings report is within 3 days
+                        # Earnings blackout check
                         try:
                             from earnings import check_earnings_risk
                             earn_risky, earn_reason, earn_days = await _asyncio.wait_for(
@@ -950,9 +952,8 @@ async def auto_invest_loop():
                                 logger.info(f"AUTO-INVEST: {ticker} EARNINGS BLACKOUT — {earn_reason}")
                                 continue
                         except Exception:
-                            pass  # fail-open: proceed if earnings check fails
+                            pass
 
-                        # Score with timeout protection (60s — yfinance can be slow)
                         sentiment = await _asyncio.wait_for(
                             _asyncio.to_thread(score_sentiment, ticker), timeout=60
                         )
@@ -960,12 +961,12 @@ async def auto_invest_loop():
                             _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=60
                         )
                         score = composite["composite_score"]
-                        _vol_ratio: float | None = None   # set after volume check
-                        logger.info(
-                            f"AUTO-INVEST: {ticker} → {score}/100 "
-                            f"({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})"
-                        )
-                        # Learning check — skip if ticker matches known loss patterns
+                        logger.info(f"AUTO-INVEST: {ticker} → {score}/100 ({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})")
+
+                        if not composite["should_buy"]:
+                            continue
+
+                        # Learning check
                         try:
                             from learning import should_override_buy as _sob
                             from indicators import get_current_indicators as _gci
@@ -975,12 +976,25 @@ async def auto_invest_loop():
                                 logger.info(f"AUTO-INVEST: {ticker} blocked by learning — {_block_reason}")
                                 continue
                         except Exception:
-                            pass  # fail-open: proceed if learning check fails
+                            pass
 
-                        if not composite["should_buy"]:
-                            # Skip shadow eval when price=0.0 to avoid ZeroDivisionError
-                            # shadow.evaluate is only useful with a real price
-                            continue
+                        _scored_candidates.append((ticker, score, composite, sentiment))
+                    except _asyncio.TimeoutError:
+                        logger.warning(f"AUTO-INVEST: {ticker} scoring timed out — skipping")
+                    except Exception as _se:
+                        logger.debug(f"AUTO-INVEST: {ticker} scoring error — {type(_se).__name__}")
+
+                # ממיינים לפי ציון יורד — הטוב ביותר ראשון
+                _scored_candidates.sort(key=lambda x: x[1], reverse=True)
+                logger.info(f"AUTO-INVEST: {len(_scored_candidates)} candidates above threshold, best-first: "
+                            + ", ".join(f"{t}={s:.0f}" for t, s, _, _ in _scored_candidates[:3]))
+
+                # ── שלב 2: בדיקות מלאות וקנייה — לפי סדר ציון יורד ────────────
+                for ticker, score, composite, sentiment in _scored_candidates:
+                    if remaining < 10:
+                        break
+                    try:
+                        _vol_ratio: float | None = None
 
                         price = await _asyncio.wait_for(
                             _asyncio.to_thread(broker.get_price, ticker), timeout=15
