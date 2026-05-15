@@ -146,7 +146,14 @@ def _build_context() -> dict:
         for t in open_trades:
             ticker = t.get("ticker")
             try:
-                pos = broker.get_position(ticker)
+                # Timeout: don't let slow broker calls block Telegram responses
+                import concurrent.futures as _cf
+                with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+                    try:
+                        _fut = _ex.submit(broker.get_position, ticker)
+                        pos = _fut.result(timeout=3)  # max 3s per position
+                    except (_cf.TimeoutError, Exception):
+                        pos = None
                 cur = float(pos.get("current_price", t["entry_price"])) if pos else t["entry_price"]
                 entry = t["entry_price"]
                 qty = t["qty"]
@@ -2815,40 +2822,45 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # /scan — trigger immediate buy scan
     if cmd in ("/scan", "scan", "סרוק", "סריקה"):
-        try:
-            import requests as _req, os as _os
-            base = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
-            secret = settings.WEBHOOK_SECRET
-            if not base or not secret:
-                return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
-            r = _req.post(f"{base}/scan/now",
-                          headers={"X-Webhook-Secret": secret}, timeout=60)
-            if r.status_code == 200:
-                data = r.json()
-                bought = data.get("bought", 0)
-                scanned = data.get("scanned", 0)
-                cash = data.get("remaining_cash", 0)
-                if bought > 0:
-                    return (
-                        f"🔍 <b>סריקה הושלמה</b>\n"
-                        f"━━━━━━━━━━━━━━━━\n"
-                        f"✅  נקנו: <b>{bought} מניות</b>\n"
-                        f"🔎  נסרקו: {scanned}\n"
-                        f"💵  מזומן נותר: ${cash:,.2f}"
-                    )
+        # Return immediately — don't wait 60s for scan to complete (Telegram webhook timeout)
+        import os as _os
+        base   = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+        secret = settings.WEBHOOK_SECRET
+        if not base or not secret:
+            return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+        # Fire-and-forget: run scan in background, send result when done
+        async def _run_scan_and_notify():
+            import requests as _rq
+            try:
+                r = _rq.post(f"{base}/scan/now",
+                              headers={"X-Webhook-Secret": secret}, timeout=90)
+                if r.status_code == 200:
+                    data = r.json()
+                    bought  = data.get("bought", 0)
+                    scanned = data.get("scanned", 0)
+                    cash    = data.get("remaining_cash", 0)
+                    if bought > 0:
+                        await send_message(
+                            f"🔍 <b>סריקה הושלמה</b>\n━━━━━━━━━━━━━━━━\n"
+                            f"✅  נקנו: <b>{bought} מניות</b>\n"
+                            f"🔎  נסרקו: {scanned}\n"
+                            f"💵  מזומן נותר: ${cash:,.2f}"
+                        )
+                    else:
+                        reason = data.get("reason", "לא נמצאו הזדמנויות")
+                        await send_message(
+                            f"🔍 <b>סריקה הושלמה</b>\n━━━━━━━━━━━━━━━━\n"
+                            f"⏭️  {reason}\n"
+                            f"🔎  נסרקו: {scanned} מניות"
+                        )
                 else:
-                    reason = data.get("reason", "לא נמצאו הזדמנויות")
-                    return (
-                        f"🔍 <b>סריקה הושלמה</b>\n"
-                        f"━━━━━━━━━━━━━━━━\n"
-                        f"⏭️  {reason}\n"
-                        f"🔎  נסרקו: {scanned} מניות"
-                    )
-            else:
-                return f"⚠️ סריקה נכשלה (קוד {r.status_code})"
-        except Exception as e:
-            logger.error(f"[/scan] Error: {e}")
-            return "❌ שגיאה פנימית — נסה שוב"
+                    await send_message(f"⚠️ סריקה נכשלה (קוד {r.status_code})")
+            except Exception as _se:
+                logger.error(f"[/scan background] Error: {_se}")
+                await send_message("❌ סריקה נכשלה — נסה שוב")
+        import asyncio as _aio
+        _aio.create_task(_run_scan_and_notify())
+        return "🔍 <b>סריקה התחילה!</b>\nתקבל תוצאות בעוד כ-30-60 שניות... ⏳"
 
     # /streak — current win/loss streak
     if cmd in ("/streak", "streak", "רצף", "כמה ברצף"):
