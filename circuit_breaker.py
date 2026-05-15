@@ -95,10 +95,10 @@ def record_trade_result(pnl_gross: float):
         _db_load_ts_before = _state.get("_db_loaded_at", 0)
         _reset_if_new_day()
         _db_load_ts_after  = _state.get("_db_loaded_at", 0)
-        # If the DB was just reloaded (first call after restart OR day boundary),
-        # it already includes ALL closed trades for today. Only add pnl_gross if
-        # the DB was NOT freshly loaded this call (normal mid-day path).
-        _db_just_loaded = _db_load_ts_after != _db_load_ts_before
+        # If DB was just loaded successfully, it includes ALL today's trades — don't add again.
+        # If DB failed (_db_loaded_at unchanged AND we were uninitialized), add the trade
+        # to keep the in-memory counter accurate even without DB data.
+        _db_just_loaded = (_db_load_ts_after != _db_load_ts_before) and (_db_load_ts_after > 0)
         if not _db_just_loaded:
             _state["daily_pnl"] += pnl_gross
 

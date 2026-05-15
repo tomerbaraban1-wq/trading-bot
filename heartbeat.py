@@ -287,8 +287,13 @@ async def _close_position(
     _create_background_task(notify_sell(ticker, exit_price, pnl_gross, label))
 
     # Cleanup per-ticker state so re-entry into the same ticker works correctly
-    _smart_sell_last_check.pop(ticker, None)   # allow immediate smart-sell check on re-entry
-    _position_alert_sent.pop(ticker, None)     # allow fresh movement alerts on re-entry
+    _smart_sell_last_check.pop(ticker, None)
+    _position_alert_sent.pop(ticker, None)
+    # Clean up partial-sell guards to prevent memory leak over many trades
+    _trade_id = trade.get("id")
+    if _trade_id:
+        _partial_sell_done.discard(f"{_trade_id}:s1")
+        _partial_sell_done.discard(f"{_trade_id}:s2")
 
     return True
 
