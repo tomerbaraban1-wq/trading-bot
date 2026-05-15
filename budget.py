@@ -145,7 +145,7 @@ def _get_streak_multiplier() -> float:
       Otherwise → 1.0 (normal)
     """
     try:
-        from database import get_win_trades, get_loss_trades, get_trade_history
+        from database import get_trade_history
         recent = get_trade_history(limit=6)
         closed = [t for t in recent if t.get("status") not in ("open", None)]
         if len(closed) < 3:
