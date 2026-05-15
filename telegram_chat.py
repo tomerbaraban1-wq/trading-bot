@@ -2834,14 +2834,18 @@ def _handle_command(text: str, context: dict) -> str | None:
                                      headers={"X-Webhook-Secret": secret}, timeout=90)
                 )
                 if r.status_code == 200:
-                    data = r.json()
-                    bought  = data.get("bought", 0)
-                    scanned = data.get("scanned", 0)
-                    cash    = data.get("remaining_cash", 0)
+                    data     = r.json()
+                    bought_l = data.get("bought", [])   # list of dicts
+                    skipped_l= data.get("skipped", [])
+                    bought   = len(bought_l) if isinstance(bought_l, list) else int(bought_l or 0)
+                    scanned  = bought + (len(skipped_l) if isinstance(skipped_l, list) else 0)
+                    cash     = data.get("cash_remaining", data.get("remaining_cash", 0))
                     if bought > 0:
+                        tickers = ", ".join(b.get("ticker","?") for b in bought_l[:5]) if isinstance(bought_l, list) else ""
                         await send_message(
                             f"🔍 <b>סריקה הושלמה</b>\n━━━━━━━━━━━━━━━━\n"
-                            f"✅  נקנו: <b>{bought} מניות</b>\n"
+                            f"✅  נקנו: <b>{bought} מניות</b>"
+                            + (f"  ({tickers})" if tickers else "") + "\n"
                             f"🔎  נסרקו: {scanned}\n"
                             f"💵  מזומן נותר: ${cash:,.2f}"
                         )
@@ -2858,11 +2862,12 @@ def _handle_command(text: str, context: dict) -> str | None:
                 logger.error(f"[/scan background] Error: {_se}")
                 await send_message("❌ סריקה נכשלה — נסה שוב")
         # _handle_command runs in asyncio.to_thread — can't use create_task directly.
-        # Use run_coroutine_threadsafe to schedule on the main event loop.
+        # Use run_coroutine_threadsafe with the stored main event loop.
         import asyncio as _aio
         try:
-            _loop = _aio.get_event_loop()
-        except RuntimeError:
+            from discord_bot import get_event_loop as _get_loop
+            _loop = _get_loop()   # loop stored at startup in main.py
+        except Exception:
             _loop = None
         if _loop and _loop.is_running():
             _aio.run_coroutine_threadsafe(_run_scan_and_notify(), _loop)
@@ -2874,7 +2879,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                                headers={"X-Webhook-Secret": secret}, timeout=60)
                 if _r.status_code == 200:
                     _d = _r.json()
-                    _bought = _d.get("bought", 0)
+                    _bl = _d.get("bought", [])
+                    _bought = len(_bl) if isinstance(_bl, list) else int(_bl or 0)
                     return (f"🔍 <b>סריקה הושלמה</b>\n✅ נקנו: {_bought} מניות"
                             if _bought else f"🔍 <b>סריקה הושלמה</b>\n⏭️ {_d.get('reason','לא נמצאו')}")
             except Exception:
