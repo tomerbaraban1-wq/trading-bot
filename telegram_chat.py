@@ -522,7 +522,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/health — בריאות כל הפוזיציות\n"
             "/pnl — רווח/הפסד מהיר\n\n"
             "━━ 📈 <b>ניתוח מניות</b> ━━\n"
-            "/score AAPL — ניתוח עם Progress Bars\n"
+            "/score AAPL — ניתוח עם גרפי ציון\n"
             "/chart AAPL — גרף ASCII 30 ימים\n"
             "/fundamental AAPL — P/E, הכנסות, מרווחים\n"
             "/dividend AAPL — דיבידנד ותשואה\n"
@@ -565,6 +565,9 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/backtest — למידה היסטורית\n\n"
             "━━ ⚙️ <b>שליטה</b> ━━\n"
             "/scan — הפעל סריקה מיידית\n"
+            "/morning — תדרוך בוקר עכשיו\n"
+            "/quiet — מצב שקט (פחות התראות)\n"
+            "/loud — כל ההתראות\n"
             "/pause — עצור קניות חדשות\n"
             "/resume — חדש קניות\n"
             "/sell AAPL — מכור מניה עכשיו\n"
@@ -2697,7 +2700,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"📂  פוזיציות:           <b>{n_open}/{max_pos}</b>  "
                 f"({'✅ יש מקום ל-' + str(capacity) if capacity > 0 else '⛔ מלא'})\n"
                 f"📏  גודל פוזיציה מקס:  {settings.MAX_POSITION_PCT}%  (~{_fmt_price(pos_budget)})\n"
-                f"🛑  Stop Loss:          {settings.STOP_LOSS_PCT}%\n"
+                f"🛑  סטופ לוס:          {settings.STOP_LOSS_PCT}%\n"
                 f"🎯  יעד רווח:           {settings.TAKE_PROFIT_PCT}%"
                 f"{kelly_line}\n"
                 f"🤖  ברוקר:             {settings.ACTIVE_BROKER}"
@@ -2972,11 +2975,11 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception as e:
             return f"❌ שגיאה בבדיקת {ticker_to_sell}: {e}"
 
-    # ── Explicit command aliases (faster path than keyword scan) ──────────
-    if cmd in ("/manioth", "/revach", "/shovi", "/mazon"):
-        t = cmd[1:]  # strip "/" so keyword scan below picks it up
-    if cmd in ("/biztsuim",):
-        t = "biztsuim"
+    # ── Explicit command aliases → keyword scan ────────────────────────────
+    _alias_kw = {"/manioth":"manioth","/revach":"revach",
+                 "/shovi":"shovi","/mazon":"mazon","/biztsuim":"biztsuim"}
+    if cmd in _alias_kw:
+        t = _alias_kw[cmd]   # safe: replaces only for keyword scan below
 
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה", "manioth", "/manioth"]
@@ -3113,7 +3116,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"💰  רווח כולל:       {_fmt_pnl(total_pnl)}\n"
                 f"📈  ממוצע ניצחון:  <b>${avg_win:+.2f}</b>\n"
                 f"📉  ממוצע הפסד:   <b>${avg_loss:+.2f}</b>\n"
-                f"⚖️   R:R Ratio:      <b>{rr_ratio:.2f}</b>\n"
+                f"⚖️   יחס סיכון/רווח:      <b>{rr_ratio:.2f}</b>\n"
                 f"⏱️   זמן ממוצע:     <b>{hold_str}</b>\n\n"
                 f"🏆  הכי טוב:  <b>{best_trade['ticker']}</b>  ${float(best_trade.get('pnl_gross',0)):+.2f}\n"
                 f"📉  הכי גרוע: <b>{worst_trade['ticker']}</b>  ${float(worst_trade.get('pnl_gross',0)):+.2f}"

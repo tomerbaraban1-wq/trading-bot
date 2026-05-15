@@ -109,6 +109,7 @@ async def lifespan(app: FastAPI):
                     {"command": "uptime",     "description": "🤖 זמן פעילות הבוט"},
                     {"command": "taxes",      "description": "🧾 סיכום מס"},
                     {"command": "risk",       "description": "⚠️ ניתוח סיכון"},
+                    {"command": "correlation","description": "📊 קורלציה בין פוזיציות"},
                     {"command": "health",    "description": "🩺 בריאות כל הפוזיציות"},
                     {"command": "pnl",       "description": "💰 רווח/הפסד מהיר"},
                     {"command": "volume",    "description": "📊 נפח מסחר מניה"},
