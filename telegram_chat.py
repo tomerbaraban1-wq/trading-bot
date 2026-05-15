@@ -47,10 +47,17 @@ def _score_bar(score: float, width: int = 10) -> str:
 
 def _extract_ticker_from_text(text: str) -> str | None:
     """Try to find a stock ticker in free Hebrew text. e.g. 'מה ציון של AAPL?' → 'AAPL'"""
+    # Known single-letter tickers (V=Visa, C=Citi, F=Ford, X=US Steel, T=AT&T, etc.)
+    _SINGLE_LETTER_TICKERS = {"V", "C", "F", "X", "T", "B", "K", "D", "R", "S", "W"}
     words = text.upper().split()
     for w in words:
         clean = _re.sub(r'[^A-Z0-9.\-]', '', w)
-        if _TICKER_RE.match(clean) and len(clean) >= 2:
+        if not _TICKER_RE.match(clean):
+            continue
+        if len(clean) >= 2:
+            return clean
+        # Single letter — only accept known tickers
+        if clean in _SINGLE_LETTER_TICKERS:
             return clean
     return None
 
@@ -3289,7 +3296,17 @@ async def handle_telegram_update(update: dict) -> dict:
                 if client:
                     rep = await asyncio.to_thread(_llm_reply, text, ctx)
                 else:
-                    rep = _simple_fallback(ctx)
+                    # LLM not configured — suggest relevant commands instead of just portfolio
+                    rep = (
+                        f"💡 <b>לא מובנת הבקשה — נסה פקודה:</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📊 /status — מצב התיק\n"
+                        f"🏆 /top — מניות מובילות\n"
+                        f"🎯 /score AAPL — ציון מניה\n"
+                        f"📰 /news AAPL — חדשות\n"
+                        f"💲 /price AAPL — מחיר\n"
+                        f"❓ /help — כל הפקודות"
+                    )
             return rep
 
         reply = await asyncio.wait_for(_generate_reply(), timeout=22)
