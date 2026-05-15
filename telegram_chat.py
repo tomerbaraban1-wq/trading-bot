@@ -146,14 +146,7 @@ def _build_context() -> dict:
         for t in open_trades:
             ticker = t.get("ticker")
             try:
-                # Timeout: don't let slow broker calls block Telegram responses
-                import concurrent.futures as _cf
-                with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
-                    try:
-                        _fut = _ex.submit(broker.get_position, ticker)
-                        pos = _fut.result(timeout=3)  # max 3s per position
-                    except (_cf.TimeoutError, Exception):
-                        pos = None
+                pos = broker.get_position(ticker)
                 cur = float(pos.get("current_price", t["entry_price"])) if pos else t["entry_price"]
                 entry = t["entry_price"]
                 qty = t["qty"]
@@ -3206,22 +3199,24 @@ async def handle_telegram_update(update: dict) -> dict:
     # Send typing indicator immediately so user knows bot is working
     await _send_typing(chat_id)
 
-    # Generate reply — run in thread to avoid blocking the event loop during LLM call
+    # Generate reply — total timeout 25s (Telegram drops webhook at ~30s)
     try:
-        context = await asyncio.to_thread(_build_context)
+        async def _generate_reply():
+            ctx = await asyncio.to_thread(_build_context)
+            rep = await asyncio.to_thread(_handle_command, text, ctx)
+            if rep is None:
+                client = _get_client()
+                if client:
+                    rep = await asyncio.to_thread(_llm_reply, text, ctx)
+                else:
+                    rep = _simple_fallback(ctx)
+            return rep
 
-        # Check for quick commands first (no LLM needed)
-        # Run in thread — _handle_command makes blocking DB/broker calls
-        reply = await asyncio.to_thread(_handle_command, text, context)
+        reply = await asyncio.wait_for(_generate_reply(), timeout=25)
 
-        if reply is None:
-            # Full LLM reply
-            client = _get_client()
-            if client:
-                reply = await asyncio.to_thread(_llm_reply, text, context)
-            else:
-                reply = _simple_fallback(context)
-
+    except asyncio.TimeoutError:
+        logger.warning(f"[CHAT] Reply timed out for: {text[:50]}")
+        reply = "⏳ הבוט עסוק כרגע — נסה שוב בעוד רגע"
     except Exception as exc:
         logger.error(f"[CHAT] Reply generation failed: {exc}")
         reply = "מצטער, נתקלתי בשגיאה. נסה שוב."
