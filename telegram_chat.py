@@ -156,13 +156,24 @@ def _build_context() -> dict:
             if _tickers_list:
                 _hist = _yf_ctx.download(_tickers_list, period="1d",
                                          progress=False, auto_adjust=True)
-                if not _hist.empty and "Close" in _hist.columns.get_level_values(0):
-                    _close = _hist["Close"]
-                    for _tk in _tickers_list:
-                        try:
-                            _yf_prices[_tk] = float(_close[_tk].dropna().iloc[-1])
-                        except Exception:
-                            pass
+                if not _hist.empty:
+                    if len(_tickers_list) == 1:
+                        # Single ticker: yf.download returns flat columns → "Close" is a Series
+                        if "Close" in _hist.columns:
+                            try:
+                                _yf_prices[_tickers_list[0]] = float(_hist["Close"].dropna().iloc[-1])
+                            except Exception:
+                                pass
+                    else:
+                        # Multiple tickers: MultiIndex columns → "Close" is a DataFrame
+                        _cols = _hist.columns.get_level_values(0) if hasattr(_hist.columns, "get_level_values") else _hist.columns
+                        if "Close" in _cols:
+                            _close = _hist["Close"]
+                            for _tk in _tickers_list:
+                                try:
+                                    _yf_prices[_tk] = float(_close[_tk].dropna().iloc[-1])
+                                except Exception:
+                                    pass
         except Exception:
             pass
 
