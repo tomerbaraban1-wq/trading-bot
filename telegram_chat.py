@@ -1638,7 +1638,8 @@ def _handle_command(text: str, context: dict) -> str | None:
             # Exclude already-held tickers
             held    = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
             wl      = [tk for tk in wl if tk not in held]
-            sample  = random.sample(wl, min(15, len(wl)))
+            # סורק 20 מניות — מציג את כולן ממוינות לפי ציון
+            sample  = random.sample(wl, min(20, len(wl)))
             results = []
             for _tk in sample:
                 try:
@@ -1648,18 +1649,18 @@ def _handle_command(text: str, context: dict) -> str | None:
                 except Exception:
                     continue
             results.sort(key=lambda x: x[1], reverse=True)
-            lines = [f"🏆 <b>מובילי הסריקה — {len(results)} מניות</b>\n━━━━━━━━━━━━━━━━"]
             buys  = [(t,s,b,ss) for t,s,b,ss in results if b]
             skips = [(t,s,b,ss) for t,s,b,ss in results if not b]
+            lines = [f"🏆 <b>סריקה — {len(results)} מניות</b>\n━━━━━━━━━━━━━━━━"]
             if buys:
-                lines.append("✅ <b>מעל סף קנייה:</b>")
-                for tk, sc, _, ss in buys[:5]:
+                lines.append(f"✅ <b>מעל סף קנייה ({len(buys)}):</b>")
+                for tk, sc, _, ss in buys:
                     lines.append(f"  🟢 <b>{tk}</b>  {sc:.0f}/100  {_score_bar(sc, 8)}  🧠{ss}/10")
             if skips:
-                lines.append("\n⏭️ <b>מתחת לסף:</b>")
-                for tk, sc, _, ss in skips[:3]:
-                    lines.append(f"  ⚪ <b>{tk}</b>  {sc:.0f}/100")
-            lines.append(f"\n━━━━━━━━━━━━━━━━\n🎯 סף קנייה: <b>{MIN_BUY_SCORE}</b>")
+                lines.append(f"\n⏭️ <b>מתחת לסף ({len(skips)}):</b>")
+                for tk, sc, _, ss in skips:
+                    lines.append(f"  ⚪ <b>{tk}</b>  {sc:.0f}/100  {_score_bar(sc, 8)}")
+            lines.append(f"\n━━━━━━━━━━━━━━━━\n🎯 סף קנייה: <b>{MIN_BUY_SCORE}</b>  |  /scan לביצוע מיידי")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
