@@ -132,9 +132,14 @@ def _build_context() -> dict:
 
     from datetime import datetime, timezone as _tz
     try:
-        status = budget.get_budget_status()
+        # DB calls are fast; broker calls are slow — avoid broker here
         open_trades = database.get_open_trades()
-        history = database.get_trade_history(limit=10)
+        history     = database.get_trade_history(limit=10)
+        # Budget from DB directly (faster than broker API)
+        try:
+            status = budget.get_budget_status()
+        except Exception:
+            status = {}
     except Exception as exc:
         logger.warning(f"[CHAT] Failed to build context: {exc}")
         status, open_trades, history = {}, [], []
@@ -143,17 +148,29 @@ def _build_context() -> dict:
     positions_summary = []
 
     if open_trades:
+        # Batch price fetch via yfinance — much faster than per-ticker broker API calls
+        _tickers_list = [t.get("ticker") for t in open_trades if t.get("ticker")]
+        _yf_prices: dict = {}
+        try:
+            import yfinance as _yf_ctx
+            if _tickers_list:
+                _hist = _yf_ctx.download(_tickers_list, period="1d",
+                                         progress=False, auto_adjust=True)
+                if not _hist.empty and "Close" in _hist.columns.get_level_values(0):
+                    _close = _hist["Close"]
+                    for _tk in _tickers_list:
+                        try:
+                            _yf_prices[_tk] = float(_close[_tk].dropna().iloc[-1])
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
         for t in open_trades:
             ticker = t.get("ticker")
             try:
-                # Timeout 4s per position — prevents context from taking 30+ seconds
-                import concurrent.futures as _cf_ctx
-                with _cf_ctx.ThreadPoolExecutor(max_workers=1) as _ex_ctx:
-                    try:
-                        pos = _ex_ctx.submit(broker.get_position, ticker).result(timeout=4)
-                    except Exception:
-                        pos = None
-                cur = float(pos.get("current_price", t["entry_price"])) if pos else t["entry_price"]
+                # Use yfinance price (fast, cached) — fall back to entry_price
+                cur = _yf_prices.get(ticker, t["entry_price"])
                 entry = t["entry_price"]
                 qty = t["qty"]
                 pct = (cur - entry) / entry * 100 if entry else 0
