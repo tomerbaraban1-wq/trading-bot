@@ -131,7 +131,7 @@ def _get_weekly_bearish(ticker: str) -> bool:
         return False
 
 import os as _os
-MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "58"))  # balanced: was 65 (too strict), now 58
+MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "51"))  # מינימום 51 — קונה כל מניה מעל 50
 
 # ── Fundamental Quality Cache ─────────────────────────────────────────────────
 # Stores (timestamp, score: float) per ticker; TTL = 24 hours
