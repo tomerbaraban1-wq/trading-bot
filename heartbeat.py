@@ -1139,12 +1139,12 @@ async def auto_invest_loop():
 
                         # ── Pre-buy notification ─────────────────────────────
                         try:
-                            from telegram_chat import _fmt_price as _fp_buy
+                            from telegram_chat import _fmt_price as _fp_buy, _score_bar as _sb
                             _notional_est = price * qty
                             _create_background_task(send_message(
                                 f"⚡ <b>הבוט עומד לקנות — {ticker}</b>\n"
                                 f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯  ציון: <b>{score:.0f}/100</b>  {_score_bar(score, 8) if 'score_bar' in dir() else ''}\n"
+                                f"🎯  ציון: <b>{score:.0f}/100</b>  <code>{_sb(score, 8)}</code>\n"
                                 f"💵  מחיר: {_fp_buy(price)}\n"
                                 f"🔢  כמות: {qty} מניות\n"
                                 f"💸  שווי משוער: {_fp_buy(_notional_est)}\n"
