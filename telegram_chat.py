@@ -366,7 +366,7 @@ def _llm_reply(user_message: str, context: dict) -> str:
 📈 רווח/הפסד פתוח: {_ils(context.get('open_pnl', 0))} ({'+' if context.get('open_pnl',0)>=0 else ''}{context.get('open_pnl',0):+.2f}$)
 💳 רווח ממומש:       {_ils(context.get('realized_pnl_net', 0))}
 🔢 פוזיציות:            {context.get('open_positions_count', 0)}/{context.get('max_positions', 4)}
-🎯 Win Rate:            {context.get('win_rate', 0)}%  ({context.get('total_closed', 0)} עסקאות)
+🎯 אחוז הצלחה:            {context.get('win_rate', 0)}%  ({context.get('total_closed', 0)} עסקאות)
 🌡️ VIX:                   {context.get('vix') or '—'}
 🕐 שוק:                  {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 
@@ -545,7 +545,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/sectors — דירוג סקטורים\n"
             "/macro — אירועים כלכליים קרובים\n"
             "/vix — מדד הפחד VIX\n"
-            "/fear — Fear & Greed Index\n"
+            "/fear — פחד וחמדנות\n"
             "/top — מניות עם ציון גבוה\n"
             "/watchlist — רשימת הסריקה\n"
             "/quick AAPL — סקירה מהירה (מחיר+ציון+52W)\n"
@@ -558,7 +558,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/history — עסקאות אחרונות\n"
             "/summary — סיכום 7 ימים\n"
             "/monthly — סיכום 30 ימים\n"
-            "/biztsuim — ביצועים ו-Win Rate\n"
+            "/biztsuim — ביצועים ו-אחוז הצלחה\n"
             "/best — העסקה הטובה ביותר\n"
             "/worst — העסקה הגרועה ביותר\n"
             "/taxes — סיכום מס\n"
@@ -1106,7 +1106,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"⏳  הוחזק:         {_fmt_held(held_h)}\n\n"
                 f"🛑  Stop:          {_fmt_price(stop)}  ({'💚 ברווח' if in_prof else '❤️ בהפסד'}, {stop_pct:.1f}% מרחק)\n"
                 f"🏆  שיא:           {_fmt_price(wm)}\n"
-                f"{'💚' if pnl>=0 else '❤️'}  P&L:          <b>{_fmt_pnl(pnl)}</b>"
+                f"{'💚' if pnl>=0 else '❤️'}  רווח/הפסד:          <b>{_fmt_pnl(pnl)}</b>"
                 f"{sc_str}"
             )
         except Exception as e:
@@ -1405,9 +1405,29 @@ def _handle_command(text: str, context: dict) -> str | None:
             elif sc <= 7: sent_line = f"⚪ סנטימנט AI: {sc}/10 — ניטרלי"
             elif sc <= 8: sent_line = f"🟡 סנטימנט AI: {sc}/10 — חיובי"
             else:         sent_line = f"🟢 סנטימנט AI: {sc}/10 — חיובי מאוד"
+            # Translate headlines to Hebrew
+            translated = []
+            try:
+                cli = _get_client()
+                if cli and headlines:
+                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines[:5]))
+                    _tr  = cli.chat.completions.create(
+                        model=settings.LLM_MODEL,
+                        messages=[{"role": "user", "content":
+                            f"תרגם את הכותרות הבאות לעברית קצרה (עד 12 מילים). "
+                            f"החזר רק כותרות ממוספרות:\n{_raw}"}],
+                        max_tokens=300, temperature=0.2,
+                    )
+                    for ln in _tr.choices[0].message.content.strip().split("\n"):
+                        ln = ln.strip()
+                        if ln and ln[0].isdigit():
+                            translated.append(ln.split(". ", 1)[-1].strip())
+            except Exception:
+                pass
+            display = translated if translated else [h[:90] for h in headlines[:5]]
             lines = [f"📰 <b>חדשות — {_ticker}</b>\n━━━━━━━━━━━━━━━━", sent_line, ""]
-            for i, h in enumerate(headlines[:5], 1):
-                lines.append(f"{i}. {h[:100]}")
+            for i, h in enumerate(display, 1):
+                lines.append(f"{i}. {h}")
             return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -1548,13 +1568,36 @@ def _handle_command(text: str, context: dict) -> str | None:
                 data = resp.json()
                 summary = data.get("summary", {})
                 blockers = summary.get("blockers", [])
-                verdict = summary.get("verdict", "")
+                verdict  = summary.get("verdict", "")
+                # Translate English blocker strings to Hebrew
+                _blocker_map = {
+                    "SPY below SMA50": "SPY מתחת ל-SMA50 — שוק בירידה",
+                    "VIX": "VIX גבוה — שוק תנודתי",
+                    "Circuit breaker": "Circuit Breaker פעיל — הפסד יומי מקסימלי",
+                    "Max positions": "מספר פוזיציות מקסימלי הושג",
+                    "Market closed": "השוק סגור",
+                    "Not enough cash": "אין מספיק מזומן",
+                    "None": "אין חסמים",
+                    "Bot is paused": "הבוט מושהה",
+                    "High-impact": "אירוע כלכלי משמעותי היום",
+                }
+                def _translate_blocker(b):
+                    for eng, heb in _blocker_map.items():
+                        if eng.lower() in b.lower():
+                            return heb
+                    return b  # return as-is if no match
                 lines = [f"🔍 <b>אבחון</b>\n━━━━━━━━━━━━━━━━"]
-                lines.append(verdict)
+                # Translate verdict
+                if "SHOULD be buying" in verdict:
+                    lines.append("✅ הבוט אמור לקנות — בדוק ציוני מניות")
+                elif "BLOCKED" in verdict:
+                    lines.append("❌ הבוט חסום — ראה חסמים למטה")
+                else:
+                    lines.append(verdict)
                 if blockers:
                     lines.append("\n<b>חסמים:</b>")
                     for b in blockers:
-                        lines.append(f"⛔ {b}")
+                        lines.append(f"⛔ {_translate_blocker(b)}")
                 return "\n".join(lines)
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -1658,7 +1701,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             logger.error(f"[/history] Error: {_e}")
             return "📋 <b>עסקאות אחרונות</b>\n⚠️ לא הצלחתי לטעון היסטוריה כרגע."
 
-    # /fear — Fear & Greed Index
+    # /fear — פחד וחמדנות
     if cmd in ("/fear", "fear", "פחד", "חמדנות", "fear greed"):
         try:
             from indicators import get_fear_greed, get_vix
@@ -1673,7 +1716,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             else:          label = "🤑 חמדנות קיצונית"
             tip = "✅ הזדמנות קנייה!" if fg <= 30 else ("⚠️ שוק חמדני — היזהר" if fg >= 70 else "")
             return (
-                f"😨 <b>Fear & Greed Index</b>\n"
+                f"😨 <b>פחד וחמדנות</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"📊 ציון: <b>{fg}/100</b>\n"
                 f"💭 מצב: {label}\n"
@@ -1696,14 +1739,14 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines = [f"📅 <b>דוחות — {_ticker}</b>\n━━━━━━━━━━━━━━━━"]
             if days is not None:
                 if risky:
-                    lines.append(f"⛔ <b>Blackout: {days} ימים לדוח</b>")
+                    lines.append(f"⛔ <b>עצירה לפני דוח: {days} ימים לדוח</b>")
                 else:
                     lines.append(f"✅ הדוח הבא: בעוד {days} ימים")
             beat = impact.get("beat_rate", 0)
             avg_move = impact.get("avg_move_pct", 0)
             quarters = impact.get("quarters_analyzed", 0)
             if quarters > 0:
-                lines.append(f"🎯 Beat rate: <b>{beat*100:.0f}%</b> ({quarters} רבעונים)")
+                lines.append(f"🎯 שיעור הצלחה: <b>{beat*100:.0f}%</b> ({quarters} רבעונים)")
                 lines.append(f"📊 תנועה ממוצעת: <b>{avg_move:.1f}%</b>")
             return "\n".join(lines)
         except Exception as e:
@@ -1958,7 +2001,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             mn, mx = min(pnls), max(pnls)
             rng = mx - mn or 1
             chart = "".join(bars[round((v - mn) / rng * 7)] for v in pnls)
-            chart_line = f"\n<code>P&L: {chart}</code>  ({len(days_sorted)} ימים)"
+            chart_line = f"\n<code>רווח/הפסד: {chart}</code>  ({len(days_sorted)} ימים)"
 
             # Per-day breakdown
             day_lines = []
@@ -2845,7 +2888,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 f"━━━━━━━━━━━━━━━━\n"
                 f"{streak_line}\n\n"
                 f"📊 10 עסקאות אחרונות:\n{dots}\n\n"
-                f"🎯 Win Rate: <b>{wr}%</b>  ({wins}/{total})"
+                f"🎯 אחוז הצלחה: <b>{wr}%</b>  ({wins}/{total})"
             )
         except Exception as e:
             logger.error(f"[/streak] Error: {e}")

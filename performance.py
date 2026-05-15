@@ -264,7 +264,7 @@ def export_csv(report: PerformanceReport, output_dir: str | None = None) -> str:
 
 def format_telegram(report: PerformanceReport) -> str:
     """Format a rich weekly report for Telegram (HTML mode)."""
-    sharpe_str   = f"{report.sharpe_ratio:.2f}" if report.sharpe_ratio is not None else "N/A"
+    sharpe_str   = f"{report.sharpe_ratio:.2f}" if report.sharpe_ratio is not None else "אין נתונים"
     sharpe_grade = _grade_sharpe(report.sharpe_ratio)
     dd_grade     = "🟢" if report.max_drawdown_pct < 5 else ("🟡" if report.max_drawdown_pct < 15 else "🔴")
     pnl_emoji    = "📈" if report.total_pnl_gross >= 0 else "📉"

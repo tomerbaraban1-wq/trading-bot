@@ -1540,11 +1540,11 @@ async def send_morning_briefing_now(secret: str = ""):
                 )
                 _lines = _resp.choices[0].message.content.strip().split("\n")
                 _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
-                headlines = _translated[:5] if _translated else headlines
+                headlines = _translated[:5] if _translated else []
             except Exception:
-                pass
+                headlines = []  # don't send untranslated English on failure
 
-        news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות"
+        news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות כרגע"
 
         # Score top candidates
         WATCHLIST = _get_wl()
