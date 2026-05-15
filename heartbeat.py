@@ -616,13 +616,13 @@ async def stop_loss_monitor():
                                     _partial_sell_done.add(_s1_guard_key)  # guard only on success
                                 logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
-                                await send_message(
+                                _create_background_task(send_message(
                                     f"💰 <b>רווח חלקי שלב 1 — {ticker}</b>\n"
                                     f"מכרתי 50% מהפוזיציה\n"
                                     f"📊 {_half_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_half_pnl:+.2f}</b>\n"
                                     f"השאר ממשיך לרוץ עם עצירה נגררת ✅"
-                                )
+                                ))
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
                                 # Do NOT continue — let ATR stop / take-profit / smart-sell run this cycle
@@ -668,13 +668,13 @@ async def stop_loss_monitor():
                                     _partial_sell_done.add(_s2_guard_key)  # guard only on success
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
-                                await send_message(
+                                _create_background_task(send_message(
                                     f"💰 <b>רווח חלקי שלב 2 — {ticker}</b>\n"
                                     f"מכרתי עוד חצי מהנותר\n"
                                     f"📊 {_quarter_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
                                     f"💵 רווח ממומש: <b>${_s2_pnl:+.2f}</b>\n"
                                     f"הנותר ממשיך לרוץ עד יעד מלא ✅"
-                                )
+                                ))
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
                                 # Do NOT continue — let ATR stop / take-profit / smart-sell run this cycle
