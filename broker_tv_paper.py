@@ -577,7 +577,8 @@ class TVPaperBroker(BrokerBase):
         else:
             # Find next weekday with market open
             days_ahead = 1
-            while days_ahead <= 7:  # safety cap — weekday found within a week
+            next_open = now + datetime.timedelta(days=3)  # safe default (Mon if today is Fri)
+            while days_ahead <= 7:  # safety cap — weekday always found within 7 days
                 cand = (now + datetime.timedelta(days=days_ahead)).replace(
                     hour=open_hour, minute=open_min, second=0, microsecond=0
                 )
