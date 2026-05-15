@@ -752,6 +752,7 @@ async def stop_loss_monitor():
         except Exception as e:
             logger.error(f"Stop loss monitor error: {e}")
             _create_background_task(notify_error("loop_error", "", f"שגיאה ב-stop_loss_monitor"))
+            await asyncio.sleep(60)  # prevent CPU spin-loop on repeated DB/broker failure
 
 
 async def auto_invest_loop():
@@ -775,8 +776,16 @@ async def auto_invest_loop():
                 await asyncio.sleep(5 * 60)
                 continue
 
-            # Only trade during market hours (wrapped — may call broker API)
-            if not await asyncio.to_thread(broker.is_market_open):
+            # Only trade during market hours — timeout prevents loop hang on broker outage
+            try:
+                mkt_open = await asyncio.wait_for(
+                    asyncio.to_thread(broker.is_market_open), timeout=15
+                )
+            except asyncio.TimeoutError:
+                logger.warning("AUTO-INVEST: is_market_open timed out — skipping scan")
+                await asyncio.sleep(5 * 60)
+                continue
+            if not mkt_open:
                 logger.info("AUTO-INVEST: Market is closed, skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
@@ -1568,7 +1577,12 @@ async def news_monitor_loop():
                 continue
 
             import time as _t
-            from sentiment import score_sentiment_live as _sent_live
+            try:
+                from sentiment import score_sentiment_live as _sent_live
+            except (ImportError, AttributeError) as _imp_err:
+                logger.error(f"[NEWS MONITOR] Cannot import score_sentiment_live: {_imp_err}")
+                await asyncio.sleep(60)
+                continue
 
             for trade in open_trades:
                 ticker = trade.get("ticker", "")
@@ -1827,9 +1841,12 @@ async def daily_summary_loop():
             if now >= target:
                 target += datetime.timedelta(days=1)
 
-            # Check every minute instead of sleeping for hours
+            # Check every minute — CancelledError must propagate for clean shutdown
             while datetime.datetime.now(_utc) < target:
-                await asyncio.sleep(60)
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    raise  # don't swallow cancellation inside inner loop
 
             # Skip weekends — no trading, nothing to summarise
             if datetime.datetime.now(_utc).weekday() >= 5:  # 5=Sat, 6=Sun
@@ -2004,9 +2021,12 @@ async def weekly_report_loop():
             wait_seconds = (target - now).total_seconds()
             logger.info(f"Weekly report scheduled in {wait_seconds/3600:.1f}h (Sunday 20:10 UTC)")
 
-            # Check every minute instead of sleeping for days
+            # Check every minute — CancelledError must propagate for clean shutdown
             while datetime.datetime.now(_utc) < target:
-                await asyncio.sleep(60)
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    raise
 
             # Compute 4-week report
             from performance import compute as perf_compute, export_csv, format_telegram
