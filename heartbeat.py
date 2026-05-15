@@ -1522,25 +1522,26 @@ async def news_refresh_loop():
     while True:
         try:
             from scanner import get_watchlist as _gwl
-            WATCHLIST = _gwl()
             from news_service import get_headlines, get_general_headlines
             # Refresh general market headlines
             await asyncio.to_thread(get_general_headlines, 10)
-            # Refresh per-ticker headlines for open positions + watchlist
+            # Refresh for open positions (highest priority — monitored for sell signals)
             open_trades = await asyncio.to_thread(database.get_open_trades)
-            # Only refresh news for open positions (not watchlist) to save memory
-            tickers = list({t["ticker"] for t in open_trades})[:5]
-            for ticker in tickers:
+            open_tickers = list({t["ticker"] for t in open_trades})
+            # Also pre-warm top watchlist candidates so buy-path has fresh news
+            wl_sample = _gwl()[:10]
+            tickers_to_refresh = list(dict.fromkeys(open_tickers + wl_sample))[:15]
+            for ticker in tickers_to_refresh:
                 try:
-                    await asyncio.to_thread(get_headlines, ticker, 5)
+                    await asyncio.to_thread(get_headlines, ticker, 8, True)  # bypass_cache=True
                 except Exception:
                     pass
-            logger.debug(f"News cache refreshed for {len(tickers)} tickers")
+            logger.debug(f"News refreshed: {len(open_tickers)} positions + {len(wl_sample)} watchlist candidates")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.debug(f"News refresh error (non-critical): {e}")
-        await asyncio.sleep(300)   # refresh every 5 minutes (was 60s) — reduces memory pressure
+        await asyncio.sleep(240)   # every 4 min — cache TTL is 5 min, prevents expiry race
 
 
 async def news_monitor_loop():

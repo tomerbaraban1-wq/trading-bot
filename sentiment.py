@@ -118,8 +118,8 @@ def score_sentiment(ticker: str) -> SentimentResult:
     if cached is not None and now - cached.timestamp < CACHE_TTL:
         return cached
 
-    # Fetch headlines from RSS + Reddit (free, no API key)
-    headlines = get_headlines(ticker, limit=5)
+    # Fetch headlines — always bypass RSS cache for fresh news on buy decisions
+    headlines = get_headlines(ticker, limit=8, bypass_cache=True)
     reddit_headlines = _get_reddit_mentions(ticker)
     if reddit_headlines:
         headlines = headlines + reddit_headlines
@@ -323,10 +323,8 @@ def check_emergency_sentiment(ticker: str) -> bool:
     Returns True if emergency exit should be triggered.
     """
     try:
-        # Force fresh check (bypass cache)
-        with _cache_lock:
-            _sentiment_cache.pop(ticker, None)
-        result = score_sentiment(ticker)
+        # Use live check — bypasses BOTH sentiment cache AND RSS news cache
+        result = score_sentiment_live(ticker)
         if result.score <= settings.SENTIMENT_EMERGENCY_SCORE:
             logger.warning(
                 f"EMERGENCY SENTIMENT for {ticker}: {result.score}/10 - {result.reasoning}"
