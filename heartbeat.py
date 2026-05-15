@@ -368,13 +368,8 @@ async def stop_loss_monitor():
                                 f"[BE LOCK] {ticker}: stop floored to entry "
                                 f"${_be_stop:.2f} (+{plpc:.1f}% | trigger={_breakeven_trigger}%)"
                             )
-                            _create_background_task(send_message(
-                                f"🔒 <b>סטופ הועבר לנקודת איזון — {ticker}</b>\n"
-                                f"━━━━━━━━━━━━━━━━\n"
-                                f"✅  הרווח הוגן של {plpc:.1f}% הופעל\n"
-                                f"🛡️  הסטופ עלה לנקודת הכניסה — הסיכון = 0\n"
-                                f"📍  מחיר עכשיו: <b>${cur_price:.2f}</b>  ·  כניסה: <b>${_entry_price:.2f}</b>"
-                            ))
+                            # Break-even alert disabled — too noisy
+                            pass
 
                     # Trail the stop upward as price rises
                     new_stop, new_wm, raised = await asyncio.to_thread(
@@ -391,8 +386,8 @@ async def stop_loss_monitor():
                                 f"${atr_stop:.2f} → ${new_stop:.2f} "
                                 f"(price=${cur_price:.2f} | wm=${new_wm:.2f})"
                             )
-                            # Notify Telegram when stop is raised significantly (≥0.5%) — skipped in quiet mode
-                            if not _is_quiet() and atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
+                            # Stop-raise alerts disabled — too noisy. Only buy/sell/news reach user.
+                            if False and not _is_quiet() and atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
                                 _entry   = trade["entry_price"]
                                 _qty     = trade["qty"]
                                 _pnl_now = (cur_price - _entry) * _qty
@@ -1437,31 +1432,9 @@ async def position_alert_loop():
                     pct   = (cur - entry) / entry * 100
                     unreal = float(pos.get("unrealized_pl", (cur - entry) * trade["qty"]))
 
-                    last = _position_alert_sent.get(ticker, 0.0)
-                    # Alert if moved ±5% and hasn't been alerted within 2% of this level
-                    if abs(pct) >= 5.0 and abs(pct - last) >= 2.0:
-                        _position_alert_sent[ticker] = pct
-                        emoji = "🚀" if pct > 0 else "⚠️"
-                        await send_message(
-                            f"{emoji} <b>התראת תנועה — {ticker}</b>\n"
-                            f"📊 שינוי: <b>{pct:+.2f}%</b> מכניסה\n"
-                            f"💵 מחיר: ${cur:.2f}  (כניסה: ${entry:.2f})\n"
-                            f"💰 רווח/הפסד לא ממומש: <b>${unreal:+.2f}</b>"
-                        )
-
-                    # Stop-loss proximity alert — warn when within 1.5% of stop
-                    atr_stop = trade.get("atr_stop_price")
-                    _stop_key = f"stop_{ticker}"
-                    if atr_stop and atr_stop > 0:
-                        dist_pct = (cur - atr_stop) / cur * 100
-                        if dist_pct <= 1.5 and _position_alert_sent.get(_stop_key) != round(dist_pct, 0):
-                            _position_alert_sent[_stop_key] = round(dist_pct, 0)
-                            await send_message(
-                                f"🚨 <b>התראת סטופ לוס קרוב — {ticker}</b>\n"
-                                f"💵 מחיר עכשיו: ${cur:.2f}\n"
-                                f"🛡️ סטופ לוס: ${atr_stop:.2f}\n"
-                                f"⚡ מרחק: <b>{dist_pct:.1f}%</b> בלבד!"
-                            )
+                    # Position movement alerts disabled — too noisy.
+                    # Only buy/sell/news/daily-summary reach the user now.
+                    _ = unreal  # suppress unused warning
                 except Exception:
                     continue
         except asyncio.CancelledError:
@@ -1760,25 +1733,16 @@ async def news_monitor_loop():
                                 )
                         continue
 
-                    # ── 4. VERY BULLISH (8-9): loosen stop slightly ───────────
+                    # ── 4. VERY BULLISH (8-9): loosen stop silently (no Telegram alert) ──
                     if score >= 8:
                         _dist = cur_price - atr_stop
-                        # Give 15% more room so big winner doesn't get stopped out
                         _new_stop = round(atr_stop - _dist * 0.15, 4)
                         if _new_stop < atr_stop and _new_stop > entry:
                             await asyncio.to_thread(
                                 database.update_trade_stop, trade["id"], _new_stop,
                                 trade.get("high_watermark", entry)
                             )
-                        emoji = "🚀" if score >= 9 else "📈"
-                        await send_message(
-                            f"{emoji} <b>חדשות מצוינות — {ticker}</b>\n"
-                            f"━━━━━━━━━━━━━━━━\n"
-                            f"📌  ציון חדשות: <b>{score}/10</b> 🟢\n\n"
-                            f"{news_preview}\n\n"
-                            f"💬 {reasoning[:120]}\n\n"
-                            f"✅  סטופ הורחב קלות — ממשיכים לרוץ עם הרוח 🌬️"
-                        )
+                        # Bullish news alert disabled — user only gets sell/buy/critical news
 
                 except asyncio.TimeoutError:
                     logger.debug(f"[NEWS MONITOR] {ticker}: sentiment check timed out — skip")
