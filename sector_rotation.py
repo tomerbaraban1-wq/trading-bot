@@ -115,16 +115,24 @@ def get_leading_sectors() -> list[dict]:
 
     try:
         etf_list = list(SECTOR_ETFS.keys())
-        prices = yf.download(etf_list, period=f"{LOOKBACK + 5}d",
-                             progress=False, auto_adjust=True)["Close"]
-        if prices.empty:
+        _raw = yf.download(etf_list, period=f"{LOOKBACK + 5}d",
+                           progress=False, auto_adjust=True)["Close"]
+        if _raw.empty:
             return []
+        # yf.download with 1 ETF returns Series; with multiple returns DataFrame
+        import pandas as _pd
+        prices = _pd.DataFrame(_raw) if hasattr(_raw, "to_frame") and not isinstance(_raw, _pd.DataFrame) else _raw
 
         results = []
         for etf in etf_list:
-            if etf not in prices.columns:
-                continue
-            series = prices[etf].dropna()
+            if not hasattr(prices, "columns") or etf not in prices.columns:
+                # Series case — single ETF
+                if hasattr(prices, "name") and prices.name == etf:
+                    series = prices.dropna()
+                else:
+                    continue
+            else:
+                series = prices[etf].dropna()
             if len(series) < 2:
                 continue
             ret = (float(series.iloc[-1]) - float(series.iloc[0])) / float(series.iloc[0]) * 100
