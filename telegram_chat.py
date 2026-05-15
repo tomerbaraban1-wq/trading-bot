@@ -2825,8 +2825,11 @@ def _handle_command(text: str, context: dict) -> str | None:
         async def _run_scan_and_notify():
             import requests as _rq
             try:
-                r = _rq.post(f"{base}/scan/now",
-                              headers={"X-Webhook-Secret": secret}, timeout=90)
+                # MUST use asyncio.to_thread — requests.post blocks the event loop!
+                r = await asyncio.to_thread(
+                    lambda: _rq.post(f"{base}/scan/now",
+                                     headers={"X-Webhook-Secret": secret}, timeout=90)
+                )
                 if r.status_code == 200:
                     data = r.json()
                     bought  = data.get("bought", 0)
