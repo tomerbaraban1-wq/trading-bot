@@ -24,8 +24,12 @@ def process_trade_close(trade_id: int, pnl_gross: float) -> dict:
 def _handle_profit(trade_id: int, pnl_gross: float) -> dict:
     """Reserve tax on profit, offset with available credits."""
     raw_tax = pnl_gross * settings.TAX_RATE
-    tax_balance = get_tax_balance()
-    available_credit = tax_balance["tax_credit"]
+    try:
+        tax_balance = get_tax_balance()
+        available_credit = tax_balance["tax_credit"]
+    except Exception as _e:
+        logger.warning(f"[TAX] get_tax_balance failed ({_e}) — no credit offset applied")
+        available_credit = 0.0
 
     credit_used = 0.0
     actual_tax = raw_tax

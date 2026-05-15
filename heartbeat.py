@@ -224,8 +224,12 @@ async def _close_position(
         _create_background_task(notify_error("stop_loss_fail", ticker, f"שגיאת מכירה"))
         return False
 
-    exit_price = float(order.get("price") or lim_sell)
-    pnl_gross  = (exit_price - trade["entry_price"]) * trade["qty"]
+    exit_price  = float(order.get("price") or lim_sell)
+    _entry      = float(trade.get("entry_price") or 0)
+    if _entry <= 0:
+        logger.error(f"[CLOSE] {ticker}: entry_price is zero/null — using exit_price as entry fallback")
+        _entry = exit_price
+    pnl_gross   = (exit_price - _entry) * float(trade.get("qty") or 0)
 
     from tax_tracker import process_trade_close
     tax_result = process_trade_close(trade["id"], pnl_gross)
@@ -1277,7 +1281,9 @@ async def morning_briefing_loop():
             if _open_trades:
                 for _ot in _open_trades[:3]:
                     try:
-                        _pos = broker.get_position(_ot["ticker"])
+                        _pos = await asyncio.wait_for(
+                            asyncio.to_thread(broker.get_position, _ot["ticker"]), timeout=8
+                        )
                         _pct = float(_pos.get("unrealized_plpc", 0)) * 100 if _pos else 0
                         _icon = "🟢" if _pct >= 0 else "🔴"
                         open_pos_text += f"\n  {_icon} <b>{_ot['ticker']}</b>  {_pct:+.1f}%"
@@ -1404,7 +1410,9 @@ async def position_alert_loop():
                 if trade["action"] != "buy":
                     continue
                 ticker = trade["ticker"]
-                entry  = trade["entry_price"]
+                entry  = float(trade.get("entry_price") or 0)
+                if entry <= 0:
+                    continue  # skip trades with invalid entry price
                 try:
                     pos = await asyncio.wait_for(
                         asyncio.to_thread(broker.get_position, ticker), timeout=10
@@ -1567,7 +1575,12 @@ async def news_monitor_loop():
 
     while True:
         try:
-            if not await asyncio.to_thread(broker.is_market_open):
+            try:
+                _mkt = await asyncio.wait_for(asyncio.to_thread(broker.is_market_open), timeout=15)
+            except asyncio.TimeoutError:
+                await asyncio.sleep(5 * 60)
+                continue
+            if not _mkt:
                 await asyncio.sleep(5 * 60)
                 continue
 
