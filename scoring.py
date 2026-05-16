@@ -682,9 +682,9 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         _h, _m = _now.hour, _now.minute
         _mins = _h * 60 + _m
         if 9 * 60 + 30 <= _mins < 10 * 60:        # 9:30-10:00 → wide spreads
-            composite = max(0, composite - 12)
+            composite = max(0, composite - 5)   # reduced 12→5 (was too aggressive)
         elif 15 * 60 + 30 <= _mins < 16 * 60:     # 3:30-4:00 → MOC noise
-            composite = max(0, composite - 8)
+            composite = max(0, composite - 4)   # reduced 8→4
     except Exception:
         pass
 
