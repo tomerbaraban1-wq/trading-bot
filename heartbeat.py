@@ -1159,6 +1159,21 @@ async def auto_invest_loop():
                         except Exception:
                             pass
 
+                        # Acquire per-ticker lock to prevent double-buy with simultaneous webhook
+                        try:
+                            from webhook import _get_buy_lock as _gbl
+                            _ticker_lock = await _gbl(ticker)
+                            if _ticker_lock.locked():
+                                logger.info(f"AUTO-INVEST: {ticker} buy lock held by webhook — skipping")
+                                continue
+                        except Exception:
+                            _ticker_lock = None
+
+                        # Final duplicate check inside lock (TOCTOU guard)
+                        if database.get_open_trade_by_ticker(ticker):
+                            logger.info(f"AUTO-INVEST: {ticker} already held (race condition caught)")
+                            continue
+
                         # Execute — iceberg splits large orders automatically
                         from iceberg import iceberg_buy
                         order = await iceberg_buy(ticker, qty, price)
