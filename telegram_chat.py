@@ -1916,10 +1916,18 @@ def _handle_command(text: str, context: dict) -> str | None:
             from scoring import get_composite_score
             from sentiment import score_sentiment
             import yfinance as _yf
-            sent1 = score_sentiment(t1)
-            sent2 = score_sentiment(t2)
-            r1    = get_composite_score(t1, sent1.score)
-            r2    = get_composite_score(t2, sent2.score)
+            # Use cached sentiment (fast) — avoid RSS fetch which takes 8s each
+            import time as _t_cmp
+            from sentiment import _sentiment_cache as _sc, CACHE_TTL as _CTL
+            def _fast_sent(tk):
+                c = _sc.get(tk)
+                if c and (_t_cmp.time() - c.timestamp) < _CTL:
+                    return c.score
+                return 5  # neutral if no cache
+            s1_sent = _fast_sent(t1)
+            s2_sent = _fast_sent(t2)
+            r1    = get_composite_score(t1, s1_sent)
+            r2    = get_composite_score(t2, s2_sent)
             s1, s2 = r1["composite_score"], r2["composite_score"]
             tech1, tech2 = r1["scores"]["technicals"], r2["scores"]["technicals"]
             mkt1,  mkt2  = r1["scores"]["market"],     r2["scores"]["market"]
@@ -2323,9 +2331,14 @@ def _handle_command(text: str, context: dict) -> str | None:
             if not open_trades:
                 return "📭 אין פוזיציות פתוחות"
             from scoring import get_composite_score
-            from sentiment import score_sentiment
+            from sentiment import _sentiment_cache as _hsc, CACHE_TTL as _HCTL
+            import time as _t_health
             lines = [f"🩺 <b>בריאות תיק</b>\n━━━━━━━━━━━━━━━━"]
+            _health_start = _t_health.time()
             for tr in open_trades:
+                if _t_health.time() - _health_start > 16:  # hard-stop
+                    lines.append("⏳ עוד פוזיציות — לא הספקתי לבדוק הכל")
+                    break
                 tk    = tr.get("ticker", "?")
                 entry = float(tr.get("entry_price") or 0)
                 stop  = float(tr.get("atr_stop_price") or 0)
@@ -2335,12 +2348,16 @@ def _handle_command(text: str, context: dict) -> str | None:
                     pct = (cur - entry) / entry * 100 if entry else 0
                 except Exception:
                     cur, pct = entry, 0
-                # Score
+                # Score — use cached sentiment to avoid RSS slowness
                 try:
-                    sent  = score_sentiment(tk)
-                    comp  = get_composite_score(tk, sent.score)
+                    _hc = _hsc.get(tk)
+                    _hs = _hc.score if _hc and (_t_health.time()-_hc.timestamp)<_HCTL else 5
+                    comp  = get_composite_score(tk, _hs)
                     sc    = comp["composite_score"]
                     buy   = comp["should_buy"]
+                    # Create a minimal sent-like object for display
+                    class _S: score = _hs
+                    sent = _S() if _hc else None
                 except Exception:
                     sc, buy, sent = 0, False, None
                 # Stop distance
@@ -2816,11 +2833,16 @@ def _handle_command(text: str, context: dict) -> str | None:
             if not open_trades:
                 return "📭 אין פוזיציות פתוחות לבדיקה"
             from sentiment import score_sentiment_live as _sl
+            import time as _t_nc
             lines = [f"📰 <b>בדיקת חדשות בזמן אמת</b>\n━━━━━━━━━━━━━━━━"]
+            _nc_start = _t_nc.time()
             for tr in open_trades:
                 tk = tr.get("ticker", "")
                 if not tk:
                     continue
+                if _t_nc.time() - _nc_start > 16:  # hard-stop
+                    lines.append("⏳ בדיקה חלקית — הוגבלה בזמן")
+                    break
                 try:
                     sent = _sl(tk)
                     sc   = sent.score
