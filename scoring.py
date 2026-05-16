@@ -600,10 +600,11 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         else:
             _raw_rs = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
             # Handle both MultiIndex (yfinance 0.2+) and flat column structures
-            _cols_rs = _raw_rs.columns.get_level_values(0) if hasattr(_raw_rs.columns, "get_level_values") else _raw_rs.columns
             import pandas as _pd_rs
             _tickers_dl = _raw_rs if isinstance(_raw_rs, _pd_rs.DataFrame) else _raw_rs.to_frame()
-            if ticker in _tickers_dl.columns and "SPY" in _tickers_dl.columns:
+            # Use get_level_values for MultiIndex safety
+            _safe_cols = _tickers_dl.columns.get_level_values(-1) if hasattr(_tickers_dl.columns, "get_level_values") else _tickers_dl.columns
+            if ticker in _safe_cols and "SPY" in _safe_cols:
                 _sr = float(_tickers_dl[ticker].dropna().iloc[-1] / _tickers_dl[ticker].dropna().iloc[0])
                 _sb = float(_tickers_dl["SPY"].dropna().iloc[-1] / _tickers_dl["SPY"].dropna().iloc[0])
                 _rs = _sr / _sb if _sb > 0 else 1.0

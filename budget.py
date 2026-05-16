@@ -276,6 +276,9 @@ def compute_position_size(
     elif conviction_score >= 75:
         conviction_mult = 1.35
         conviction_label = "high (×1.35)"
+    elif conviction_score >= 70:
+        conviction_mult = 1.25
+        conviction_label = "medium-high (×1.25)"
     elif conviction_score >= 65:
         conviction_mult = 1.20
         conviction_label = "medium (×1.20)"

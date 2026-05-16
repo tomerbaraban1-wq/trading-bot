@@ -1190,9 +1190,6 @@ async def auto_invest_loop():
                         actual_price = float(order.get("price") or price)
                         filled_qty   = float(order.get("filled_qty", qty))  # use actual fill
                         spent        = actual_price * filled_qty
-                        actual_price = float(order.get("price") or price)
-                        filled_qty   = float(order.get("filled_qty", qty))  # use actual fill
-                        spent        = actual_price * filled_qty
                         remaining   -= spent
                         bought      += 1
 
