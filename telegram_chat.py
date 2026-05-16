@@ -1702,7 +1702,7 @@ def _handle_command(text: str, context: dict) -> str | None:
         try:
             from scanner import get_watchlist
             from scoring import get_composite_score, MIN_BUY_SCORE
-            from sentiment import score_sentiment, _sentiment_cache, CACHE_TTL
+            from sentiment import _sentiment_cache, CACHE_TTL
             import database as _db, random, time as _t_top
             wl   = get_watchlist()
             held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
@@ -1717,9 +1717,11 @@ def _handle_command(text: str, context: dict) -> str | None:
             _cols = _prices_top.columns.get_level_values(0) if hasattr(_prices_top.columns, "get_level_values") else _prices_top.columns
             if not _prices_top.empty and "Close" in _cols:
                 _cl = _prices_top["Close"]
+                import pandas as _pd_top
+                _cl_df = _cl if isinstance(_cl, _pd_top.DataFrame) else _cl.to_frame()
                 for _tk2 in sample_large:
                     try:
-                        _s = _cl[_tk2].dropna() if _tk2 in _cl.columns else None
+                        _s = _cl_df[_tk2].dropna() if _tk2 in _cl_df.columns else None
                         if _s is not None and len(_s) >= 2:
                             _chg_map[_tk2] = float((_s.iloc[-1] - _s.iloc[-2]) / _s.iloc[-2] * 100)
                     except Exception:
@@ -1732,14 +1734,13 @@ def _handle_command(text: str, context: dict) -> str | None:
             # Phase 2: full score — use CACHED sentiment (avoid slow RSS fetch)
             results = []
             _top_start = _t_top.time()
-            _now_ts = _t_top.time()
             for _tk in sample:
                 if _t_top.time() - _top_start > 17:
                     break
                 try:
                     # Use cached sentiment if fresh, else neutral (5) for speed
                     _cached_sent = _sentiment_cache.get(_tk)
-                    if _cached_sent and (_now_ts - _cached_sent.timestamp) < CACHE_TTL:
+                    if _cached_sent and (_t_top.time() - _cached_sent.timestamp) < CACHE_TTL:
                         _sent_score = _cached_sent.score
                     else:
                         _sent_score = 5  # neutral — avoid slow RSS for /top
