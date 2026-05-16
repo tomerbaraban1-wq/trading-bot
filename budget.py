@@ -154,7 +154,7 @@ def _get_streak_multiplier() -> float:
         # Check last 3 trades for streak
         last3 = [t.get("pnl_gross", 0) or 0 for t in closed[:3]]
         all_wins   = all(p > 0 for p in last3)
-        all_losses = all(p <= 0 for p in last3)
+        all_losses = all(p < 0 for p in last3)  # breakeven (0.0) is NOT a loss
 
         if all_losses:
             logger.info("[SIZING] 3 consecutive losses — reducing position size ×0.60")

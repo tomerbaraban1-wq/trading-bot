@@ -498,7 +498,10 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
     exit_price = _raw_exit if _raw_exit > 0 else entry_price   # fallback: no loss on bad price
     if _raw_exit <= 0:
         logger.warning(f"[SELL] {ticker}: no valid exit price — using entry price as fallback")
-    qty = trade["qty"]
+    qty = float(trade.get("qty") or 0)
+    if qty <= 0:
+        logger.warning(f"[SELL] {ticker}: qty is {qty} — using 1 as fallback")
+        qty = 1.0
     pnl_gross = (exit_price - entry_price) * qty
     fees = 0.0  # Alpaca has no commissions for stocks
 
