@@ -258,9 +258,10 @@ async def _close_position(
         return False
 
     exit_price  = float(order.get("price") or lim_sell)
-    _entry      = float(trade.get("entry_price") or 0)
+    # Use cur_price as fallback (same as pre-notification) — NOT exit_price which makes PnL=0
+    _entry      = float(trade.get("entry_price") or cur_price or exit_price)
     if _entry <= 0:
-        logger.error(f"[CLOSE] {ticker}: entry_price is zero/null — using exit_price as entry fallback")
+        logger.error(f"[CLOSE] {ticker}: entry_price invalid — using exit_price (PnL will be 0)")
         _entry = exit_price
     pnl_gross   = (exit_price - _entry) * float(trade.get("qty") or 0)
 
