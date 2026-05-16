@@ -50,7 +50,7 @@ import broker
 logger = logging.getLogger(__name__)
 
 # ── Risk parameters ────────────────────────────────────────────────────────────
-RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "2.0"))  # 2% risk per trade (was wrongly 10%)
+RISK_PER_TRADE_PCT:  float = float(os.getenv("RISK_PER_TRADE_PCT",  "5.0"))  # 5% risk per trade — optimized for $1K account
 # MAX_OPEN_POSITIONS read from settings to ensure same default as config.py (6)
 MAX_OPEN_POSITIONS:  int   = settings.MAX_OPEN_POSITIONS
 KELLY_ENABLED:       bool  = os.getenv("KELLY_ENABLED", "true").lower() == "true"
@@ -220,15 +220,17 @@ def compute_position_size(
     risk_qty = dollar_risk / risk_per_share
 
     # ── Step 4: Hard cap — scales with conviction ────────────────────────────
-    # High conviction (score≥75) → allow up to 40% | Normal → 20%
+    # Optimized for small accounts ($1K): higher pct per trade to generate meaningful profits
     if conviction_score >= 80:
-        effective_pct = min(50.0, settings.MAX_POSITION_PCT * 2.0)   # double — very high conviction
+        effective_pct = min(60.0, settings.MAX_POSITION_PCT * 2.5)   # 60% — very high conviction
     elif conviction_score >= 75:
-        effective_pct = min(40.0, settings.MAX_POSITION_PCT * 1.75)  # 40%
+        effective_pct = min(50.0, settings.MAX_POSITION_PCT * 2.0)   # 50% — high conviction
     elif conviction_score >= 70:
+        effective_pct = min(40.0, settings.MAX_POSITION_PCT * 1.75)  # 40%
+    elif conviction_score >= 65:
         effective_pct = min(30.0, settings.MAX_POSITION_PCT * 1.5)   # 30%
     else:
-        effective_pct = settings.MAX_POSITION_PCT                    # normal 20%
+        effective_pct = settings.MAX_POSITION_PCT                    # normal (default 20%)
     max_notional   = equity * (effective_pct / 100)   # use EQUITY not MAX_BUDGET
     notional_qty   = max_notional / entry_price
 
@@ -267,16 +269,19 @@ def compute_position_size(
             qty = kelly_qty   # Kelly tightens the size
 
     # ── Step 8: Conviction-based multiplier ───────────────────────────────────
-    # Scales position up/down based on composite score, capped by MAX_POSITION_PCT.
-    if conviction_score >= 75:
-        conviction_mult = 1.30
-        conviction_label = "high (×1.30)"
+    # Stronger multipliers for small accounts — need meaningful position sizes
+    if conviction_score >= 80:
+        conviction_mult = 1.50
+        conviction_label = "very high (×1.50)"
+    elif conviction_score >= 75:
+        conviction_mult = 1.35
+        conviction_label = "high (×1.35)"
     elif conviction_score >= 65:
-        conviction_mult = 1.15
-        conviction_label = "medium (×1.15)"
+        conviction_mult = 1.20
+        conviction_label = "medium (×1.20)"
     elif conviction_score < 58:
-        conviction_mult = 0.85
-        conviction_label = "low (×0.85)"
+        conviction_mult = 0.90
+        conviction_label = "low (×0.90)"
     else:
         conviction_mult = 1.0
         conviction_label = "neutral (×1.00)"
