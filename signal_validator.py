@@ -48,7 +48,10 @@ def validate_signal(ticker: str, action: str) -> tuple[bool, str]:
         # Check and record atomically
         if key in _recent_signals and (now - _recent_signals[key]) < DUPLICATE_WINDOW:
             return False, f"Duplicate signal: {ticker} {action} (within {DUPLICATE_WINDOW}s)"
-        _recent_signals[key] = now   # record immediately while still holding lock
+        _recent_signals[key] = now   # record while holding lock
+        # Note: if the buy subsequently fails, the signal stays recorded for DUPLICATE_WINDOW.
+        # This is intentional — prevents webhook spam retries from causing double-buys.
+        # A failed buy due to sentiment/budget/filters is NOT retried via webhook anyway.
 
     return True, "Signal valid"
 

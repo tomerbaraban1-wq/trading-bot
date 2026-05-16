@@ -598,10 +598,14 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         if _cached_rs and _rs_now - _cached_rs[1] < _RS_CACHE_TTL:
             _rs = _cached_rs[0]
         else:
-            _tickers_dl = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
+            _raw_rs = _yf.download([ticker, "SPY"], period="3mo", progress=False, auto_adjust=True)["Close"]
+            # Handle both MultiIndex (yfinance 0.2+) and flat column structures
+            _cols_rs = _raw_rs.columns.get_level_values(0) if hasattr(_raw_rs.columns, "get_level_values") else _raw_rs.columns
+            import pandas as _pd_rs
+            _tickers_dl = _raw_rs if isinstance(_raw_rs, _pd_rs.DataFrame) else _raw_rs.to_frame()
             if ticker in _tickers_dl.columns and "SPY" in _tickers_dl.columns:
-                _sr = float(_tickers_dl[ticker].iloc[-1] / _tickers_dl[ticker].iloc[0])
-                _sb = float(_tickers_dl["SPY"].iloc[-1] / _tickers_dl["SPY"].iloc[0])
+                _sr = float(_tickers_dl[ticker].dropna().iloc[-1] / _tickers_dl[ticker].dropna().iloc[0])
+                _sb = float(_tickers_dl["SPY"].dropna().iloc[-1] / _tickers_dl["SPY"].dropna().iloc[0])
                 _rs = _sr / _sb if _sb > 0 else 1.0
                 _rs_cache[ticker] = (_rs, _rs_now)
             else:

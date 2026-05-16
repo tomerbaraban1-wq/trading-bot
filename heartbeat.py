@@ -1160,23 +1160,36 @@ async def auto_invest_loop():
                             pass
 
                         # Acquire per-ticker lock to prevent double-buy with simultaneous webhook
+                        # Acquire per-ticker lock (same lock webhook uses) — HOLD it during buy
                         try:
                             from webhook import _get_buy_lock as _gbl
                             _ticker_lock = await _gbl(ticker)
-                            if _ticker_lock.locked():
-                                logger.info(f"AUTO-INVEST: {ticker} buy lock held by webhook — skipping")
-                                continue
                         except Exception:
                             _ticker_lock = None
 
-                        # Final duplicate check inside lock (TOCTOU guard)
-                        if database.get_open_trade_by_ticker(ticker):
-                            logger.info(f"AUTO-INVEST: {ticker} already held (race condition caught)")
-                            continue
+                        async def _do_buy_locked():
+                            # Final duplicate check INSIDE the lock — prevents TOCTOU race
+                            if database.get_open_trade_by_ticker(ticker):
+                                logger.info(f"AUTO-INVEST: {ticker} already held (race condition caught)")
+                                return None
+                            from iceberg import iceberg_buy as _ib
+                            return await _ib(ticker, qty, price)
 
-                        # Execute — iceberg splits large orders automatically
-                        from iceberg import iceberg_buy
-                        order = await iceberg_buy(ticker, qty, price)
+                        if _ticker_lock is not None:
+                            if _ticker_lock.locked():
+                                logger.info(f"AUTO-INVEST: {ticker} buy lock held by webhook — skipping")
+                                continue
+                            async with _ticker_lock:
+                                order = await _do_buy_locked()
+                        else:
+                            order = await _do_buy_locked()
+
+                        if order is None:
+                            continue  # duplicate detected inside lock
+
+                        actual_price = float(order.get("price") or price)
+                        filled_qty   = float(order.get("filled_qty", qty))  # use actual fill
+                        spent        = actual_price * filled_qty
                         actual_price = float(order.get("price") or price)
                         filled_qty   = float(order.get("filled_qty", qty))  # use actual fill
                         spent        = actual_price * filled_qty
