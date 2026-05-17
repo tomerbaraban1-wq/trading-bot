@@ -641,8 +641,11 @@ async def stop_loss_monitor():
                                 except Exception:
                                     pass
                                 record_trade_result(_half_pnl)   # update circuit breaker
-                                # Mark Stage 1 done — MUST succeed to prevent double-sell next cycle
-                                _s1_wm_mark = round(trade["entry_price"] * (1 + _stage1_pct / 100 + 0.003), 4)
+                                # Mark Stage 1 done — watermark set high enough to survive ATR changes on restart
+                                # Use max(stage1_pct+margin, 10%) so even if ATR rises after restart,
+                                # the watermark still clears the new stage1_done threshold
+                                _s1_wm_pct   = max(_stage1_pct + 3.0, 10.0)   # at least 10% above entry
+                                _s1_wm_mark  = round(trade["entry_price"] * (1 + _s1_wm_pct / 100), 4)
                                 _s1_wm_final = max(cur_price, _s1_wm_mark)
                                 try:
                                     await asyncio.to_thread(
