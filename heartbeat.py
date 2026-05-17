@@ -603,8 +603,9 @@ async def stop_loss_monitor():
                     # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
                                         trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage1_pct / 100 + 0.001))
-                    # Stage 2 is considered done when watermark reached stage-2 level
-                    _stage2_done = bool(trade.get("high_watermark") and
+                    # Stage 2 is considered done only if Stage 1 is also done
+                    # (prevents Stage 2 being True while Stage 1 is False, skipping Stage 1 entirely)
+                    _stage2_done = _stage1_done and bool(trade.get("high_watermark") and
                                         trade.get("high_watermark", 0) >= trade["entry_price"] * (1 + _stage2_pct / 100 + 0.001))
 
                     _s1_guard_key = f"{trade['id']}:s1"
@@ -1232,7 +1233,7 @@ async def auto_invest_loop():
                             _shadow.evaluate, ticker, actual_price, score, sentiment.score,
                             _vol_ratio, None, "", "auto_invest",
                         ))
-                        await notify_buy(ticker, filled_qty, actual_price, score, sentiment.score)
+                        _create_background_task(notify_buy(ticker, filled_qty, actual_price, score, sentiment.score))
 
                     except _asyncio.TimeoutError:
                         # Timeout during scan is normal — just skip this ticker silently.
