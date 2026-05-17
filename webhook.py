@@ -1203,7 +1203,7 @@ async def auto_invest(data: dict):
             })
             spent = filled_qty * actual_price   # use actual fill, not planned qty
             remaining -= spent
-            logger.info(f"Auto-invest: bought {qty}x {ticker} @ ${actual_price:.2f} | נשאר: ${remaining:.2f}")
+            logger.info(f"Auto-invest: bought {filled_qty}x {ticker} @ ${actual_price:.2f} | נשאר: ${remaining:.2f}")
         except Exception as e:
             results.append({"ticker": ticker, "status": "error", "reason": str(e)})
 

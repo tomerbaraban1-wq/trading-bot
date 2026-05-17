@@ -354,9 +354,10 @@ def check_can_buy(price: float, conviction_score: float = 58.0) -> tuple[bool, f
     try:
         from database import get_open_trades
         open_trades = get_open_trades()
-        if len(open_trades) >= MAX_OPEN_POSITIONS:
+        _max_pos = settings.MAX_OPEN_POSITIONS  # read live — supports runtime updates via /settings
+        if len(open_trades) >= _max_pos:
             return False, 0, (
-                f"Max open positions reached ({len(open_trades)}/{MAX_OPEN_POSITIONS})"
+                f"Max open positions reached ({len(open_trades)}/{_max_pos})"
             )
 
         qty, meta = compute_position_size(price, conviction_score)

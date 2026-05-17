@@ -683,6 +683,11 @@ async def stop_loss_monitor():
                         _orig_qty    = trade["qty"]   # already updated after Stage 1
                         _quarter_qty = round(_orig_qty * 0.5, 6)   # 50% of remaining = 25% of original
                         if _quarter_qty > 0:
+                            _create_background_task(send_message(
+                                f"⚡ <b>הבוט עומד למכור 25% — {ticker}</b>\n"
+                                f"🎯  שלב 2: רווח חלקי ({plpc:+.1f}%)\n"
+                                f"💵  מחיר: ${cur_price:.2f}  |  מוכר: {_quarter_qty} מניות"
+                            ))
                             try:
                                 _s2_order = await asyncio.wait_for(
                                     asyncio.to_thread(broker.submit_sell, ticker, _quarter_qty, cur_price),
