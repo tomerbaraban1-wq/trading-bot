@@ -669,10 +669,13 @@ async def stop_loss_monitor():
                                 ))
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
-                                # Do NOT continue — let ATR stop / take-profit / smart-sell run this cycle
-                                # so a failing partial sell doesn't suppress critical exit checks.
+                                # Do NOT continue — let ATR/TP/smart-sell still run this cycle
                             else:
-                                continue  # sell succeeded — skip Smart Sell this cycle
+                                # Only skip Smart Sell if the guard was successfully set
+                                # (i.e. watermark write succeeded). If watermark failed,
+                                # don't skip — Smart Sell can still run as a safety exit.
+                                if _s1_guard_key in _partial_sell_done:
+                                    continue  # sell + watermark OK — skip Smart Sell
 
                     elif _stage1_done and not _stage2_done and plpc >= _stage2_pct and _s2_guard_key not in _partial_sell_done:
                         # Stage 2: sell 25% of ORIGINAL (= 50% of what's left after Stage 1)

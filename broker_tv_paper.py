@@ -512,7 +512,15 @@ class TVPaperBroker(BrokerBase):
             return False
 
         month = now.month
-        is_edt = 3 <= month <= 10
+        # DST: EDT=Mar(2nd Sun)-Nov(1st Sun). Month approx: 4-10=EDT, 3 after 8th, 11 before 8th
+        if month in range(4, 11):
+            is_edt = True
+        elif month == 3:
+            is_edt = now.day >= 8   # EDT starts ~2nd Sunday of March
+        elif month == 11:
+            is_edt = now.day > 7    # EST starts 1st Sunday of November
+        else:
+            is_edt = False
 
         if is_edt:
             regular_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
@@ -561,7 +569,15 @@ class TVPaperBroker(BrokerBase):
 
         # Determine EDT/EST
         month = now.month
-        is_edt = 3 <= month <= 10
+        # DST: EDT=Mar(2nd Sun)-Nov(1st Sun). Month approx: 4-10=EDT, 3 after 8th, 11 before 8th
+        if month in range(4, 11):
+            is_edt = True
+        elif month == 3:
+            is_edt = now.day >= 8   # EDT starts ~2nd Sunday of March
+        elif month == 11:
+            is_edt = now.day > 7    # EST starts 1st Sunday of November
+        else:
+            is_edt = False
         open_hour = 13 if is_edt else 14
         open_min = 30
         close_hour = 20 if is_edt else 21
