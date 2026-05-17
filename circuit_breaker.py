@@ -68,6 +68,7 @@ def _reset_if_new_day():
 
         max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
         if max_loss <= 0:
+            _state["trade_date"] = today  # advance date to avoid infinite retry loop
             return   # misconfigured MAX_BUDGET — don't trip
         # Determine new tripped state BEFORE writing it (atomic decision)
         should_trip = daily_pnl <= -max_loss

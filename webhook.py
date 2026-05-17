@@ -227,11 +227,11 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             asyncio.to_thread(score_sentiment, ticker), timeout=45
         )
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "ניתוח סנטימנט לקח יותר מדי זמן"))
+        asyncio.create_task(notify_error("api_timeout", ticker, "ניתוח סנטימנט לקח יותר מדי זמן"))
         return {"status": "rejected", "reason": "Sentiment check timed out"}
     except Exception as e:
         logger.error(f"Sentiment check failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("sentiment_fail", ticker, f"שגיאה"))
+        asyncio.create_task(notify_error("sentiment_fail", ticker, f"שגיאה"))
         return {"status": "rejected", "reason": f"Sentiment check failed: {e}"}
 
     _sent = sentiment.score
@@ -240,7 +240,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             f"BUY blocked by sentiment: {ticker} score={sentiment.score}/10 "
             f"(min={settings.SENTIMENT_MIN_SCORE})"
         )
-        asyncio.ensure_future(_shadow_eval(
+        asyncio.create_task(_shadow_eval(
             ticker, payload.price, _cscore, _sent, None,
             "sentiment", f"score={sentiment.score} < {settings.SENTIMENT_MIN_SCORE}",
         ))
@@ -265,7 +265,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
 
     _cscore = result.get("composite_score", 50.0)
     if not result["should_buy"]:
-        asyncio.ensure_future(_shadow_eval(
+        asyncio.create_task(_shadow_eval(
             ticker, payload.price, _cscore, _sent, None,
             "score", f"composite_score={_cscore:.0f} < {result.get('min_score', 65)}",
         ))
@@ -283,7 +283,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
     should_block, block_reason = await asyncio.to_thread(should_override_buy, ticker, indicators)
     if should_block:
         logger.info(f"BUY blocked by learning: {ticker} - {block_reason}")
-        asyncio.ensure_future(_shadow_eval(
+        asyncio.create_task(_shadow_eval(
             ticker, payload.price, _cscore, _sent, None,
             "learning", block_reason,
         ))
@@ -298,13 +298,13 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         )
         if not sane:
             logger.warning(f"BUY blocked by sanity check: {ticker} — {sane_reason}")
-            asyncio.ensure_future(_shadow_eval(
+            asyncio.create_task(_shadow_eval(
                 ticker, payload.price, _cscore, _sent, None,
                 "sanity", sane_reason,
             ))
             return {"status": "blocked_by_sanity", "reason": sane_reason}
     except asyncio.TimeoutError:
-        asyncio.ensure_future(_shadow_eval(
+        asyncio.create_task(_shadow_eval(
             ticker, payload.price, _cscore, _sent, None,
             "sanity", "sanity check timed out",
         ))
@@ -321,7 +321,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
                 f"BUY blocked by market regime: {ticker} ADX={_adx:.1f} "
                 f"(ranging — trend-following disabled)"
             )
-            asyncio.ensure_future(_shadow_eval(
+            asyncio.create_task(_shadow_eval(
                 ticker, payload.price, _cscore, _sent, None,
                 "market_regime", f"ranging ADX={_adx:.1f}",
             ))
@@ -344,7 +344,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         _vol_ratio = vol_details.get("ratio")
         if not vol_passed:
             logger.info(f"BUY blocked by volume: {ticker} — {vol_reason}")
-            asyncio.ensure_future(_shadow_eval(
+            asyncio.create_task(_shadow_eval(
                 ticker, payload.price, _cscore, _sent, _vol_ratio,
                 "volume", vol_reason,
             ))
@@ -367,7 +367,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         )
         if corr_blocked:
             logger.info(f"BUY blocked by correlation: {corr_reason}")
-            asyncio.ensure_future(_shadow_eval(
+            asyncio.create_task(_shadow_eval(
                 ticker, payload.price, _cscore, _sent, _vol_ratio,
                 "correlation", corr_reason,
             ))
@@ -390,8 +390,8 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
             cash = float(acct.get("cash", 0))
         except Exception:
             cash = 0.0
-        asyncio.ensure_future(notify_budget_warning(budget_reason, cash))
-        asyncio.ensure_future(_shadow_eval(
+        asyncio.create_task(notify_budget_warning(budget_reason, cash))
+        asyncio.create_task(_shadow_eval(
             ticker, payload.price, _cscore, _sent, _vol_ratio,
             "budget", budget_reason,
         ))
@@ -402,11 +402,11 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         from iceberg import iceberg_buy
         order = await iceberg_buy(ticker, max_qty, payload.price)
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "הזמנת קנייה לקחה יותר מדי זמן"))
+        asyncio.create_task(notify_error("api_timeout", ticker, "הזמנת קנייה לקחה יותר מדי זמן"))
         return {"status": "error", "reason": "Buy order timed out"}
     except Exception as e:
         logger.error(f"BUY order failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("order_failed", ticker, f"שגיאה"))
+        asyncio.create_task(notify_error("order_failed", ticker, f"שגיאה"))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Log trade
@@ -418,7 +418,7 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
 
     # Record actual slippage (signal price vs fill price, fire-and-forget)
     from slippage import record as _slippage_record
-    asyncio.ensure_future(asyncio.to_thread(
+    asyncio.create_task(asyncio.to_thread(
         _slippage_record, payload.price, actual_price, filled_qty, "buy", ticker
     ))
 
@@ -439,13 +439,13 @@ async def _handle_buy_locked(payload: WebhookPayload, ticker: str) -> dict:
         logger.warning(f"[ATR STOP] {ticker}: failed to set initial stop: {stop_err}")
 
     # Shadow: live also traded (live_blocked_by=None → both agree)
-    asyncio.ensure_future(_shadow_eval(
+    asyncio.create_task(_shadow_eval(
         ticker, actual_price, _cscore, _sent, _vol_ratio,
         None, "",  # live_blocked_by=None means live also traded
     ))
 
     # Notify Telegram (use filled_qty for accurate display on partial fills)
-    asyncio.ensure_future(notify_trade_open(
+    asyncio.create_task(notify_trade_open(
         ticker=ticker, qty=filled_qty, price=actual_price,
         notional=round(actual_price * filled_qty, 2),
         score=result.get("composite_score", 0),
@@ -482,11 +482,11 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
     except asyncio.TimeoutError:
-        asyncio.ensure_future(notify_error("api_timeout", ticker, "הזמנת מכירה לקחה יותר מדי זמן"))
+        asyncio.create_task(notify_error("api_timeout", ticker, "הזמנת מכירה לקחה יותר מדי זמן"))
         return {"status": "error", "reason": "Sell order timed out"}
     except Exception as e:
         logger.error(f"SELL order failed for {ticker}: {e}")
-        asyncio.ensure_future(notify_error("order_failed", ticker, f"שגיאה"))
+        asyncio.create_task(notify_error("order_failed", ticker, f"שגיאה"))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
     # Calculate PnL — guard against NULL entry_price (can happen on reconciled trades)
@@ -507,7 +507,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
 
     # Record actual slippage on sell (fire-and-forget)
     from slippage import record as _slippage_record
-    asyncio.ensure_future(asyncio.to_thread(
+    asyncio.create_task(asyncio.to_thread(
         _slippage_record, payload.price, exit_price, qty, "sell", ticker
     ))
 
@@ -528,7 +528,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
     is_ok, cb_reason = check_circuit_breaker()
     if not is_ok and was_ok:
         cb_st = cb_status()
-        asyncio.ensure_future(notify_circuit_breaker_tripped(
+        asyncio.create_task(notify_circuit_breaker_tripped(
             cb_st["daily_pnl"], cb_st["max_daily_loss"], cb_st["trip_reason"]
         ))
 
@@ -555,7 +555,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
 
     # Notify Telegram — full P&L breakdown
     duration_hours = _trade_duration_hours(trade.get("entry_time"))
-    asyncio.ensure_future(notify_trade_close(
+    asyncio.create_task(notify_trade_close(
         ticker=ticker, qty=qty,
         entry_price=entry_price, exit_price=exit_price,
         pnl_gross=pnl_gross, pnl_net=pnl_net,
@@ -806,8 +806,8 @@ async def scan_now(secret: str = ""):
             except Exception as atr_err:
                 logger.warning(f"[SCAN/NOW] ATR stop failed for {ticker}: {atr_err}")
 
-            asyncio.ensure_future(notify_buy(ticker, filled_qty, actual_price, score, sent.score))
-            asyncio.ensure_future(asyncio.to_thread(slippage_record, price, actual_price, filled_qty, "buy", ticker))
+            asyncio.create_task(notify_buy(ticker, filled_qty, actual_price, score, sent.score))
+            asyncio.create_task(asyncio.to_thread(slippage_record, price, actual_price, filled_qty, "buy", ticker))
 
             bought.append({"ticker": ticker, "qty": round(filled_qty, 4), "price": actual_price, "score": score})
 
@@ -1051,7 +1051,7 @@ async def emergency_exit(ticker: str, request: Request):
         is_ok, _ = check_circuit_breaker()
         if not is_ok and was_ok:
             cb_st = cb_status()
-            asyncio.ensure_future(notify_circuit_breaker_tripped(
+            asyncio.create_task(notify_circuit_breaker_tripped(
                 cb_st["daily_pnl"], cb_st["max_daily_loss"], cb_st["trip_reason"]
             ))
 

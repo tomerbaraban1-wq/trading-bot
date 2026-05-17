@@ -256,6 +256,9 @@ def compute_position_size(
         # Re-apply notional cap after multiplier (based on actual equity, not fixed budget)
         max_notional = equity * (settings.MAX_POSITION_PCT / 100)
         qty = min(qty, max_notional / entry_price)
+    # Re-check minimum notional AFTER streak multiplier (0.60× can push below $10)
+    if qty * entry_price < MIN_NOTIONAL and cash >= MIN_NOTIONAL:
+        qty = MIN_NOTIONAL / entry_price
 
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
     kelly_qty  = qty      # start with unconstrained qty
