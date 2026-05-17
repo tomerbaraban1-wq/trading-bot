@@ -291,8 +291,9 @@ def compute_position_size(
 
     if conviction_mult != 1.0:
         proposed_qty = round(qty * conviction_mult, 6)
-        # Hard cap: never exceed MAX_POSITION_PCT of actual equity (not fixed budget)
-        max_notional_final = equity * (settings.MAX_POSITION_PCT / 100)
+        # Hard cap: use effective_pct (already scales with conviction in Step 4),
+        # NOT settings.MAX_POSITION_PCT which would cancel out the conviction sizing
+        max_notional_final = equity * (effective_pct / 100)
         max_qty_by_pct = max_notional_final / entry_price if entry_price > 0 else proposed_qty
         qty = round(min(proposed_qty, max_qty_by_pct), 6)
         # Re-apply Kelly ceiling after conviction boost (Kelly is a hard cap)
