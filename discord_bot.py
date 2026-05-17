@@ -103,7 +103,9 @@ async def _fetch_all_server_messages(limit_per_channel: int = 30) -> list[dict]:
         logger.warning(f"[DISCORD] Server scan failed: {exc}")
         return []
 
-    _all_messages_cache = (all_messages, now)
+    # Write cache under lock — prevents concurrent callers from double-fetching
+    async with _cache_lock:
+        _all_messages_cache = (all_messages, now)
     logger.info(f"[DISCORD] Collected {len(all_messages)} messages from SKIL server")
     return all_messages
 

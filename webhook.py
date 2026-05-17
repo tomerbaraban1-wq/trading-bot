@@ -1423,10 +1423,11 @@ async def update_settings(data: dict, request: Request):
         settings.MAX_BUDGET = val
         import os as _os
         _os.environ["MAX_BUDGET"] = str(val)
-        # Sync paper broker cash and persist to disk
+        # Sync paper broker cash under lock to prevent race with concurrent trades
         try:
             from broker_tv_paper import TVPaperBroker
-            TVPaperBroker._cash = val
+            with TVPaperBroker._lock:
+                TVPaperBroker._cash = val
             TVPaperBroker._save_state()
         except Exception:
             pass
