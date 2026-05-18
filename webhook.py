@@ -779,6 +779,24 @@ async def scan_now(secret: str = ""):
                 skipped.append({"ticker": ticker, "score": score, "reason": f"sanity: {sane_reason}"})
                 continue
 
+            # Volume confirmation (same filter as normal buy path)
+            try:
+                vol_ok, vol_reason, _ = await asyncio.wait_for(asyncio.to_thread(vol_check, ticker), timeout=10)
+                if not vol_ok:
+                    skipped.append({"ticker": ticker, "score": score, "reason": f"volume: {vol_reason}"})
+                    continue
+            except asyncio.TimeoutError:
+                pass  # fail-open
+
+            # Market regime filter (same filter as normal buy path)
+            try:
+                regime, adx, _ = await asyncio.wait_for(asyncio.to_thread(get_regime_fn, ticker), timeout=15)
+                if regime == "ranging":
+                    skipped.append({"ticker": ticker, "score": score, "reason": f"ranging ADX={adx:.1f}"})
+                    continue
+            except asyncio.TimeoutError:
+                pass  # fail-open
+
             qty, sizing_meta = await asyncio.to_thread(compute_position_size, price, score)
             if qty <= 0:
                 skipped.append({"ticker": ticker, "score": score, "reason": f"qty=0 at ${price:.2f}"})
@@ -1033,8 +1051,10 @@ async def emergency_exit(ticker: str, request: Request):
         order = await asyncio.wait_for(
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
-        exit_price = float(order.get("price") or position.get("current_price", trade["entry_price"]))
-        pnl_gross = (exit_price - trade["entry_price"]) * trade["qty"]
+        _ep = float(trade.get("entry_price") or exit_price)
+        _qty = float(trade.get("qty") or 0)
+        exit_price = float(order.get("price") or position.get("current_price", _ep))
+        pnl_gross = (exit_price - _ep) * _qty
 
         from tax_tracker import process_trade_close
         tax_result = process_trade_close(trade["id"], pnl_gross)

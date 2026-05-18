@@ -179,7 +179,7 @@ WATCHLIST = [
     "LIN", "APD", "ECL", "SHW", "FCX", "NEM", "NUE",
 
     # ── רכב ──
-    "TSLA", "TM", "GM", "F",
+    "TM", "GM", "F",  # TSLA already in tech giants block above
 
     # ── ניהול נכסים / השקעות אלטרנטיביות ──
     "BX",   # Blackstone
