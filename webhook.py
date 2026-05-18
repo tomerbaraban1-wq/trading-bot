@@ -489,12 +489,13 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         asyncio.create_task(notify_error("order_failed", ticker, f"שגיאה"))
         return {"status": "error", "reason": f"Order failed: {e}"}
 
-    # Calculate PnL — guard against NULL entry_price (can happen on reconciled trades)
-    entry_price = float(trade.get("entry_price") or 0)
-    if entry_price <= 0:
-        logger.error(f"[SELL] {ticker}: no valid entry_price in trade record — aborting sell log")
-        return {"status": "error", "reason": "no entry price"}
+    # Calculate PnL — guard against NULL entry_price (reconciled trades)
+    # NOTE: broker sell already executed — do NOT return early here.
+    # Fall through with best-effort PnL using exit_price as entry fallback.
     _raw_exit = float(order.get("price") or 0) or float(payload.price or 0)
+    entry_price = float(trade.get("entry_price") or _raw_exit or 0)
+    if entry_price <= 0:
+        logger.error(f"[SELL] {ticker}: no valid entry_price — using exit as fallback")
     exit_price = _raw_exit if _raw_exit > 0 else entry_price   # fallback: no loss on bad price
     if _raw_exit <= 0:
         logger.warning(f"[SELL] {ticker}: no valid exit price — using entry price as fallback")
