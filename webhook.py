@@ -1051,9 +1051,10 @@ async def emergency_exit(ticker: str, request: Request):
         order = await asyncio.wait_for(
             asyncio.to_thread(broker.submit_sell, ticker), timeout=15
         )
-        _ep = float(trade.get("entry_price") or exit_price)
         _qty = float(trade.get("qty") or 0)
-        exit_price = float(order.get("price") or position.get("current_price", _ep))
+        _ep_raw = float(trade.get("entry_price") or 0)
+        exit_price = float(order.get("price") or position.get("current_price", _ep_raw or 0))
+        _ep = _ep_raw or exit_price  # fallback to exit_price if entry unknown
         pnl_gross = (exit_price - _ep) * _qty
 
         from tax_tracker import process_trade_close
