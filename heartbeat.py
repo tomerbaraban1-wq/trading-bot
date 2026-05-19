@@ -1356,30 +1356,51 @@ async def morning_briefing_loop():
             from sentiment import score_sentiment
             from scoring import get_composite_score
 
-            headlines = await asyncio.to_thread(get_general_headlines, 5)
+            headlines = await asyncio.to_thread(get_general_headlines, 6)
+
+            # Get news for open positions too
+            from news_service import get_headlines as _get_ticker_news
+            _open_trades = database.get_open_trades()
+            pos_news_lines = []
+            for _ot in _open_trades[:3]:
+                try:
+                    _ticker_hl = await asyncio.wait_for(
+                        asyncio.to_thread(_get_ticker_news, _ot["ticker"], 2), timeout=10
+                    )
+                    for _h in _ticker_hl[:1]:
+                        pos_news_lines.append(f"[{_ot['ticker']}] {_h}")
+                except Exception:
+                    pass
+
+            all_headlines = pos_news_lines + headlines
+            all_headlines = all_headlines[:7]
 
             # Translate headlines to Hebrew using Groq LLM
-            if headlines and settings.GROQ_API_KEY:
+            if all_headlines and settings.GROQ_API_KEY:
                 try:
                     from openai import OpenAI as _OAI
                     _cli = _OAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
-                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
-                    _prompt = f"תרגם את הכותרות הבאות לעברית קצרה (עד 10 מילים כל אחת). החזר רק את הכותרות המתורגמות, ממוספרות:\n{_raw}"
+                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(all_headlines))
+                    _prompt = (
+                        "תרגם את הכותרות הבאות לעברית קצרה (עד 12 מילים כל אחת).\n"
+                        "שמור על שמות מניות באנגלית (AAPL, SAP וכו').\n"
+                        "החזר רק את הכותרות המתורגמות, ממוספרות:\n" + _raw
+                    )
                     _resp = await asyncio.to_thread(
                         lambda: _cli.chat.completions.create(
                             model=settings.LLM_MODEL,
                             messages=[{"role": "user", "content": _prompt}],
-                            max_tokens=300, temperature=0.3,
+                            max_tokens=400, temperature=0.3,
                         )
                     )
                     _lines = _resp.choices[0].message.content.strip().split("\n")
                     _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
-                    headlines = _translated[:5] if _translated else []
+                    all_headlines = _translated[:7] if _translated else []
                 except Exception as _te:
                     logger.debug(f"[BRIEFING] Translation failed: {_te}")
-                    headlines = []  # don't send untranslated English headlines
+                    all_headlines = []
 
-            news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות כרגע"
+            news_text = "\n".join(f"• {h}" for h in all_headlines) if all_headlines else "אין חדשות זמינות כרגע"
 
 
             # Israel time & open positions context

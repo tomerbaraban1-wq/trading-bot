@@ -11,16 +11,18 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 RSS_FEEDS = [
-    ("MarketWatch",   "https://feeds.marketwatch.com/marketwatch/topstories/"),
-    ("CNBC",          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
-    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
-    ("Reuters",       "https://feeds.reuters.com/reuters/businessNews"),
-    ("AP Business",   "https://rsshub.app/apnews/topics/business-news"),
-    ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
-    ("Investopedia",  "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"),
-    ("Google News",   "https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US&ceid=US:en"),
-    ("Bloomberg",     "https://feeds.bloomberg.com/markets/news.rss"),
-    ("WSJ Markets",   "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    # US Stock Market — most relevant sources first
+    ("CNBC Markets",    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839135"),
+    ("CNBC Earnings",   "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069"),
+    ("MarketWatch",     "https://feeds.marketwatch.com/marketwatch/marketpulse/"),
+    ("Yahoo Finance",   "https://finance.yahoo.com/news/rssindex"),
+    ("Motley Fool",     "https://www.fool.com/feeds/index.aspx?id=top-rss-headlines"),
+    ("Benzinga",        "https://www.benzinga.com/feed"),
+    ("Seeking Alpha",   "https://seekingalpha.com/market_currents.xml"),
+    ("Google Stocks",   "https://news.google.com/rss/search?q=US+stocks+earnings+S%26P500&hl=en-US&gl=US&ceid=US:en"),
+    ("Google Nasdaq",   "https://news.google.com/rss/search?q=Nasdaq+NYSE+stock+market+today&hl=en-US&gl=US&ceid=US:en"),
+    ("Reuters Markets", "https://feeds.reuters.com/reuters/businessNews"),
+    ("Investopedia",    "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"),
 ]
 
 
