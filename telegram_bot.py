@@ -256,17 +256,21 @@ async def notify_trade_open(
         _tp_str   = f"${tp_price:.2f}"
         _stop_str = f"${stop_price:.2f}"
 
+    # Score bar visual
+    _bar_filled = round(score / 10)
+    _score_bar  = "🟩" * _bar_filled + "⬜" * (10 - _bar_filled)
+
     await send_message(
-        f"🛒 <b>קנינו!</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"📌 מניה: <b>{ticker}</b>\n"
-        f"🔢 כמות: {qty_str} מניות\n"
-        f"💵 מחיר קנייה: {_price_str}\n"
-        f"✅ יצא ברווח: {_tp_str} (+{tp_pct:.1f}%)\n"
-        f"❌ יצא בהפסד: {_stop_str} (-{stop_pct:.1f}%)\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🎯 ציון: <b>{score:.0f}/100</b>  {q}\n"
-        f"💸 סה״כ הושקע: {_notional_str}"
+        f"╔══════════════════╗\n"
+        f"║  🛒  <b>קנייה חדשה!</b>      ║\n"
+        f"╚══════════════════╝\n\n"
+        f"🏷️  <b>{ticker}</b>  ·  {qty_str} מניות\n\n"
+        f"💵  מחיר כניסה:   <b>{_price_str}</b>\n"
+        f"✅  יצא ברווח:    {_tp_str}  <i>(+{tp_pct:.1f}%)</i>\n"
+        f"🛑  סטופ לוס:     {_stop_str}  <i>(-{stop_pct:.1f}%)</i>\n\n"
+        f"📊  ציון:  {_score_bar}\n"
+        f"        <b>{score:.0f}/100</b>  —  {q}\n\n"
+        f"💰  הושקע:  <b>{_notional_str}</b>"
         f"{id_line}"
     )
 
@@ -305,17 +309,22 @@ async def notify_trade_close(
         _net_str    = f"${abs(pnl_net):.2f}"
         _tax_str    = f"${abs(tax_reserved):.2f}"
 
+    _header = "╔══════════════════╗\n║  💰  <b>מכרנו ברווח!</b>    ║\n╚══════════════════╝" if win \
+              else "╔══════════════════╗\n║  📉  <b>מכרנו בהפסד</b>    ║\n╚══════════════════╝"
+
+    _arrow = "📈" if win else "📉"
+    _pct_color = "🟢" if win else "🔴"
+
     await send_message(
-        f"{'💰' if win else '📉'} <b>{'מכרנו ברווח!' if win else 'מכרנו בהפסד'}</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"💹  <b>{ticker}</b>  ·  {qty} מניות\n\n"
-        f"📌  קנינו ב:      {_entry_str}\n"
-        f"💵  מכרנו ב:    {_exit_str}\n"
-        f"{'📈' if win else '📉'}  שינוי:          <b>{pct:+.2f}%</b>\n"
-        f"⏱  זמן החזקה: {dur_str}\n\n"
-        f"{'💚' if win else '❤️'}  {'רווח' if win else 'הפסד'}:       {_pnl_str}\n"
-        f"💳  נטו אחרי מס: {_net_str}\n"
-        f"🧾  מס שהופרש:  {_tax_str}"
+        f"{_header}\n\n"
+        f"🏷️  <b>{ticker}</b>  ·  {qty} מניות\n\n"
+        f"📌  כניסה:       {_entry_str}\n"
+        f"💵  יציאה:       <b>{_exit_str}</b>\n"
+        f"{_pct_color}  שינוי:        <b>{pct:+.2f}%</b>\n"
+        f"⏱️  החזקתי:      {dur_str}\n\n"
+        f"{'💚' if win else '❤️'}  {_pnl_str}\n"
+        f"💳  נטו:          {_net_str}\n"
+        f"🧾  מס הופרש:   {_tax_str}"
         f"{reason_line}"
         f"{id_line}"
     )

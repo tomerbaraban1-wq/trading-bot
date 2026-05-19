@@ -77,8 +77,13 @@ def _validate_ticker(ticker: str) -> str:
 # Rate limiting: track requests by IP/timestamp to prevent spam
 _request_history: dict[str, list[float]] = {}   # ip -> list of timestamps
 _RATE_LIMIT_WINDOW       = 60    # seconds
-_RATE_LIMIT_MAX_REQUESTS = 100   # max requests per window
+_RATE_LIMIT_MAX_REQUESTS = 15    # max requests per window (reduced 100→15 for security)
 _RATE_LIMIT_MAX_IPS      = 500   # max IPs tracked (prevents unbounded memory growth)
+
+# Failed auth tracking — block IPs after 5 failed attempts
+_failed_auth: dict = {}          # ip → (count, first_fail_ts)
+_AUTH_BLOCK_THRESHOLD = 5        # failures before block
+_AUTH_BLOCK_WINDOW    = 300      # 5 minutes
 
 
 def _get_client_ip(request: Request) -> str:
@@ -173,7 +178,17 @@ async def receive_webhook(payload: WebhookPayload, request: Request):
         logger.error("WEBHOOK_SECRET is not configured — rejecting all webhook requests")
         raise HTTPException(status_code=503, detail="Bot not configured: WEBHOOK_SECRET missing")
     if payload.secret != settings.WEBHOOK_SECRET:
-        logger.warning(f"Webhook auth failed for {payload.ticker} from {request.client.host if request.client else 'unknown'}")
+        client_ip = _get_client_ip(request)
+        now = time.time()
+        cnt, first = _failed_auth.get(client_ip, (0, now))
+        if now - first > _AUTH_BLOCK_WINDOW:
+            cnt, first = 0, now
+        cnt += 1
+        _failed_auth[client_ip] = (cnt, first)
+        if cnt >= _AUTH_BLOCK_THRESHOLD:
+            logger.warning(f"[SECURITY] IP {client_ip} blocked — {cnt} failed auth attempts")
+            raise HTTPException(status_code=429, detail="Too many failed attempts")
+        logger.warning(f"[SECURITY] Webhook auth failed ({cnt}/{_AUTH_BLOCK_THRESHOLD}) from {client_ip}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     # 2. Validate signal (wrapped — may call broker API)
