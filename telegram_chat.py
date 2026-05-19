@@ -559,7 +559,21 @@ def _handle_command(text: str, context: dict) -> str | None:
     cmd = t.split()[0] if t else ""
 
     # ── /commands ──────────────────────────────────────────────────────────
-    if cmd in ("/start", "/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
+    if cmd == "/start":
+        # Send the persistent keyboard menu
+        import asyncio as _asyncio
+        try:
+            from telegram_bot import send_menu as _send_menu
+            _asyncio.ensure_future(_send_menu())
+        except Exception:
+            pass
+        return (
+            "👋 <b>שלום! אני מנהל ההשקעות שלך</b>\n\n"
+            "📱 כפתורי תפריט מהיר הופיעו למטה ↓\n\n"
+            "שלח /help לרשימת כל הפקודות."
+        )
+
+    if cmd in ("/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (
             "👋 <b>מנהל ההשקעות שלך — כל הפקודות</b>\n\n"
             "━━ 📊 <b>תיק ופוזיציות</b> ━━\n"
@@ -3373,6 +3387,21 @@ async def handle_telegram_update(update: dict) -> dict:
 
     if not text:
         return {"status": "ignored", "reason": "empty message"}
+
+    # Map Hebrew button labels to commands
+    _BUTTON_MAP = {
+        "📊 סטטוס":       "/status",
+        "💰 רווח/הפסד":   "/pnl",
+        "📈 מניות פתוחות": "/manioth",
+        "📰 חדשות":        "/newscheck",
+        "🔍 סריקה עכשיו":  "/scan",
+        "🏆 מובילים":      "/top",
+        "⏸️ עצור קניות":   "/pause",
+        "▶️ חדש קניות":    "/resume",
+        "📋 כל הפקודות":   "/help",
+    }
+    if text in _BUTTON_MAP:
+        text = _BUTTON_MAP[text]
 
     logger.info(f"[CHAT] Incoming: {text[:100]}")
 

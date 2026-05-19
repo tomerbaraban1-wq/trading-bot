@@ -77,6 +77,41 @@ def _mark_sent(error_key: str) -> None:
 # Core sender — with retry + back-off
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def send_menu() -> bool:
+    """
+    Send a persistent reply keyboard with the most common commands.
+    Call this after /start or whenever you want to show the menu.
+    """
+    if not _enabled():
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    keyboard = {
+        "keyboard": [
+            [{"text": "📊 סטטוס"}, {"text": "💰 רווח/הפסד"}],
+            [{"text": "📈 מניות פתוחות"}, {"text": "📰 חדשות"}],
+            [{"text": "🔍 סריקה עכשיו"}, {"text": "🏆 מובילים"}],
+            [{"text": "⏸️ עצור קניות"}, {"text": "▶️ חדש קניות"}],
+            [{"text": "📋 כל הפקודות"}],
+        ],
+        "resize_keyboard": True,
+        "persistent": True,
+    }
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": "📱 <b>תפריט מהיר</b> — לחץ על כפתור:",
+        "parse_mode": "HTML",
+        "reply_markup": keyboard,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload,
+                                    timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+
 async def send_message(text: str) -> bool:
     """
     Send a message to Telegram AND Discord (if configured).
