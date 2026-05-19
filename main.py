@@ -24,7 +24,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from config import settings
@@ -370,37 +369,6 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-Webhook-Secret", "X-Telegram-Bot-Api-Secret-Token"],
     allow_credentials=False,
 )
-
-# ── Security Headers Middleware ───────────────────────────────────────────────
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add HTTP security headers to every response."""
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"]    = "nosniff"
-        response.headers["X-Frame-Options"]           = "DENY"
-        response.headers["X-XSS-Protection"]          = "1; mode=block"
-        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()"
-        if request.url.scheme == "https":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        return response
-
-app.add_middleware(SecurityHeadersMiddleware)
-
-# ── Request Body Size Limit — prevent DoS via huge payloads ──────────────────
-_MAX_BODY_BYTES = 64 * 1024   # 64 KB
-
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > _MAX_BODY_BYTES:
-            return JSONResponse(
-                {"detail": "Request body too large"},
-                status_code=413,
-            )
-        return await call_next(request)
-
-app.add_middleware(BodySizeLimitMiddleware)
 
 # Import and include routes
 from webhook import router

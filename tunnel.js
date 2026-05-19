@@ -7,7 +7,7 @@ const urlFile = path.join(__dirname, 'tunnel_url.txt');
 
 (async () => {
     try {
-        const tunnel = await localtunnel({ port });
+        const tunnel = await localtunnel({ port, host: 'https://localtunnel.me', local_host: '127.0.0.1' });
         console.log(`TUNNEL_URL=${tunnel.url}`);
         fs.writeFileSync(urlFile, tunnel.url, 'utf-8');
         tunnel.on('close', () => process.exit(0));
