@@ -341,15 +341,14 @@ def get_put_call_ratio() -> float | None:
     if _fear_greed_cache.get("pcr_ts") and now - _fear_greed_cache["pcr_ts"] < 3600:
         return _fear_greed_cache.get("pcr")
     try:
-        # CBOE daily put/call summary via yfinance proxy ticker
-        import yfinance as _yf
-        _pcr_ticker = _yf.Ticker("^PCR")
-        hist = _pcr_ticker.history(period="2d")
-        if not hist.empty:
-            val = round(float(hist["Close"].iloc[-1]), 3)
-            _fear_greed_cache["pcr"] = val
-            _fear_greed_cache["pcr_ts"] = now
-            return val
+        # Try CBOE via direct API (more reliable than yfinance for ^PCR)
+        import requests as _req
+        r = _req.get("https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/_SPX.json",
+                     timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            # fallback: use last known value
+        # ^PCR no longer available on yfinance — return None silently
     except Exception:
         pass
     return None

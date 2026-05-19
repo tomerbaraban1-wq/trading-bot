@@ -1737,7 +1737,7 @@ def _handle_command(text: str, context: dict) -> str | None:
 
             # Phase 1: quick momentum pre-filter via yfinance batch (fast ~2s)
             import yfinance as _yf_top
-            sample_large = random.sample(wl, min(40, len(wl)))
+            sample_large = random.sample(wl, min(20, len(wl)))  # reduced 40→20 for speed
             _prices_top  = _yf_top.download(sample_large, period="2d",
                                              progress=False, auto_adjust=True)
             _chg_map: dict[str, float] = {}
@@ -1753,8 +1753,8 @@ def _handle_command(text: str, context: dict) -> str | None:
                             _chg_map[_tk2] = float((_s.iloc[-1] - _s.iloc[-2]) / _s.iloc[-2] * 100)
                     except Exception:
                         pass
-            # Sort by momentum, take top 12 candidates
-            sample = sorted(_chg_map, key=_chg_map.get, reverse=True)[:12]
+            # Sort by momentum, take top 6 candidates (reduced 12→6 for speed)
+            sample = sorted(_chg_map, key=_chg_map.get, reverse=True)[:6]
             if not sample:
                 sample = random.sample(wl, min(8, len(wl)))
 
@@ -1762,7 +1762,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             results = []
             _top_start = _t_top.time()
             for _tk in sample:
-                if _t_top.time() - _top_start > 17:
+                if _t_top.time() - _top_start > 10:  # 10s max (reduced 17→10)
                     break
                 try:
                     # Use cached sentiment if fresh, else neutral (5) for speed
@@ -2742,10 +2742,10 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/morning", "morning", "תדרוך בוקר", "בריפינג"):
         try:
             import requests as _req, os as _os
-            base   = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+            base   = _os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
             secret = settings.WEBHOOK_SECRET
-            if not base or not secret:
-                return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+            if not secret:
+                return "⚙️ WEBHOOK_SECRET לא מוגדר"
             # timeout=8 — just kick off the briefing, don't wait for it to finish
             # The briefing sends its own message when done (async server-side)
             r = _req.post(f"{base}/telegram/briefing",
@@ -2968,10 +2968,10 @@ def _handle_command(text: str, context: dict) -> str | None:
     if cmd in ("/scan", "scan", "סרוק", "סריקה"):
         # Return immediately — don't wait 60s for scan to complete (Telegram webhook timeout)
         import os as _os
-        base   = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+        base   = _os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000").rstrip("/")
         secret = settings.WEBHOOK_SECRET
-        if not base or not secret:
-            return "⚙️ RENDER_EXTERNAL_URL לא מוגדר"
+        if not secret:
+            return "⚙️ WEBHOOK_SECRET לא מוגדר"
         # Fire-and-forget: run scan in background, send result when done
         async def _run_scan_and_notify():
             import requests as _rq
@@ -3431,7 +3431,7 @@ async def handle_telegram_update(update: dict) -> dict:
                     )
             return rep
 
-        reply = await asyncio.wait_for(_generate_reply(), timeout=22)
+        reply = await asyncio.wait_for(_generate_reply(), timeout=25)
 
     except asyncio.TimeoutError:
         logger.warning(f"[CHAT] Reply timed out for: {text[:50]}")

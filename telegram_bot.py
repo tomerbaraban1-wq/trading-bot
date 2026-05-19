@@ -186,47 +186,8 @@ async def notify_trade_open(
     qty_str = f"{qty:.4f}".rstrip('0').rstrip('.')
     iceberg_line = f"\n🧊 פיצול הזמנה: {n_slices} חלקים" if is_iceberg else ""
     id_line = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
-    try:
-        from telegram_chat import _fmt_price as _fp
-        _price_str    = _fp(price)
-        _notional_str = _fp(notional)
-        _stop_str_fmt = _fp(stop_price)
-        _tp_str_fmt   = _fp(tp_price)
-    except Exception:
-        _price_str    = f"${price:.2f}"
-        _notional_str = f"${notional:,.2f}"
-        _stop_str_fmt = f"${stop_price:.2f}"
-        _tp_str_fmt   = f"${tp_price:.2f}"
-    # Score quality label
-    if score >= 75:   q = "🔥 מצוין"
-    elif score >= 65: q = "✅ טוב"
-    elif score >= 58: q = "⚠️ גבולי"
-    else:             q = "📊 רגיל"
 
-    sent_label = "😨 פחד — הזדמנות" if sentiment_score <= 4 else ("🟢 חיובי" if sentiment_score >= 7 else "😐 ניטרלי")
-
-    # Fetch stop & TP from DB for immediate context
-    stop_line = ""
-    tp_line   = ""
-    try:
-        import database as _db
-        _trade = _db.get_open_trade_by_ticker(ticker)
-        if _trade:
-            _stop = _trade.get("atr_stop_price")
-            if _stop:
-                _stop_pct = (price - float(_stop)) / price * 100
-                try:
-                    from telegram_chat import _fmt_price as _fp2
-                    stop_line = f"\n🛑  סטופ לוס:      {_fp2(float(_stop))}  (-{_stop_pct:.1f}%)"
-                    # Rough TP estimate: ~3× the stop distance
-                    _tp = round(price + (price - float(_stop)) * 3, 2)
-                    tp_line = f"\n🎯  יעד רווח:      {_fp2(_tp)}  (+{(_tp-price)/price*100:.1f}%)"
-                except Exception:
-                    stop_line = f"\n🛑  סטופ לוס:      ${float(_stop):.2f}"
-    except Exception:
-        pass
-
-    # Calculate stop & TP values for exit lines
+    # Calculate stop & TP first (needed for formatting)
     stop_price = None
     tp_price   = None
     try:
@@ -237,24 +198,32 @@ async def notify_trade_open(
             tp_price   = round(price + (price - stop_price) * 3, 2)
     except Exception:
         pass
-
-    # Fallback using config stop %
     if stop_price is None:
         from config import settings as _s
-        stop_price = round(price * (1 - _s.STOP_LOSS_PCT / 100), 2)
+        stop_price = round(price * (1 - _s.STOP_LOSS_PCT  / 100), 2)
         tp_price   = round(price * (1 + _s.TAKE_PROFIT_PCT / 100), 2)
-
     stop_pct = (price - stop_price) / price * 100
     tp_pct   = (tp_price - price)   / price * 100
 
     try:
-        from telegram_chat import _fmt_price as _fp3
-        _stop_str = _fp3(stop_price)
-        _tp_str   = _fp(tp_price)
-        _stop_str = _fp(stop_price)
+        from telegram_chat import _fmt_price as _fp
+        _price_str    = _fp(price)
+        _notional_str = _fp(notional)
+        _stop_str     = _fp(stop_price)
+        _tp_str       = _fp(tp_price)
     except Exception:
-        _tp_str   = f"${tp_price:.2f}"
-        _stop_str = f"${stop_price:.2f}"
+        _price_str    = f"${price:.2f}"
+        _notional_str = f"${notional:,.2f}"
+        _stop_str     = f"${stop_price:.2f}"
+        _tp_str       = f"${tp_price:.2f}"
+    # Score quality label
+    if score >= 75:   q = "🔥 מצוין"
+    elif score >= 65: q = "✅ טוב"
+    elif score >= 58: q = "⚠️ גבולי"
+    else:             q = "📊 רגיל"
+
+    sent_label = "😨 פחד — הזדמנות" if sentiment_score <= 4 else ("🟢 חיובי" if sentiment_score >= 7 else "😐 ניטרלי")
+
 
     # Score bar visual
     _bar_filled = round(score / 10)
