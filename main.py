@@ -21,13 +21,32 @@ import threading
 import signal
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from config import settings
 from database import init_db, close_connections, flush_database, check_database_integrity
+
+class _SecretMaskingFilter(logging.Filter):
+    """Mask API keys and tokens in log output."""
+    _PATTERNS = [
+        (r'(ghp_)[A-Za-z0-9]{36}',        r'\1***'),
+        (r'(gsk_)[A-Za-z0-9]{50,}',        r'\1***'),
+        (r'(\d{9,10}:AA)[A-Za-z0-9_-]{30,}', r'\1***'),   # Telegram token
+        (r'(secret=)[^&\s"]+',              r'\1***'),
+        (r'(ALPACA_SECRET_KEY=)\S+',        r'\1***'),
+    ]
+    def filter(self, record):
+        import re
+        msg = str(record.getMessage())
+        for pat, repl in self._PATTERNS:
+            msg = re.sub(pat, repl, msg)
+        record.msg  = msg
+        record.args = ()
+        return True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +56,7 @@ logging.basicConfig(
         logging.FileHandler("trading_bot.log", encoding="utf-8"),
     ],
 )
+logging.getLogger().addFilter(_SecretMaskingFilter())
 logger = logging.getLogger(__name__)
 
 START_TIME = time.time()
@@ -347,9 +367,40 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Webhook-Secret"],
+    allow_headers=["Content-Type", "X-Webhook-Secret", "X-Telegram-Bot-Api-Secret-Token"],
     allow_credentials=False,
 )
+
+# ── Security Headers Middleware ───────────────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add HTTP security headers to every response."""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"]    = "nosniff"
+        response.headers["X-Frame-Options"]           = "DENY"
+        response.headers["X-XSS-Protection"]          = "1; mode=block"
+        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Request Body Size Limit — prevent DoS via huge payloads ──────────────────
+_MAX_BODY_BYTES = 64 * 1024   # 64 KB
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > _MAX_BODY_BYTES:
+            return JSONResponse(
+                {"detail": "Request body too large"},
+                status_code=413,
+            )
+        return await call_next(request)
+
+app.add_middleware(BodySizeLimitMiddleware)
 
 # Import and include routes
 from webhook import router

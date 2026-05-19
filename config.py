@@ -148,5 +148,14 @@ class Settings:
             print("--- ERROR: MAX_BUDGET must be positive ---")
             sys.exit(1)
 
+        # Secret strength check
+        if self.WEBHOOK_SECRET and len(self.WEBHOOK_SECRET) < 16:
+            print("--- WARNING: WEBHOOK_SECRET is weak (< 16 chars) — use a longer secret ---")
+
+        # Warn if using default/example secrets
+        _weak_secrets = {"secret", "password", "123456", "tradebot", "webhook", "test"}
+        if self.WEBHOOK_SECRET and self.WEBHOOK_SECRET.lower() in _weak_secrets:
+            print("--- WARNING: WEBHOOK_SECRET is too common — change it in .env ---")
+
 
 settings = Settings()
