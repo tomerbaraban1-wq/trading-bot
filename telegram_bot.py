@@ -88,10 +88,10 @@ async def send_menu() -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     keyboard = {
         "keyboard": [
-            [{"text": "📊 סטטוס"},         {"text": "💰 רווח/הפסד"}],
-            [{"text": "📈 מניות פתוחות"}, {"text": "💎 שווי תיק"}],
-            [{"text": "📰 חדשות"},          {"text": "📅 היום"}],
-            [{"text": "⏸️ עצור קניות"},   {"text": "▶️ חדש קניות"}],
+            [{"text": "📊 סטטוס"},          {"text": "💰 רווח/הפסד"}],
+            [{"text": "📈 מניות פתוחות"},  {"text": "💎 שווי תיק"}],
+            [{"text": "📰 חדשות"},           {"text": "📅 היום"}],
+            [{"text": "🤖 AI ריוויו"},       {"text": "⚡ 5 פעולות אחרונות"}],
             [{"text": "📋 כל הפקודות"}],
         ],
         "resize_keyboard": True,
