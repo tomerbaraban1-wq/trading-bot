@@ -1381,25 +1381,6 @@ async def morning_briefing_loop():
 
             news_text = "\n".join(f"• {h}" for h in headlines) if headlines else "אין חדשות זמינות כרגע"
 
-            # Score top 3 candidates quickly
-            top = []
-            for ticker in WATCHLIST[:8]:
-                try:
-                    sent = await asyncio.wait_for(
-                        asyncio.to_thread(score_sentiment, ticker), timeout=20
-                    )
-                    comp = await asyncio.wait_for(
-                        asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=20
-                    )
-                    top.append((ticker, comp["composite_score"], sent.score))
-                except Exception:
-                    continue
-            top.sort(key=lambda x: x[1], reverse=True)
-
-            candidates = ""
-            for ticker, score, sent in top[:3]:
-                bar = "█" * round(score/10) + "░" * (10 - round(score/10))
-                candidates += f"\n  📊 <b>{ticker}</b>  {score:.0f}/100  <code>{bar}</code>"
 
             # Israel time & open positions context
             import datetime as _dt2
@@ -1440,9 +1421,7 @@ async def morning_briefing_loop():
                 f"🕐  שעה: {_il_time} ישראל  |  פתיחה: {_open_time}  סגירה: {_close_time}\n"
                 + (f"{market_line}\n" if market_line else "")
                 + (f"\n📂 <b>פוזיציות פתוחות:</b>{open_pos_text}\n" if open_pos_text else "")
-                + f"\n📰 <b>חדשות בולטות:</b>\n{news_text}\n\n"
-                f"🎯 <b>מועמדים מובילים:</b>"
-                + (candidates if candidates else "\n  טרם חושב")
+                + f"\n📰 <b>חדשות בולטות:</b>\n{news_text}"
             )
             _briefing_sent_date = today_str
             logger.info("Morning briefing sent")
