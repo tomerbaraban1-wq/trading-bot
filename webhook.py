@@ -1049,7 +1049,8 @@ async def emergency_exit(ticker: str, request: Request):
     """Manual emergency exit for a ticker.
     Auth: pass secret in `?secret=...` query param OR X-Webhook-Secret header.
     """
-    secret = request.query_params.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
+    # Prefer header auth — query param accepted for backward compat but header is safer
+    secret = request.headers.get("X-Webhook-Secret", "") or request.query_params.get("secret", "")
     if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
         logger.warning(f"Emergency exit auth failed for {ticker} from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
@@ -1613,17 +1614,18 @@ async def test_telegram(secret: str = "", request: Request = None):
 
 
 @router.post("/telegram/webhook")
-async def telegram_webhook(update: dict):
+async def telegram_webhook(request: Request, update: dict):
     """
     Receive incoming Telegram messages and reply intelligently.
-
-    To activate:
-      curl -F "url=https://YOUR-DOMAIN/telegram/webhook" \
-           https://api.telegram.org/bot<TOKEN>/setWebhook
-
-    The bot only replies to messages from the configured TELEGRAM_CHAT_ID
-    (security against bot username leaks).
+    Protected by X-Telegram-Bot-Api-Secret-Token header validation.
     """
+    # Validate Telegram secret token (set during setWebhook)
+    tg_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    expected   = settings.WEBHOOK_SECRET
+    if expected and tg_secret and tg_secret != expected:
+        logger.warning(f"[SECURITY] Telegram webhook: invalid secret token from {_get_client_ip(request)}")
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     from telegram_chat import handle_telegram_update
     try:
         result = await handle_telegram_update(update)
