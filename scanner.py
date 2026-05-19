@@ -5,6 +5,7 @@ Dynamic watchlist: fetches S&P500 + Nasdaq100 + Russell1000 from Wikipedia
 daily and filters to only companies with market cap > MIN_MARKET_CAP.
 """
 
+import os
 import time
 import threading
 import logging
@@ -32,14 +33,16 @@ def _fetch_index_tickers() -> list[str]:
     tickers = set()
     sources = [
         ("S&P 500",    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 0, "Symbol"),
-        ("Nasdaq 100", "https://en.wikipedia.org/wiki/Nasdaq-100",                  4, "Ticker"),
+        ("Nasdaq 100", "https://en.wikipedia.org/wiki/Nasdaq-100",                  5, "Ticker"),
     ]
     headers = {"User-Agent": "Mozilla/5.0 TradingBot/1.0"}
     for name, url, table_idx, col in sources:
         try:
-            resp = requests.get(url, timeout=15, headers=headers)
+            resp = requests.get(url, timeout=15, headers=headers,
+                                 verify=os.getenv("REQUESTS_CA_BUNDLE", True))
             resp.raise_for_status()
-            df = pd.read_html(resp.text)[table_idx]
+            import io
+            df = pd.read_html(io.StringIO(resp.text))[table_idx]
             raw = df[col].dropna().tolist()
             cleaned = [str(t).replace(".", "-").strip() for t in raw]
             tickers.update(cleaned)
@@ -80,9 +83,17 @@ def refresh_large_cap_list() -> None:
         except Exception:
             pass
 
-    # Parallel market-cap checks — 10 workers (was 30, reduced to save RAM on Render free tier)
+    # Parallel market-cap checks with hard timeout — prevents hanging the bot
+    import concurrent.futures as _cf
     with ThreadPoolExecutor(max_workers=10) as ex:
-        list(ex.map(_check, all_tickers))
+        futures = {ex.submit(_check, t): t for t in all_tickers}
+        try:
+            _cf.wait(futures, timeout=60)   # max 60 seconds total
+        except Exception:
+            pass
+        # Cancel any still-running futures
+        for f in futures:
+            f.cancel()
 
     with _dynamic_list_lock:
         _dynamic_list.clear()

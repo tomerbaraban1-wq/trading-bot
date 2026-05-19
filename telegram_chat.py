@@ -129,7 +129,7 @@ def _fmt_held(hours: float) -> str:
 
 # Context cache — avoid hammering broker API on every Telegram message
 _context_cache: tuple[float, dict] = (0.0, {})
-_CONTEXT_CACHE_TTL = 30   # seconds
+_CONTEXT_CACHE_TTL = 120  # 2 minutes — reduces slow yfinance/broker calls
 
 
 def _get_client() -> OpenAI | None:
@@ -449,22 +449,22 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_message},
             ],
-            max_tokens=600,
+            max_tokens=300,   # reduced 600→300 for faster responses
             temperature=0.3,
         )
         reply = response.choices[0].message.content.strip()
 
-        # Verify reply is in Hebrew — lower threshold: if ANY significant English, translate
+        # Skip translation — system prompt enforces Hebrew. Only translate if >80% English.
         hebrew_chars = sum(1 for c in reply if 'א' <= c <= 'ת')
         latin_chars  = sum(1 for c in reply if c.isalpha() and c.isascii())
-        if latin_chars > hebrew_chars and len(reply) > 15:
-            logger.warning("[CHAT] Reply has too much English — translating to Hebrew")
+        if latin_chars > hebrew_chars * 4 and len(reply) > 30:
+            logger.warning("[CHAT] Reply mostly English — translating")
             try:
                 tr_resp = client.chat.completions.create(
                     model=settings.LLM_MODEL,
                     messages=[{"role": "user",
-                                "content": f"תרגם את הטקסט הבא לעברית בלבד. אל תוסיף כלום:\n{reply}"}],
-                    max_tokens=600, temperature=0.2,
+                                "content": f"תרגם לעברית בלבד:\n{reply}"}],
+                    max_tokens=300, temperature=0.1,
                 )
                 translated = tr_resp.choices[0].message.content.strip()
                 if translated:
@@ -676,10 +676,23 @@ def _handle_command(text: str, context: dict) -> str | None:
         else:
             lines.append(f"✅  הבוט: פעיל וסורק")
         if positions:
-            lines.append(f"\n<b>פוזיציות:</b>")
+            total_pnl_open = sum(p["pnl"] for p in positions)
+            total_invested = sum(p.get("invested") or round(p["entry"] * p["qty"], 2) for p in positions)
+            lines.append(f"\n<b>פוזיציות ({n_pos}):</b>")
             for p in positions:
-                icon = "🟢" if p["pnl"] >= 0 else "🔴"
-                lines.append(f"  {icon} <b>{p['ticker']}</b>  {p['pct']:+.1f}%  |  {_fmt_pnl(p['pnl'], False)}")
+                icon  = "🟢" if p["pnl"] >= 0 else "🔴"
+                qty   = f"{p['qty']:.4f}".rstrip('0').rstrip('.')
+                invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
+                lines.append(
+                    f"\n{icon} <b>{p['ticker']}</b>  {p['pct']:+.1f}%\n"
+                    f"   🔢 כמות: {qty} מניות\n"
+                    f"   💵 כניסה: {_fmt_price(p['entry'])} → עכשיו: {_fmt_price(p['current'])}\n"
+                    f"   💰 רווח/הפסד: {_fmt_pnl(p['pnl'], False)}\n"
+                    f"   💼 שווי פוזיציה: {_fmt_price(p['current'] * p['qty'])}"
+                )
+            lines.append(f"\n📊 <b>סה\"כ הושקע: {_fmt_price(total_invested)}</b>")
+            if total_pnl_open != 0:
+                lines.append(f"{'📈' if total_pnl_open >= 0 else '📉'} <b>סה\"כ רווח פתוח: {_fmt_pnl(total_pnl_open, False)}</b>")
 
         # Smart action suggestion based on state
         lines.append(f"\n━━━━━━━━━━━━━━━━\n💡 <i>")

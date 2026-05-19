@@ -120,7 +120,14 @@ def get_regime(ticker: str) -> tuple[str, float, dict]:
             "is_trending": True,
         }
 
-    regime = "trending" if adx >= ADX_THRESHOLD else "ranging"
+    # During pre/after-market, ADX is structurally lower due to thin volume.
+    # Use a relaxed threshold (60% of normal) during extended hours.
+    _extended = os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
+    from datetime import datetime, timezone
+    _h = datetime.now(timezone.utc).hour
+    _is_extended_session = _extended and ((8 <= _h < 13) or (_h >= 20))
+    _effective_threshold = ADX_THRESHOLD * 0.6 if _is_extended_session else ADX_THRESHOLD
+    regime = "trending" if adx >= _effective_threshold else "ranging"
 
     with _lock:
         _cache[ticker] = (adx, now, regime)

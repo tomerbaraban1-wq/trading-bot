@@ -123,10 +123,25 @@ def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:
     if bb is not None and bb > _dynamic_thresholds["max_bb_position"]:
         return True, f"BB position {bb:.2f} > learned max {_dynamic_thresholds['max_bb_position']} (near top)"
 
-    # Check volume ratio
+    # Check volume ratio — use relaxed threshold during pre/after-market (volume always lower)
+    import os as _os
+    from datetime import datetime, timezone, time as _time2
+    _extended = _os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
+    _now_utc = datetime.now(timezone.utc)
+    _h = _now_utc.hour
+    # Pre-market EDT: 08:00-13:30 UTC | After-hours EDT: 20:00-00:00 UTC
+    _is_extended_session = _extended and (
+        (8 <= _h < 13) or (_h >= 20)
+    )
+    _vol_threshold = (
+        max(0.4, _dynamic_thresholds["min_volume_ratio"] * 0.6)   # 40% lower during extended hours
+        if _is_extended_session
+        else _dynamic_thresholds["min_volume_ratio"]
+    )
     vol = indicators.get("volume_ratio")
-    if vol is not None and vol < _dynamic_thresholds["min_volume_ratio"]:
-        return True, f"Volume ratio {vol:.2f} < learned min {_dynamic_thresholds['min_volume_ratio']} (low volume)"
+    if vol is not None and vol < _vol_threshold:
+        session = "extended" if _is_extended_session else "regular"
+        return True, f"Volume ratio {vol:.2f} < min {_vol_threshold:.2f} ({session} session)"
 
     return False, ""
 

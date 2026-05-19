@@ -1315,6 +1315,92 @@ async def backtest_insights():
     return get_insights()
 
 
+@router.get("/activity")
+async def activity_feed(limit: int = 30):
+    """
+    Real-time activity feed — last N bot actions parsed from the log file.
+    Returns structured events with Hebrew descriptions for the dashboard sidebar.
+    No auth needed — read-only, no sensitive data.
+    """
+    import re
+    from pathlib import Path
+    from datetime import datetime
+
+    log_path = Path(__file__).parent / "trading_bot.log"
+    events = []
+
+    _PATTERNS = [
+        # Training
+        (r"TRAINING.*Own-trade chart analysis.*WR=(\d+)%.*avg=([+-]?[\d.]+)%",
+         lambda m: {"type":"train","icon":"🎓","text":f"סיים אימון על גרפים עבר — WR={m.group(1)}% | תשואה ממוצעת {m.group(2)}%"}),
+        (r"TRAINING.*Done.*?(\d+) tickers.*?WR=([\d.]+)%.*?optimal_score=(\d+)",
+         lambda m: {"type":"train","icon":"📊","text":f"Backtest הושלם — {m.group(1)} מניות | WR={m.group(2)}% | ציון מומלץ: {m.group(3)}"}),
+        (r"TRAINING.*Market closed.*starting chart backtest",
+         lambda m: {"type":"train","icon":"📈","text":"מתחיל backtest על ווטצ'ליסט..."}),
+        (r"TRAINING.*Learning from bot",
+         lambda m: {"type":"train","icon":"🔍","text":"לומד גרפי עסקאות עבר..."}),
+        # Buying
+        (r"Auto-invest: bought ([\d.]+)x (\w+) @ \$([\d.]+)",
+         lambda m: {"type":"buy","icon":"✅","text":f"קנה {m.group(1)}x {m.group(2)} @ ${m.group(3)}"}),
+        (r"Trade #(\d+) opened: BUY (\w+) x([\d.]+) @ \$([\d.]+)",
+         lambda m: {"type":"buy","icon":"🟢","text":f"קנייה #{m.group(1)}: {m.group(2)} x{m.group(3)} @ ${m.group(4)}"}),
+        # Selling
+        (r"Trade #(\d+) closed.*?(\w+).*?pnl=\$([-\d.]+)",
+         lambda m: {"type":"sell","icon":"🔴","text":f"מכירה #{m.group(1)}: {m.group(2)} | P&L: ${m.group(3)}"}),
+        # Scanning
+        (r"AUTO-INVEST: Starting scheduled scan",
+         lambda m: {"type":"scan","icon":"🔎","text":"מתחיל סריקת שוק..."}),
+        (r"AUTO-INVEST: Done. Bought (\d+)",
+         lambda m: {"type":"scan","icon":"✔️","text":f"סריקה הסתיימה — נקנו {m.group(1)} מניות"}),
+        (r"AUTO-INVEST: Market is closed",
+         lambda m: {"type":"idle","icon":"💤","text":"שוק סגור — מחכה לפתיחה"}),
+        # OWN trades
+        (r"OWN-TRADES.*?(\w+) \| (✅|❌|➡️) הגרף (עלה|ירד|ניטרלי) \(([+-]?[\d.]+)% ב-10י'\)",
+         lambda m: {"type":"learn","icon":m.group(2),"text":f"{m.group(1)}: הגרף {m.group(3)} {m.group(4)}% ב-10 ימים"}),
+        # Heartbeat
+        (r"HEARTBEAT: (\d+) positions \| Budget: ([\d.]+)% used \| Equity: \$([\d,]+)",
+         lambda m: {"type":"heartbeat","icon":"💓","text":f"פוזיציות: {m.group(1)} | תקציב: {m.group(2)}% | Equity: ${m.group(3)}"}),
+        # Errors
+        (r"\| ERROR \| (.+)",
+         lambda m: {"type":"error","icon":"⚠️","text":f"שגיאה: {m.group(1)[:60]}"}),
+    ]
+
+    try:
+        if not log_path.exists():
+            return []
+
+        # Read last 500 lines efficiently
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()[-500:]
+
+        for line in reversed(lines):
+            if len(events) >= limit:
+                break
+            line = line.strip()
+            if not line:
+                continue
+
+            # Extract timestamp
+            ts_match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
+            ts = ts_match.group(1) if ts_match else ""
+
+            for pattern, builder in _PATTERNS:
+                m = re.search(pattern, line)
+                if m:
+                    try:
+                        ev = builder(m)
+                        ev["ts"] = ts
+                        events.append(ev)
+                    except Exception:
+                        pass
+                    break
+
+    except Exception as e:
+        return [{"type":"error","icon":"⚠️","text":str(e),"ts":""}]
+
+    return events
+
+
 @router.get("/earnings")
 async def earnings_check(ticker: str):
     """

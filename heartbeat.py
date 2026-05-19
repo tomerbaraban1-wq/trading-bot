@@ -50,6 +50,20 @@ def _is_quiet() -> bool:
     return _os.getenv("QUIET_MODE", "").lower() == "true"
 
 
+async def telegram_context_warmup_loop():
+    """Pre-build Telegram context every 60s so replies are instant."""
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await asyncio.to_thread(
+                lambda: __import__('telegram_chat')._build_context()
+            )
+            logger.debug("[CHAT] Context pre-warmed")
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
 async def keep_alive_loop():
     """
     Ping our own /health endpoint every 10 minutes to prevent Render free-tier spin-down.
@@ -290,6 +304,7 @@ async def _close_position(
     # Cleanup per-ticker state so re-entry into the same ticker works correctly
     _smart_sell_last_check.pop(ticker, None)
     _position_alert_sent.pop(ticker, None)
+    _smart_sell_low_count.pop(ticker, None)  # reset confirmation counter — prevents 1-shot trigger on re-entry
     # Clean up partial-sell guards to prevent memory leak over many trades
     _trade_id = trade.get("id")
     if _trade_id:
@@ -987,6 +1002,7 @@ async def auto_invest_loop():
                 candidates = _prioritized[:SCAN_PER_CYCLE]
 
                 bought = 0
+                _bought_list: list[dict] = []   # collect all buys for one combined Telegram message
 
                 # ── שלב 1: ציון מהיר לכל המועמדים ────────────────────────────
                 # סורקים את כולם ואז קונים רק את הציון הגבוה ביותר
@@ -1078,7 +1094,7 @@ async def auto_invest_loop():
                         # Sanity check — price plausibility + velocity + data completeness
                         from sanity_check import run_all as sanity_run
                         sane, sane_reason = await _asyncio.wait_for(
-                            _asyncio.to_thread(sanity_run, ticker, price, {}), timeout=20
+                            _asyncio.to_thread(sanity_run, ticker, price, None), timeout=20
                         )
                         if not sane:
                             logger.warning(f"AUTO-INVEST: {ticker} SANITY FAIL — {sane_reason}")
@@ -1155,21 +1171,7 @@ async def auto_invest_loop():
                         # Slippage estimate (for metadata/audit — iceberg manages actual limit internally)
                         slip = await _asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
 
-                        # ── Pre-buy notification ─────────────────────────────
-                        try:
-                            from telegram_chat import _fmt_price as _fp_buy, _score_bar as _sb
-                            _notional_est = price * qty
-                            _create_background_task(send_message(
-                                f"⚡ <b>הבוט עומד לקנות — {ticker}</b>\n"
-                                f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯  ציון: <b>{score:.0f}/100</b>  <code>{_sb(score, 8)}</code>\n"
-                                f"💵  מחיר: {_fp_buy(price)}\n"
-                                f"🔢  כמות: {qty} מניות\n"
-                                f"💸  שווי משוער: {_fp_buy(_notional_est)}\n"
-                                f"🧠  סנטימנט: {sentiment.score}/10"
-                            ))
-                        except Exception:
-                            pass
+                        # Pre-buy notification removed — final notify_buy handles this
 
                         # Acquire per-ticker lock to prevent double-buy with simultaneous webhook
                         # Acquire per-ticker lock (same lock webhook uses) — HOLD it during buy
@@ -1238,7 +1240,14 @@ async def auto_invest_loop():
                             _shadow.evaluate, ticker, actual_price, score, sentiment.score,
                             _vol_ratio, None, "", "auto_invest",
                         ))
-                        _create_background_task(notify_buy(ticker, filled_qty, actual_price, score, sentiment.score))
+
+                        # Collect for combined Telegram message
+                        _bought_list.append({
+                            "ticker": ticker, "qty": filled_qty,
+                            "price": actual_price, "score": score,
+                            "sentiment": sentiment.score, "trade_id": trade_id,
+                            "notional": actual_price * filled_qty,
+                        })
 
                     except _asyncio.TimeoutError:
                         # Timeout during scan is normal — just skip this ticker silently.
@@ -1250,19 +1259,31 @@ async def auto_invest_loop():
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
-                # Send scan summary to Telegram when something was bought
-                if bought > 0:
+                # ── Send ONE combined Telegram message for all buys ───────────
+                if _bought_list:
                     try:
-                        _scan_lines = [
-                            f"🔍 <b>סיכום סריקה</b>",
-                            f"━━━━━━━━━━━━━━━━",
-                            f"✅  נקנו: <b>{bought} מניות</b>",
-                            f"🔎  נסרקו: {len(candidates)}",
-                            f"💵  מזומן נותר: ${remaining:.2f}",
-                        ]
-                        _create_background_task(send_message("\n".join(_scan_lines)))
-                    except Exception:
-                        pass
+                        from config import settings as _cfg
+                        from telegram_chat import _fmt_price as _fp
+                        lines = [f"🛒 <b>קנינו {len(_bought_list)} מניות!</b>", "━━━━━━━━━━━━━━━━"]
+                        for _b in _bought_list:
+                            _p  = _b["price"]
+                            _sl = round(_p * (1 - _cfg.STOP_LOSS_PCT  / 100), 2)
+                            _tp = round(_p * (1 + _cfg.TAKE_PROFIT_PCT / 100), 2)
+                            _qty = f"{_b['qty']:.4f}".rstrip('0').rstrip('.')
+                            lines.append(
+                                f"📌 מניה: <b>{_b['ticker']}</b>\n"
+                                f"🔢 כמות: {_qty} מניות\n"
+                                f"💵 מחיר קנייה: {_fp(_p)}\n"
+                                f"✅ יצא ברווח: {_fp(_tp)} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)\n"
+                                f"❌ יצא בהפסד: {_fp(_sl)} (-{_cfg.STOP_LOSS_PCT:.0f}%)"
+                            )
+                            if _b != _bought_list[-1]:
+                                lines.append("━━━━━━━━━━━━━━━━")
+                        lines.append("━━━━━━━━━━━━━━━━")
+                        lines.append(f"💵 מזומן נותר: {_fp(remaining)}")
+                        _create_background_task(send_message("\n".join(lines)))
+                    except Exception as _te:
+                        logger.warning(f"[NOTIFY] combined buy message failed: {_te}")
 
         except asyncio.CancelledError:
             raise
@@ -2060,6 +2081,113 @@ async def portfolio_update_loop():
             logger.error(f"Portfolio update error: {e}")
 
         await asyncio.sleep(60 * 60)   # שלח כל שעה
+
+
+async def market_closed_training_loop():
+    """
+    Chart learning loop — runs whenever the market is closed.
+
+    Flow:
+      1. On startup (after 30s) — immediately learn from the bot's own past trades
+      2. Then every 4 hours when market is NOT open — re-learn + run general backtest
+      3. Each cycle: analyzes chart indicators at entry, explains why charts moved,
+         updates MIN_BUY_SCORE based on findings
+    """
+    import datetime as _dt
+    await asyncio.sleep(30)   # 30s after startup — then learn immediately
+
+    _last_own_sim_date  = None
+    _last_tg_notify_ts  = 0.0   # last time we sent Telegram training update
+
+    while True:
+        try:
+            import os as _os
+
+            # ── Always run own-trade chart analysis once per day ──────────
+            today_str = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+            if _last_own_sim_date != today_str:
+                logger.info("[TRAINING] Learning from bot's own past trade charts...")
+                from backtest_learner import simulate_own_trade_history
+                own_summary = await asyncio.wait_for(
+                    asyncio.to_thread(simulate_own_trade_history),
+                    timeout=300
+                )
+                _last_own_sim_date = today_str
+                if own_summary.get("simulated", 0) > 0:
+                    logger.info(
+                        f"[TRAINING] Own-trade chart analysis: "
+                        f"{own_summary['simulated']} trades | "
+                        f"WR={own_summary['win_rate']:.0f}% | "
+                        f"avg={own_summary['avg_return']:+.2f}%"
+                    )
+
+            # ── Full backtest only when market is closed ──────────────────
+            is_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if is_open:
+                await asyncio.sleep(5 * 60)  # market open — check again in 5 min
+                continue
+
+            logger.info("[TRAINING] Market closed — starting chart backtest on watchlist...")
+
+            from backtest_learner import run_backtest, apply_insights
+            from scanner import get_watchlist as _gwl
+            tickers = _gwl()[:20]
+
+            # ── Run general historical backtest on watchlist ──────────────
+            result = await asyncio.wait_for(
+                asyncio.to_thread(run_backtest, tickers),
+                timeout=600  # 10 min max
+            )
+            update = await asyncio.to_thread(apply_insights)
+
+            score_line = (
+                f"🔄 ציון עודכן: {update['old_score']} → <b>{update['new_score']}</b>"
+                if update.get("applied")
+                else f"✅ ציון נוכחי אופטימלי ({_os.getenv('MIN_BUY_SCORE', '51')})"
+            )
+
+            logger.info(
+                f"[TRAINING] Done: {result.tickers_analyzed} tickers | "
+                f"{result.total_signals} signals | WR={result.overall_win_rate:.1f}% | "
+                f"optimal_score={result.optimal_min_score}"
+            )
+
+            # ── שלח לטלגרם רק כל 30 דקות (לא כל דקה) ────────────────────
+            import time as _t
+            now_ts = _t.time()
+            if now_ts - _last_tg_notify_ts >= 30 * 60:
+                _last_tg_notify_ts = now_ts
+                own_summary_fresh = await asyncio.wait_for(
+                    asyncio.to_thread(__import__('backtest_learner').simulate_own_trade_history),
+                    timeout=120
+                )
+                own_line = (
+                    f"🔁 <b>עסקאות שלי:</b> {own_summary_fresh['simulated']} | "
+                    f"WR={own_summary_fresh['win_rate']:.0f}% | avg={own_summary_fresh['avg_return']:+.1f}%\n"
+                    if own_summary_fresh.get("simulated", 0) > 0 else ""
+                )
+                _create_background_task(send_message(
+                    f"🎓 <b>אימון הושלם</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"{own_line}"
+                    f"📊 {result.tickers_analyzed} מניות | {result.total_signals} סיגנלים\n"
+                    f"✅ אחוז הצלחה: <b>{result.overall_win_rate:.1f}%</b>\n"
+                    f"📈 תשואה ממוצעת: {result.avg_return:+.2f}%\n"
+                    f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
+                    f"{score_line}"
+                ))
+
+        except asyncio.TimeoutError:
+            logger.warning("[TRAINING] Backtest timed out — will retry in 30 min")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[TRAINING] Training error: {e}")
+
+        # Loop every 60s — trains continuously while market is closed
+        await asyncio.sleep(60)
 
 
 async def backtest_learning_loop():

@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import threading
 import logging
@@ -12,8 +13,13 @@ logger = logging.getLogger(__name__)
 _client = None
 _sentiment_cache: dict = {}
 _cache_lock = threading.Lock()  # guards _sentiment_cache across threads
-CACHE_TTL = 300       # 5 minutes
+CACHE_TTL = int(os.getenv("NEWS_CACHE_TTL", "1800"))  # default 30 min
 _SENTIMENT_CACHE_MAX = 100  # max entries to prevent memory growth
+
+# ── Groq rate limiter — max 1 call per 3 seconds ─────────────────────────────
+_groq_last_call: float = 0.0
+_groq_lock = threading.Lock()
+_GROQ_MIN_INTERVAL = 3.0   # seconds between calls
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -186,6 +192,14 @@ def score_sentiment(ticker: str) -> SentimentResult:
     )
 
     user_prompt = f"Stock: {ticker}\n\nRecent headlines:\n{headlines_text}"
+
+    # ── Rate limiter: ensure min 3s between Groq calls ───────────────────────
+    global _groq_last_call
+    with _groq_lock:
+        elapsed = time.time() - _groq_last_call
+        if elapsed < _GROQ_MIN_INTERVAL:
+            time.sleep(_GROQ_MIN_INTERVAL - elapsed)
+        _groq_last_call = time.time()
 
     try:
         response = client.chat.completions.create(

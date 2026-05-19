@@ -148,16 +148,20 @@ async def notify_trade_open(
     n_slices:        int         = 0,
 ) -> None:
     """Rich BUY notification with position sizing and scoring context."""
-    qty_str = f"{qty:.4f}" if qty != int(qty) else str(int(qty))
+    qty_str = f"{qty:.4f}".rstrip('0').rstrip('.')
     iceberg_line = f"\n🧊 פיצול הזמנה: {n_slices} חלקים" if is_iceberg else ""
     id_line = f"\n🔖 עסקה #{trade_id}" if trade_id else ""
     try:
         from telegram_chat import _fmt_price as _fp
-        _price_str = _fp(price)
+        _price_str    = _fp(price)
         _notional_str = _fp(notional)
+        _stop_str_fmt = _fp(stop_price)
+        _tp_str_fmt   = _fp(tp_price)
     except Exception:
-        _price_str = f"${price:.2f}"
+        _price_str    = f"${price:.2f}"
         _notional_str = f"${notional:,.2f}"
+        _stop_str_fmt = f"${stop_price:.2f}"
+        _tp_str_fmt   = f"${tp_price:.2f}"
     # Score quality label
     if score >= 75:   q = "🔥 מצוין"
     elif score >= 65: q = "✅ טוב"
@@ -187,19 +191,48 @@ async def notify_trade_open(
     except Exception:
         pass
 
+    # Calculate stop & TP values for exit lines
+    stop_price = None
+    tp_price   = None
+    try:
+        import database as _db2
+        _t2 = _db2.get_open_trade_by_ticker(ticker)
+        if _t2 and _t2.get("atr_stop_price"):
+            stop_price = float(_t2["atr_stop_price"])
+            tp_price   = round(price + (price - stop_price) * 3, 2)
+    except Exception:
+        pass
+
+    # Fallback using config stop %
+    if stop_price is None:
+        from config import settings as _s
+        stop_price = round(price * (1 - _s.STOP_LOSS_PCT / 100), 2)
+        tp_price   = round(price * (1 + _s.TAKE_PROFIT_PCT / 100), 2)
+
+    stop_pct = (price - stop_price) / price * 100
+    tp_pct   = (tp_price - price)   / price * 100
+
+    try:
+        from telegram_chat import _fmt_price as _fp3
+        _stop_str = _fp3(stop_price)
+        _tp_str   = _fp(tp_price)
+        _stop_str = _fp(stop_price)
+    except Exception:
+        _tp_str   = f"${tp_price:.2f}"
+        _stop_str = f"${stop_price:.2f}"
+
     await send_message(
-        f"🛒 <b>קנינו!</b>  🎉\n"
+        f"🛒 <b>קנינו!</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"💹  <b>{ticker}</b>  ·  {qty_str} מניות\n\n"
-        f"📌  מחיר קנייה:   {_price_str}\n"
-        f"💸  סה״כ הושקע:  {_notional_str}"
-        f"{stop_line}"
-        f"{tp_line}\n\n"
-        f"🎯  ציון:           <b>{score:.0f}/100</b>  {q}\n"
-        f"🧠  סנטימנט:     {sentiment_score}/10  {sent_label}"
-        f"{iceberg_line}"
-        f"{id_line}\n\n"
-        f"💡 <i>/stop {ticker}  |  /news {ticker}  |  /score {ticker}</i>"
+        f"📌 מניה: <b>{ticker}</b>\n"
+        f"🔢 כמות: {qty_str} מניות\n"
+        f"💵 מחיר קנייה: {_price_str}\n"
+        f"✅ יצא ברווח: {_tp_str} (+{tp_pct:.1f}%)\n"
+        f"❌ יצא בהפסד: {_stop_str} (-{stop_pct:.1f}%)\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🎯 ציון: <b>{score:.0f}/100</b>  {q}\n"
+        f"💸 סה״כ הושקע: {_notional_str}"
+        f"{id_line}"
     )
 
 

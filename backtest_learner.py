@@ -48,7 +48,7 @@ HOLD_PERIOD:      int   = int(os.getenv("BACKTEST_HOLD_DAYS",      "10"))   # 10
 WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "3.0"))  # 3% = win
 LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-2.0"))  # -2% = loss
 MIN_SAMPLES:      int   = int(os.getenv("BACKTEST_MIN_SAMPLES",    "20"))   # min entries for insight
-CACHE_TTL:        int   = int(os.getenv("BACKTEST_CACHE_TTL",      "86400"))  # 24h
+CACHE_TTL:        int   = int(os.getenv("BACKTEST_CACHE_TTL",      "1800"))   # 30min — re-trains every 30min while market closed
 
 # ── Result types ──────────────────────────────────────────────────────────────
 @dataclass
@@ -345,6 +345,250 @@ def _find_optimal_threshold(signals: list[dict]) -> int:
             best_score  = threshold
 
     return best_score
+
+
+def _explain_chart(row: "pd.Series", ticker: str, outcome: str, ret_10d: float,
+                   results_at: dict) -> str:
+    """
+    Build a human-readable explanation of WHY the chart behaved this way.
+    Correlates indicator readings at entry with the actual price outcome.
+    """
+    reasons_bullish = []
+    reasons_bearish = []
+
+    try:
+        rsi = float(row.get("rsi_14") or 50)
+        if rsi < 30:
+            reasons_bullish.append(f"RSI={rsi:.0f} (קניית יתר — זול מאוד)")
+        elif rsi < 45:
+            reasons_bullish.append(f"RSI={rsi:.0f} (בריא, לא קנוי)")
+        elif rsi > 70:
+            reasons_bearish.append(f"RSI={rsi:.0f} (מכירת יתר — יקר)")
+        elif rsi > 60:
+            reasons_bearish.append(f"RSI={rsi:.0f} (מתחיל להתחמם)")
+
+        macd = float(row.get("macd") or 0)
+        macd_sig = float(row.get("macd_signal") or 0)
+        macd_hist = float(row.get("macd_hist") or 0)
+        if macd > macd_sig:
+            reasons_bullish.append(f"MACD חיובי (+{macd_hist:.2f})")
+        else:
+            reasons_bearish.append(f"MACD שלילי ({macd_hist:.2f})")
+
+        vol_ratio = float(row.get("volume_ratio") or 1)
+        if vol_ratio >= 1.8:
+            reasons_bullish.append(f"נפח גבוה מאוד (×{vol_ratio:.1f})")
+        elif vol_ratio >= 1.2:
+            reasons_bullish.append(f"נפח גבוה (×{vol_ratio:.1f})")
+        elif vol_ratio < 0.7:
+            reasons_bearish.append(f"נפח נמוך (×{vol_ratio:.1f})")
+
+        close = float(row.get("close") or 0)
+        sma50 = float(row.get("sma_50") or 0)
+        sma200 = float(row.get("sma_200") or 0)
+        if sma50 > 0 and close > sma50:
+            reasons_bullish.append("מעל SMA50 (מגמה עולה)")
+        elif sma50 > 0:
+            reasons_bearish.append("מתחת SMA50 (מגמה יורדת)")
+        if sma50 > 0 and sma200 > 0:
+            if sma50 > sma200:
+                reasons_bullish.append("SMA50>SMA200 (גולדן קרוס)")
+            else:
+                reasons_bearish.append("SMA50<SMA200 (דת קרוס)")
+
+        bb_upper = float(row.get("bb_upper") or 0)
+        bb_lower = float(row.get("bb_lower") or 0)
+        if bb_upper > bb_lower > 0:
+            bb_pct = (close - bb_lower) / (bb_upper - bb_lower)
+            if bb_pct > 0.85:
+                reasons_bearish.append(f"קרוב לגג בולינגר ({bb_pct:.0%})")
+            elif bb_pct < 0.20:
+                reasons_bullish.append(f"קרוב לרצפת בולינגר ({bb_pct:.0%})")
+
+        momentum = float(row.get("momentum_10") or 0)
+        if momentum > 0:
+            reasons_bullish.append(f"מומנטום חיובי (+{momentum:.1f}$)")
+        else:
+            reasons_bearish.append(f"מומנטום שלילי ({momentum:.1f}$)")
+
+    except Exception:
+        pass
+
+    bull_str = " | ".join(reasons_bullish) if reasons_bullish else "אין"
+    bear_str = " | ".join(reasons_bearish) if reasons_bearish else "אין"
+    verdict = "✅ הגרף עלה" if outcome == "win" else ("❌ הגרף ירד" if outcome == "loss" else "➡️ ניטרלי")
+
+    return (
+        f"{ticker} | {verdict} ({ret_10d:+.1f}% ב-10י')\n"
+        f"  📈 סיבות עלייה בכניסה: {bull_str}\n"
+        f"  📉 סיבות ירידה בכניסה: {bear_str}\n"
+        f"  תשואות: 5י'={results_at.get('ret_5d',0):+.1f}% | "
+        f"10י'={results_at.get('ret_10d',0):+.1f}% | "
+        f"20י'={results_at.get('ret_20d',0):+.1f}%"
+    )
+
+
+def simulate_own_trade_history() -> dict:
+    """
+    Simulate outcomes of the bot's own past trades using real historical data.
+
+    For each trade the bot actually made:
+      1. Download real price history from yfinance (entry_date → today)
+      2. Compute what P&L would have been at 5 / 10 / 20 trading days hold
+      3. Update pnl_gross in trade_log so the learning system can use it
+      4. Save insights to learning_log
+
+    Returns a summary dict.
+    """
+    import sqlite3
+    import database as _db
+    from datetime import datetime, timedelta, timezone
+
+    logger.info("[OWN-TRADES] Starting simulation of bot's own trade history...")
+
+    conn = _db.get_connection()
+
+    # Get all closed trades (including ghost-closed with pnl=0)
+    rows = conn.execute("""
+        SELECT id, ticker, entry_price, entry_time, qty
+        FROM trade_log
+        WHERE status = 'closed'
+        ORDER BY entry_time DESC
+        LIMIT 50
+    """).fetchall()
+
+    if not rows:
+        logger.info("[OWN-TRADES] No closed trades to simulate")
+        return {"simulated": 0}
+
+    simulated = 0
+    wins = losses = 0
+    returns_list = []
+
+    for trade_id, ticker, entry_price, entry_time_str, qty in rows:
+        try:
+            from indicators import add_all_indicators
+
+            # Parse entry date
+            entry_dt = datetime.fromisoformat(entry_time_str.replace("Z", "+00:00"))
+            entry_date = entry_dt.date()
+
+            # Download 300 days before entry to compute indicators properly
+            start_str = str(entry_date - timedelta(days=300))
+            t = yf.Ticker(ticker)
+            hist = t.history(start=start_str, auto_adjust=True)
+            if hist.empty or len(hist) < 30:
+                logger.debug(f"[OWN-TRADES] {ticker}: no historical data")
+                continue
+
+            hist.columns = [c.lower() for c in hist.columns]
+            hist = hist[["open","high","low","close","volume"]].dropna()
+
+            # Add all indicators to the full history
+            hist = add_all_indicators(hist)
+
+            # Find row closest to entry date
+            hist.index = pd.to_datetime(hist.index).tz_localize(None)
+            entry_ts = pd.Timestamp(entry_date)
+            future_hist = hist[hist.index >= entry_ts]
+
+            if future_hist.empty or len(future_hist) < 2:
+                logger.debug(f"[OWN-TRADES] {ticker}: no data from {entry_date}")
+                continue
+
+            entry_row  = future_hist.iloc[0]
+            entry_close = float(entry_row["close"])
+
+            # Forward returns at 5, 10, 20 trading days
+            results_at = {}
+            for days in [5, 10, 20]:
+                idx = min(days, len(future_hist) - 1)
+                future_price = float(future_hist.iloc[idx]["close"])
+                ret_pct = (future_price - entry_close) / entry_close * 100
+                results_at[f"ret_{days}d"] = round(ret_pct, 2)
+
+            ret_10d   = results_at.get("ret_10d", 0.0)
+            sim_exit  = entry_close * (1 + ret_10d / 100)
+            sim_pnl   = (sim_exit - entry_price) * qty
+            returns_list.append(ret_10d)
+
+            outcome_str = (
+                "win"  if ret_10d >= WIN_THRESHOLD else
+                "loss" if ret_10d <= LOSS_THRESHOLD else "neutral"
+            )
+            if outcome_str == "win":   wins   += 1
+            elif outcome_str == "loss": losses += 1
+
+            # Build chart explanation — WHY did it move?
+            explanation = _explain_chart(entry_row, ticker, outcome_str, ret_10d, results_at)
+            logger.info(f"[OWN-TRADES] {explanation.splitlines()[0]}")
+            for line in explanation.splitlines()[1:]:
+                logger.info(f"[OWN-TRADES]   {line.strip()}")
+
+            # Update trade_log pnl
+            conn.execute("""
+                UPDATE trade_log
+                SET pnl_gross  = ?,
+                    exit_price = ?,
+                    rsi        = ?,
+                    macd       = ?,
+                    macd_signal = ?,
+                    volume_ratio = ?
+                WHERE id = ? AND (pnl_gross IS NULL OR pnl_gross = 0)
+            """, (
+                round(sim_pnl, 2),
+                round(sim_exit, 2),
+                round(float(entry_row.get("rsi_14") or 0), 1),
+                round(float(entry_row.get("macd") or 0), 4),
+                round(float(entry_row.get("macd_signal") or 0), 4),
+                round(float(entry_row.get("volume_ratio") or 1), 2),
+                trade_id,
+            ))
+
+            # Save full explanation to learning_log
+            import json as _json
+            indicators_snap = _json.dumps({
+                "rsi":          round(float(entry_row.get("rsi_14") or 0), 1),
+                "macd_bull":    bool(float(entry_row.get("macd") or 0) > float(entry_row.get("macd_signal") or 0)),
+                "vol_ratio":    round(float(entry_row.get("volume_ratio") or 1), 2),
+                "above_sma50":  bool(float(entry_row.get("close") or 0) > float(entry_row.get("sma_50") or 0)),
+                "above_sma200": bool(float(entry_row.get("close") or 0) > float(entry_row.get("sma_200") or 0)),
+                "momentum_10":  round(float(entry_row.get("momentum_10") or 0), 2),
+                "ret_5d":       results_at.get("ret_5d", 0),
+                "ret_10d":      ret_10d,
+                "ret_20d":      results_at.get("ret_20d", 0),
+            }, ensure_ascii=False)
+
+            conn.execute("""
+                INSERT INTO learning_log
+                    (trade_id, pattern_type, description,
+                     indicators_snapshot, outcome, pnl, created_at)
+                VALUES (?, 'own_trade_chart_analysis', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (trade_id, explanation, indicators_snap, outcome_str, round(sim_pnl, 2)))
+
+            simulated += 1
+
+        except Exception as exc:
+            logger.debug(f"[OWN-TRADES] {ticker}: {exc}")
+            continue
+
+    conn.commit()
+
+    avg_ret = float(np.mean(returns_list)) if returns_list else 0.0
+    wr      = wins / simulated * 100 if simulated > 0 else 0.0
+
+    summary = {
+        "simulated": simulated,
+        "wins":      wins,
+        "losses":    losses,
+        "win_rate":  round(wr, 1),
+        "avg_return": round(avg_ret, 2),
+    }
+    logger.info(
+        f"[OWN-TRADES] Done: {simulated} trades simulated | "
+        f"WR={wr:.1f}% | avg={avg_ret:+.2f}%"
+    )
+    return summary
 
 
 def _save_to_db(result: BacktestResult) -> None:
