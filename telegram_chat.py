@@ -2475,16 +2475,34 @@ def _handle_command(text: str, context: dict) -> str | None:
         open_pnl  = context.get("open_pnl", 0)
         realized  = context.get("realized_pnl_net", 0)
         total     = open_pnl + realized
-        icon      = "📈" if total >= 0 else "📉"
-        lines     = [f"{icon} <b>רווח/הפסד</b>\n━━━━━━━━━━━━━━━━"]
-        for p in positions:
-            e = "🟢" if p["pnl"] >= 0 else "🔴"
-            lines.append(f"  {e} <b>{p['ticker']}</b>:  {_fmt_pnl(p['pnl'], False)}  ({p['pct']:+.1f}%)")
-        lines.append(f"━━━━━━━━━━━━━━━━")
-        lines.append(f"📂  פתוח:    {_fmt_pnl(open_pnl)}")
+        equity    = context.get("equity", 0)
+        cash      = context.get("cash", 0)
+        invested  = equity - cash
+
+        lines = [f"💰 <b>רווח/הפסד — תיק</b>\n━━━━━━━━━━━━━━━━"]
+
+        if positions:
+            for p in positions:
+                e = "🟢" if p["pnl"] >= 0 else "🔴"
+                qty_str = f"{p['qty']:.4f}".rstrip('0').rstrip('.')
+                val = p.get("value") or round(p["current"] * p["qty"], 2)
+                held = _fmt_held(p.get("held_hours", 0))
+                lines.append(
+                    f"\n{e} <b>{p['ticker']}</b>  ({qty_str} מניות)\n"
+                    f"   כניסה: {_fmt_price(p['entry'])} → עכשיו: <b>{_fmt_price(p['current'])}</b>\n"
+                    f"   {_fmt_pnl(p['pnl'], False)}  <i>({p['pct']:+.2f}%)</i>  |  שווי: {_fmt_price(val)}\n"
+                    f"   ⏱️ הוחזק: {held}"
+                )
+        else:
+            lines.append("אין פוזיציות פתוחות כרגע")
+
+        lines.append(f"\n━━━━━━━━━━━━━━━━")
+        lines.append(f"💼  מושקע:    {_fmt_price(invested)}")
+        lines.append(f"📂  רווח פתוח:  {_fmt_pnl(open_pnl)}")
         if realized:
-            lines.append(f"💳  ממומש:  {_fmt_pnl(realized)}")
-        lines.append(f"{icon}  <b>סה״כ:  {_fmt_pnl(total)}</b>")
+            lines.append(f"💳  ממומש:     {_fmt_pnl(realized)}")
+        icon = "📈" if total >= 0 else "📉"
+        lines.append(f"{icon}  <b>סה״כ: {_fmt_pnl(total)}</b>")
         return "\n".join(lines)
 
     # /chart TICKER — ASCII price chart (30 days)
