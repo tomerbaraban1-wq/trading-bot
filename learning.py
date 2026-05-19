@@ -123,25 +123,29 @@ def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:
     if bb is not None and bb > _dynamic_thresholds["max_bb_position"]:
         return True, f"BB position {bb:.2f} > learned max {_dynamic_thresholds['max_bb_position']} (near top)"
 
-    # Check volume ratio — use relaxed threshold during pre/after-market (volume always lower)
+    # Volume ratio — adjust threshold by time of day
     import os as _os
-    from datetime import datetime, timezone, time as _time2
+    from datetime import datetime, timezone
     _extended = _os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
-    _now_utc = datetime.now(timezone.utc)
-    _h = _now_utc.hour
-    # Pre-market EDT: 08:00-13:30 UTC | After-hours EDT: 20:00-00:00 UTC
-    _is_extended_session = _extended and (
-        (8 <= _h < 13) or (_h >= 20)
-    )
-    _vol_threshold = (
-        max(0.4, _dynamic_thresholds["min_volume_ratio"] * 0.6)   # 40% lower during extended hours
-        if _is_extended_session
-        else _dynamic_thresholds["min_volume_ratio"]
-    )
+    _now_utc  = datetime.now(timezone.utc)
+    _h, _m    = _now_utc.hour, _now_utc.minute
+
+    # Pre/after market (EDT): 08:00-13:30 UTC | 20:00+ UTC
+    _is_extended_session = _extended and ((8 <= _h < 13) or (_h >= 20))
+    # First 90 min of regular session (EDT 13:30-15:00 UTC) — volume builds gradually
+    _is_open_rush = (13 <= _h < 15) or (_h == 13 and _m >= 30)
+
+    if _is_extended_session:
+        _vol_threshold = max(0.35, _dynamic_thresholds["min_volume_ratio"] * 0.5)
+    elif _is_open_rush:
+        _vol_threshold = max(0.30, _dynamic_thresholds["min_volume_ratio"] * 0.4)  # 60% lower first 90min
+    else:
+        _vol_threshold = _dynamic_thresholds["min_volume_ratio"]
+
     vol = indicators.get("volume_ratio")
     if vol is not None and vol < _vol_threshold:
-        session = "extended" if _is_extended_session else "regular"
-        return True, f"Volume ratio {vol:.2f} < min {_vol_threshold:.2f} ({session} session)"
+        session = "extended" if _is_extended_session else ("open rush" if _is_open_rush else "regular")
+        return True, f"Volume ratio {vol:.2f} < min {_vol_threshold:.2f} ({session})"
 
     return False, ""
 
