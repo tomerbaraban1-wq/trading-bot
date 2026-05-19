@@ -3176,7 +3176,43 @@ def _handle_command(text: str, context: dict) -> str | None:
     # ── שאלות מניות/פוזיציות ───────────────────────────────────────────────
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה", "manioth", "/manioth"]
     if any(k in t for k in stocks_keywords):
-        positions = context.get("open_positions", [])
+        # Always fetch live from DB — bypass cache so new positions show immediately
+        try:
+            import database as _dbm
+            import yfinance as _yf_m
+            _live_trades = _dbm.get_open_trades()
+            if _live_trades:
+                _tickers = [tr["ticker"] for tr in _live_trades]
+                _hist = _yf_m.download(_tickers, period="2d", progress=False, auto_adjust=True)
+                positions = []
+                for tr in _live_trades:
+                    tk = tr["ticker"]
+                    try:
+                        if len(_tickers) == 1:
+                            cur = float(_hist["Close"].dropna().iloc[-1])
+                        else:
+                            cur = float(_hist["Close"][tk].dropna().iloc[-1])
+                    except Exception:
+                        cur = float(tr.get("entry_price", 0))
+                    entry = float(tr.get("entry_price", 0))
+                    qty   = float(tr.get("qty", 0))
+                    pnl   = (cur - entry) * qty
+                    pct   = (cur - entry) / entry * 100 if entry > 0 else 0
+                    positions.append({
+                        "ticker":  tk,
+                        "qty":     qty,
+                        "entry":   entry,
+                        "current": cur,
+                        "pnl":     pnl,
+                        "pct":     pct,
+                        "value":   cur * qty,
+                        "atr_stop": tr.get("atr_stop_price") or 0,
+                        "held_hours": 0,
+                    })
+            else:
+                positions = []
+        except Exception:
+            positions = context.get("open_positions", [])
         if not positions:
             return "אין פוזיציות פתוחות כרגע 📭"
         lines = [f"📂 <b>פוזיציות פתוחות ({len(positions)})</b>\n━━━━━━━━━━━━━━━━"]
