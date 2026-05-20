@@ -3459,6 +3459,8 @@ async def handle_telegram_update(update: dict) -> dict:
         "📰 חדשות":          "/newscheck",
         "💡 ייעוץ AI":       "/advice",
         "⚠️ ניתוח סיכון":    "/risk",
+        "📅 מה היה היום":    "/today",
+        "🤖 AI ריוויו":      "/review",
         "📋 כל הפקודות":     "/help",
     }
     if text in _BUTTON_MAP:
