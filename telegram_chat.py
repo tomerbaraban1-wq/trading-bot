@@ -671,42 +671,43 @@ def _handle_command(text: str, context: dict) -> str | None:
         max_pos   = settings.MAX_OPEN_POSITIONS
         pnl_icon  = "📈" if pnl >= 0 else "📉"
         mkt_icon  = "🟢" if mkt_open else "🔴"
-        lines = [f"📊 <b>סטטוס הבוט</b>\n━━━━━━━━━━━━━━━━"]
-        lines.append(f"💼  שווי תיק:     <b>{_fmt_price(equity)}</b>")
-        lines.append(f"💵  מזומן:          {_fmt_price(cash)}")
-        lines.append(f"{pnl_icon}  רווח/הפסד פתוח:  {_fmt_pnl(pnl)}")
+        lines = [f"📊 <b>מצב התיק</b>", "━━━━━━━━━━━━━━━━"]
+        lines.append(f"💼 שווי תיק:   <b>{_fmt_price(equity)}</b>")
+        lines.append(f"💵 מזומן:       {_fmt_price(cash)}")
+        lines.append(f"{pnl_icon} רווח/הפסד:  {_fmt_pnl(pnl)}")
         if realized != 0:
-            lines.append(f"🏆  ממומש:          {_fmt_pnl(realized)}")
-        lines.append(f"📂  פוזיציות:      <b>{n_pos}/{max_pos}</b>")
-        lines.append(f"{mkt_icon}  שוק:            {'פתוח' if mkt_open else 'סגור'}")
+            lines.append(f"🏆 ממומש:       {_fmt_pnl(realized)}")
+        lines.append(f"📂 פוזיציות:   <b>{n_pos}/{max_pos}</b>")
+        lines.append(f"{mkt_icon} שוק:          {'פתוח ✅' if mkt_open else 'סגור 🔴'}")
         if vix:
             vix_icon = "😌" if vix < 20 else ("😟" if vix < 28 else "😱")
-            lines.append(f"{vix_icon}  VIX:              {vix:.1f}")
+            lines.append(f"{vix_icon} VIX:          {vix:.1f}")
         if cb:
-            lines.append(f"⛔  Circuit Breaker: פעיל — קניות מושהות")
+            lines.append(f"⛔ Circuit Breaker: פעיל")
         import os as _os
         if _os.getenv("BOT_PAUSED"):
-            lines.append(f"⏸️  הבוט: מושהה — שלח /resume להמשך")
+            lines.append(f"⏸️ הבוט:       מושהה")
         else:
-            lines.append(f"✅  הבוט: פעיל וסורק")
+            lines.append(f"✅ הבוט:       פעיל וסורק")
         if positions:
             total_pnl_open = sum(p["pnl"] for p in positions)
             total_invested = sum(p.get("invested") or round(p["entry"] * p["qty"], 2) for p in positions)
-            lines.append(f"\n<b>פוזיציות ({n_pos}):</b>")
+            lines.append(f"")
+            lines.append(f"<b>📂 פוזיציות ({n_pos}):</b>")
+            lines.append(f"━━━━━━━━━━━━━━━━")
             for p in positions:
-                icon  = "🟢" if p["pnl"] >= 0 else "🔴"
-                qty   = f"{p['qty']:.4f}".rstrip('0').rstrip('.')
-                invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
-                lines.append(
-                    f"\n{icon} <b>{p['ticker']}</b>  {p['pct']:+.1f}%\n"
-                    f"   🔢 כמות: {qty} מניות\n"
-                    f"   💵 כניסה: {_fmt_price(p['entry'])} → עכשיו: {_fmt_price(p['current'])}\n"
-                    f"   💰 רווח/הפסד: {_fmt_pnl(p['pnl'], False)}\n"
-                    f"   💼 שווי פוזיציה: {_fmt_price(p['current'] * p['qty'])}"
-                )
-            lines.append(f"\n📊 <b>סה\"כ הושקע: {_fmt_price(total_invested)}</b>")
+                icon = "🟢" if p["pnl"] >= 0 else "🔴"
+                qty  = f"{p['qty']:.4f}".rstrip('0').rstrip('.')
+                lines.append(f"{icon} <b>{p['ticker']}</b>")
+                lines.append(f"   🔢 כמות:        {qty} מניות")
+                lines.append(f"   💵 כניסה:       {_fmt_price(p['entry'])}")
+                lines.append(f"   📍 עכשיו:       {_fmt_price(p['current'])} ({p['pct']:+.1f}%)")
+                lines.append(f"   💰 רווח/הפסד:  {_fmt_pnl(p['pnl'], False)}")
+                lines.append(f"   💼 שווי:        {_fmt_price(p['current'] * p['qty'])}")
+                lines.append(f"")
+            lines.append(f"📊 סה\"כ הושקע: <b>{_fmt_price(total_invested)}</b>")
             if total_pnl_open != 0:
-                lines.append(f"{'📈' if total_pnl_open >= 0 else '📉'} <b>סה\"כ רווח פתוח: {_fmt_pnl(total_pnl_open, False)}</b>")
+                lines.append(f"{'📈' if total_pnl_open >= 0 else '📉'} סה\"כ רווח: <b>{_fmt_pnl(total_pnl_open, False)}</b>")
 
         # Smart action suggestion based on state
         lines.append(f"\n━━━━━━━━━━━━━━━━\n💡 <i>")
