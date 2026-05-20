@@ -885,6 +885,13 @@ async def auto_invest_loop():
             except Exception:
                 pass   # fail-open: proceed if market data unavailable
 
+            # ── Event Memory: auto-record today's market reaction ────────────────
+            try:
+                from event_memory import auto_record_today, get_event_signal
+                await asyncio.to_thread(auto_record_today)
+            except Exception:
+                pass
+
             # High-impact economic event guard (CPI / NFP) — check BEFORE
             # is_ok_to_trade() so we can send a Telegram notification on these days.
             from trading_hours import is_ok_to_trade, is_high_impact_day
@@ -908,6 +915,34 @@ async def auto_invest_loop():
                 logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
+
+            # ── Event Memory signal: warn if similar events caused market drops ──
+            try:
+                from event_memory import get_event_signal
+                from trading_hours import _FOMC_DATES, _ECONOMIC_DATES
+                import datetime as _dt_ev
+                _today_ev = _dt_ev.date.today()
+                _ev_type  = None
+                if _today_ev in _FOMC_DATES:
+                    _ev_type = "FOMC"
+                elif _today_ev in _ECONOMIC_DATES:
+                    _ev_label = _ECONOMIC_DATES[_today_ev]
+                    _ev_type  = "CPI" if "CPI" in _ev_label else ("NFP" if "NFP" in _ev_label else None)
+
+                if _ev_type:
+                    _caution, _ev_reason = get_event_signal(_ev_type)
+                    if _caution == "high":
+                        logger.warning(f"[EVENT MEMORY] {_ev_type} — HIGH caution: {_ev_reason}")
+                        _create_background_task(send_message(
+                            f"⚠️ <b>זיכרון אירועים: {_ev_type}</b>\n"
+                            f"📉 בעבר השוק ירד ברוב הפעמים בצאת {_ev_type}:\n"
+                            f"<i>{_ev_reason}</i>\n"
+                            f"הבוט ימשיך לסרוק אבל יהיה זהיר יותר."
+                        ))
+                    elif _caution == "positive":
+                        logger.info(f"[EVENT MEMORY] {_ev_type} — POSITIVE: {_ev_reason}")
+            except Exception:
+                pass
 
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 

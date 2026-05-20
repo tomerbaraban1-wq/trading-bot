@@ -138,7 +138,8 @@ def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:
     if _is_extended_session:
         _vol_threshold = max(0.35, _dynamic_thresholds["min_volume_ratio"] * 0.5)
     elif _is_open_rush:
-        _vol_threshold = max(0.30, _dynamic_thresholds["min_volume_ratio"] * 0.4)  # 60% lower first 90min
+        # First 90min: volume always low (37min = ~10% of day). Use absolute floor.
+        _vol_threshold = 0.08  # almost disabled — time-of-day makes this meaningless
     else:
         _vol_threshold = _dynamic_thresholds["min_volume_ratio"]
 

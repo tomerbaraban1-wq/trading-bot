@@ -1420,6 +1420,13 @@ def _handle_command(text: str, context: dict) -> str | None:
             return "❌ שגיאה פנימית — נסה שוב"
 
     # /macro — upcoming economic events
+    if cmd in ("/memory", "memory", "זיכרון", "זיכרון אירועים"):
+        try:
+            from event_memory import get_memory_summary
+            return get_memory_summary()
+        except Exception as e:
+            return f"❌ שגיאה: {e}"
+
     if cmd in ("/macro", "macro", "אירועים", "לוח כלכלי", "אירועים כלכליים"):
         try:
             from trading_hours import is_high_impact_day
