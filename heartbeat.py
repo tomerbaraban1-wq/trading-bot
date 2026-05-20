@@ -30,6 +30,9 @@ _smart_sell_low_count: dict[str, int] = {}
 
 # Stop-raise alert deduplication: ticker → last alert pct
 _position_alert_sent: dict[str, float] = {}
+
+# Momentum exit: track last 3 prices per ticker to detect declining trend
+_price_history: dict[str, list] = {}   # ticker → [price1, price2, price3] (oldest→newest)
 # Price-target alerts already fired: "TICKER:PRICE" strings
 _price_alerts_fired: set = set()
 # In-memory guard: partial-sell stage already executed this cycle
@@ -760,6 +763,31 @@ async def stop_loss_monitor():
                             f"רווח יעד ({plpc:.1f}% ≥ {_atr_tp_pct:.1f}%)"
                         )
                         continue
+
+                    # ── 2b. Momentum Exit — sell if declining 3 checks in a row while in profit ──
+                    try:
+                        _ph = _price_history.setdefault(ticker, [])
+                        _ph.append(cur_price)
+                        if len(_ph) > 3:
+                            _ph.pop(0)  # keep only last 3 prices
+
+                        if (len(_ph) == 3
+                                and _ph[0] > _ph[1] > _ph[2]   # 3 consecutive lower prices
+                                and plpc > 0.5):                 # still in profit (> 0.5%)
+                            _drop_from_peak = (_ph[0] - _ph[2]) / _ph[0] * 100
+                            logger.info(
+                                f"[MOMENTUM EXIT] {ticker}: 3 consecutive lower prices "
+                                f"({_ph[0]:.2f}→{_ph[1]:.2f}→{_ph[2]:.2f}) | "
+                                f"still +{plpc:.1f}% profit — selling to lock in gains"
+                            )
+                            _price_history.pop(ticker, None)
+                            await _close_position(
+                                trade, cur_price, "momentum_exit",
+                                f"ירידה רצופה 3 בדיקות | נעילת רווח {plpc:+.1f}%"
+                            )
+                            continue
+                    except Exception:
+                        pass
 
                     # ── 3. Smart Sell (score collapse, max once per 5 min) ────
                     import time as _time
