@@ -417,13 +417,18 @@ async def notify_iceberg_start(
     n_slices:     int,
     interval_sec: float,
 ) -> None:
-    qty_str = f"{total_qty:.4f}" if total_qty != int(total_qty) else str(int(total_qty))
-    slice_qty = round(total_qty / n_slices, 4) if n_slices else total_qty
+    qty_str   = f"{total_qty:.4f}".rstrip('0').rstrip('.')
+    slice_qty = f"{round(total_qty / n_slices, 4):.4f}".rstrip('0').rstrip('.') if n_slices else qty_str
     duration_min = (n_slices - 1) * interval_sec / 60
     await send_message(
-        f"🧊 <b>פיצול הזמנה — {ticker}</b>\n"
-        f"📦 {qty_str} מניות → {n_slices} חלקים × ~{slice_qty} מניות\n"
-        f"⏱ מרווח: {interval_sec:.0f} שניות  |  משך משוער: ~{duration_min:.0f} דקות"
+        f"🧊 <b>פיצול הזמנה</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷️ מניה:         <b>{ticker}</b>\n"
+        f"📦 סה״כ:          {qty_str} מניות\n"
+        f"✂️ חלקים:         {n_slices} חלקים\n"
+        f"🔢 כל חלק:        ~{slice_qty} מניות\n"
+        f"⏱️ מרווח:         {interval_sec:.0f} שניות\n"
+        f"🕐 משך משוער:    ~{duration_min:.0f} דקות"
     )
 
 
@@ -434,12 +439,20 @@ async def notify_iceberg_done(
     n_slices:   int,
     is_partial: bool,
 ) -> None:
-    qty_str = f"{filled_qty:.4f}" if filled_qty != int(filled_qty) else str(int(filled_qty))
-    status = "⚠️ בוצע חלקית" if is_partial else "✅ הושלם"
+    qty_str = f"{filled_qty:.4f}".rstrip('0').rstrip('.')
+    status  = "⚠️ בוצע חלקית" if is_partial else "✅ הושלם"
+    try:
+        from telegram_chat import _fmt_price as _fp
+        price_str = _fp(avg_price)
+    except Exception:
+        price_str = f"${avg_price:.2f}"
     await send_message(
-        f"🧊 <b>פיצול הזמנה {status} — {ticker}</b>\n"
-        f"📦 {qty_str} מניות בוצעו ב-{n_slices} חלקים\n"
-        f"💵 מחיר ממוצע: ${avg_price:.4f}"
+        f"🧊 <b>פיצול הזמנה {status}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷️ מניה:           <b>{ticker}</b>\n"
+        f"📦 בוצע:            {qty_str} מניות\n"
+        f"✂️ חלקים:           {n_slices} חלקים\n"
+        f"💵 מחיר ממוצע:    {price_str}"
     )
 
 
