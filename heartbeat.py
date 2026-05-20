@@ -102,7 +102,7 @@ async def keep_alive_loop():
                     logger.debug(f"Keep-alive ping → {base_url}/ping: {resp.status}")
         except Exception as exc:
             logger.debug(f"Keep-alive ping failed (harmless): {exc}")
-        await asyncio.sleep(14 * 60)   # every 14 min — Render sleeps after 15 min inactivity
+        await asyncio.sleep(10 * 60)   # every 10 min — extra-safe vs Render 15 min spin-down
 
 
 async def heartbeat_loop():
