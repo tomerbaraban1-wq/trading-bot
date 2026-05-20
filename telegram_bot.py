@@ -433,11 +433,12 @@ async def notify_iceberg_start(
 
 
 async def notify_iceberg_done(
-    ticker:     str,
-    filled_qty: float,
-    avg_price:  float,
-    n_slices:   int,
-    is_partial: bool,
+    ticker:       str,
+    filled_qty:   float,
+    avg_price:    float,
+    n_slices:     int,
+    is_partial:   bool,
+    slice_results: list = None,
 ) -> None:
     qty_str = f"{filled_qty:.4f}".rstrip('0').rstrip('.')
     status  = "⚠️ בוצע חלקית" if is_partial else "✅ הושלם"
@@ -446,14 +447,30 @@ async def notify_iceberg_done(
         price_str = _fp(avg_price)
     except Exception:
         price_str = f"${avg_price:.2f}"
-    await send_message(
-        f"🧊 <b>פיצול הזמנה {status}</b>\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"🏷️ מניה:           <b>{ticker}</b>\n"
-        f"📦 בוצע:            {qty_str} מניות\n"
-        f"✂️ חלקים:           {n_slices} חלקים\n"
-        f"💵 מחיר ממוצע:    {price_str}"
-    )
+
+    lines = [
+        f"🧊 <b>פיצול הזמנה {status}</b>",
+        f"━━━━━━━━━━━━━━━━",
+        f"🏷️ מניה:           <b>{ticker}</b>",
+        f"📦 סה״כ בוצע:     {qty_str} מניות",
+        f"✂️ חלקים:           {n_slices} חלקים",
+    ]
+
+    # Show each slice breakdown
+    if slice_results:
+        lines.append(f"━━━━━━━━━━━━━━━━")
+        for s in slice_results:
+            sq = f"{s['qty']:.4f}".rstrip('0').rstrip('.')
+            try:
+                from telegram_chat import _fmt_price as _fp2
+                sp = _fp2(s['price'])
+            except Exception:
+                sp = f"${s['price']:.2f}"
+            lines.append(f"   חלק {s['slice']}: {sq} מניות @ {sp}")
+
+    lines.append(f"━━━━━━━━━━━━━━━━")
+    lines.append(f"💵 מחיר ממוצע:    {price_str}")
+    await send_message("\n".join(lines))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -299,7 +299,7 @@ async def iceberg_buy(
     try:
         from telegram_bot import notify_iceberg_done
         asyncio.ensure_future(
-            notify_iceberg_done(ticker, total_filled, avg_price, n, is_partial)
+            notify_iceberg_done(ticker, total_filled, avg_price, n, is_partial, slice_results)
         )
     except Exception:
         pass
