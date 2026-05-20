@@ -456,17 +456,28 @@ async def notify_iceberg_done(
         f"✂️ חלקים:           {n_slices} חלקים",
     ]
 
-    # Show each slice breakdown
+    # Show each slice with TP and SL prices
     if slice_results:
+        from config import settings as _cfg
         lines.append(f"━━━━━━━━━━━━━━━━")
         for s in slice_results:
-            sq = f"{s['qty']:.4f}".rstrip('0').rstrip('.')
+            sq  = f"{s['qty']:.4f}".rstrip('0').rstrip('.')
+            sp  = s['price']
+            tp  = round(sp * (1 + _cfg.TAKE_PROFIT_PCT / 100), 2)
+            sl  = round(sp * (1 - _cfg.STOP_LOSS_PCT  / 100), 2)
             try:
                 from telegram_chat import _fmt_price as _fp2
-                sp = _fp2(s['price'])
+                sp_str = _fp2(sp)
+                tp_str = _fp2(tp)
+                sl_str = _fp2(sl)
             except Exception:
-                sp = f"${s['price']:.2f}"
-            lines.append(f"   חלק {s['slice']}: {sq} מניות @ {sp}")
+                sp_str = f"${sp:.2f}"
+                tp_str = f"${tp:.2f}"
+                sl_str = f"${sl:.2f}"
+            lines.append(f"חלק {s['slice']}: {sq} מניות")
+            lines.append(f"   💵 קנייה:    {sp_str}")
+            lines.append(f"   ✅ TP:        {tp_str} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)")
+            lines.append(f"   ❌ SL:        {sl_str} (-{_cfg.STOP_LOSS_PCT:.0f}%)")
 
     lines.append(f"━━━━━━━━━━━━━━━━")
     lines.append(f"💵 מחיר ממוצע:    {price_str}")

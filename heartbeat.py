@@ -1216,14 +1216,17 @@ async def auto_invest_loop():
                             if _new_sector:
                                 _open_trades = database.get_open_trades()
                                 _open_sectors = [_sector_of(_ot["ticker"]) for _ot in _open_trades]
-                                # Allow up to 3 stocks in leading sector, 1 in others
+                                # Max per sector: 3 in top sector, 2 in 2nd, 1 in others
+                                # (prevents over-concentration but allows buying all good stocks)
                                 _max_per_sector = 1
                                 try:
                                     _leaders = _gls()
                                     if _leaders and _new_sector == _leaders[0].get("symbol"):
-                                        _max_per_sector = 3   # 3 stocks in leading sector
+                                        _max_per_sector = 4   # 4 stocks in #1 sector
                                     elif _leaders and _new_sector in [s.get("symbol") for s in _leaders[:2]]:
-                                        _max_per_sector = 2   # 2 stocks in 2nd-ranked sector
+                                        _max_per_sector = 3   # 3 stocks in #2 sector
+                                    elif _leaders and _new_sector in [s.get("symbol") for s in _leaders[:3]]:
+                                        _max_per_sector = 2   # 2 stocks in #3 sector
                                 except Exception:
                                     pass
                                 if _open_sectors.count(_new_sector) >= _max_per_sector:
