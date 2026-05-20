@@ -3451,15 +3451,15 @@ async def handle_telegram_update(update: dict) -> dict:
 
     # Map Hebrew button labels to commands
     _BUTTON_MAP = {
-        "📊 סטטוס":              "/status",
-        "💰 רווח/הפסד":          "/pnl",
-        "📈 מניות פתוחות":       "/manioth",
-        "📰 חדשות על התיק":      "/newscheck",
-        "🤖 AI ריוויו":           "/review",
-        "💡 ייעוץ AI":            "/advice",
-        "📅 היום":                "/today",
-        "⚠️ ניתוח סיכון":         "/risk",
-        "📋 כל הפקודות":          "/help",
+        "💰 רווח/הפסד":      "/pnl",
+        "📊 מצב התיק":       "/status",
+        "📈 מניות שלי":      "/manioth",
+        "🌍 מצב השוק":       "/market",
+        "🏆 מובילים היום":   "/gainers",
+        "📰 חדשות":          "/newscheck",
+        "💡 ייעוץ AI":       "/advice",
+        "⚠️ ניתוח סיכון":    "/risk",
+        "📋 כל הפקודות":     "/help",
     }
     if text in _BUTTON_MAP:
         text = _BUTTON_MAP[text]
