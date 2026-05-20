@@ -11,9 +11,9 @@ _THRESHOLD_UPDATE_INTERVAL: float = 3600.0   # 1 hour
 # Dynamic thresholds — updated automatically based on trade history
 _dynamic_thresholds = {
     "min_sentiment": 4,       # minimum sentiment score to buy
-    "max_rsi": 70,            # max RSI to enter (avoid overbought)
+    "max_rsi": 75,            # raised 70→75: allow momentum stocks in uptrend
     "min_rsi": 25,            # min RSI to enter (avoid oversold crash)
-    "max_bb_position": 0.85,  # avoid buying near top of Bollinger Band
+    "max_bb_position": 0.95,  # raised 0.85→0.95: allow near top in strong uptrend
     "min_volume_ratio": 0.5,  # avoid low-volume days
 }
 
@@ -90,10 +90,23 @@ def _update_thresholds():
     if loss_vols:
         low_vol_losses = [v for v in loss_vols if v < 0.7]
         if len(low_vol_losses) >= 2:
-            new_min_vol = min(0.9, max(low_vol_losses) + 0.1)
+            new_min_vol = min(0.6, max(low_vol_losses) + 0.1)
             if new_min_vol > _dynamic_thresholds["min_volume_ratio"]:
                 logger.info(f"LEARNING: Raising min_volume_ratio → {new_min_vol:.2f}")
                 _dynamic_thresholds["min_volume_ratio"] = round(new_min_vol, 2)
+
+    # Relaxation: if winning trades had low volume, loosen the threshold
+    win_vols = [t["volume_ratio"] for t in wins if t.get("volume_ratio") is not None]
+    if win_vols and len(wins) >= 3:
+        avg_win_vol = sum(win_vols) / len(win_vols)
+        if avg_win_vol < _dynamic_thresholds["min_volume_ratio"]:
+            relaxed_vol = max(0.3, round(avg_win_vol - 0.05, 2))
+            if relaxed_vol < _dynamic_thresholds["min_volume_ratio"]:
+                logger.info(
+                    f"LEARNING: Relaxing min_volume_ratio {_dynamic_thresholds['min_volume_ratio']} → {relaxed_vol} "
+                    f"(wins avg vol={avg_win_vol:.2f} — threshold too strict)"
+                )
+                _dynamic_thresholds["min_volume_ratio"] = relaxed_vol
 
 
 def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:
@@ -124,28 +137,47 @@ def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:
         return True, f"BB position {bb:.2f} > learned max {_dynamic_thresholds['max_bb_position']} (near top)"
 
     # Volume ratio — adjust threshold by time of day
+    # Intraday volume ratio compares accumulated volume to full-day MA20.
+    # At 10:00 ET (~30min in), only ~10% of daily volume has traded — ratio is always low.
+    # Scale threshold by % of trading day elapsed to avoid false blocks.
     import os as _os
     from datetime import datetime, timezone
     _extended = _os.getenv("EXTENDED_HOURS_TRADING", "false").lower() == "true"
     _now_utc  = datetime.now(timezone.utc)
     _h, _m    = _now_utc.hour, _now_utc.minute
+    _minutes_utc = _h * 60 + _m
 
-    # Pre/after market (EDT): 08:00-13:30 UTC | 20:00+ UTC
-    _is_extended_session = _extended and ((8 <= _h < 13) or (_h >= 20))
-    # First 90 min of regular session (EDT 13:30-15:00 UTC) — volume builds gradually
-    _is_open_rush = (13 <= _h < 15) or (_h == 13 and _m >= 30)
+    # NYSE session in UTC: 13:30–20:00 (EDT) or 14:30–21:00 (EST)
+    # DST: EDT = March 2nd Sunday – November 1st Sunday
+    _month = _now_utc.month
+    _is_edt = 4 <= _month <= 10 or (_month == 3 and _now_utc.day >= 8) or (_month == 11 and _now_utc.day < 7)
+    _session_start_utc = (13 * 60 + 30) if _is_edt else (14 * 60 + 30)
+    _session_end_utc   = (20 * 60) if _is_edt else (21 * 60)
+    _session_length    = _session_end_utc - _session_start_utc  # 390 minutes
+
+    _is_extended_session = _extended and (
+        (8 * 60 <= _minutes_utc < _session_start_utc) or (_minutes_utc >= _session_end_utc)
+    )
 
     if _is_extended_session:
-        _vol_threshold = max(0.35, _dynamic_thresholds["min_volume_ratio"] * 0.5)
-    elif _is_open_rush:
-        # First 90min: volume always low (37min = ~10% of day). Use absolute floor.
-        _vol_threshold = 0.08  # almost disabled — time-of-day makes this meaningless
+        _vol_threshold = 0.05
+    elif _session_start_utc <= _minutes_utc < _session_end_utc:
+        _elapsed = _minutes_utc - _session_start_utc
+        _day_pct = _elapsed / _session_length
+        _vol_threshold = _dynamic_thresholds["min_volume_ratio"] * min(1.0, _day_pct * 1.5)
+        _vol_threshold = max(0.05, _vol_threshold)
     else:
-        _vol_threshold = _dynamic_thresholds["min_volume_ratio"]
+        _vol_threshold = 0.05
 
     vol = indicators.get("volume_ratio")
     if vol is not None and vol < _vol_threshold:
-        session = "extended" if _is_extended_session else ("open rush" if _is_open_rush else "regular")
+        if _is_extended_session:
+            session = "extended"
+        elif _session_start_utc <= _minutes_utc < _session_end_utc:
+            _elapsed = _minutes_utc - _session_start_utc
+            session = f"regular, {_elapsed}min into session"
+        else:
+            session = "closed"
         return True, f"Volume ratio {vol:.2f} < min {_vol_threshold:.2f} ({session})"
 
     return False, ""
