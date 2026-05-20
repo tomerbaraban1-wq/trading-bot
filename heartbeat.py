@@ -1309,9 +1309,9 @@ async def auto_invest_loop():
                                 logger.info(f"AUTO-INVEST: {ticker} buy lock held by webhook — skipping")
                                 continue
                             async with _ticker_lock:
-                                order = await _do_buy_locked()
+                                order = await _asyncio.wait_for(_do_buy_locked(), timeout=120)
                         else:
-                            order = await _do_buy_locked()
+                            order = await _asyncio.wait_for(_do_buy_locked(), timeout=120)
 
                         if order is None:
                             continue  # duplicate detected inside lock
