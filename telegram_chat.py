@@ -2892,7 +2892,7 @@ def _handle_command(text: str, context: dict) -> str | None:
                 tk = tr.get("ticker", "")
                 if not tk:
                     continue
-                if _t_nc.time() - _nc_start > 16:  # hard-stop
+                if _t_nc.time() - _nc_start > 7:   # hard-stop (7s max for Telegram)
                     lines.append("⏳ בדיקה חלקית — הוגבלה בזמן")
                     break
                 try:
