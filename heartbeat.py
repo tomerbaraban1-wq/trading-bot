@@ -885,10 +885,18 @@ async def auto_invest_loop():
             except Exception:
                 pass   # fail-open: proceed if market data unavailable
 
-            # ── Event Memory: auto-record today's market reaction ────────────────
+            # ── Event Memory: record today + read scenario signal ────────────────
             try:
-                from event_memory import auto_record_today, get_event_signal
+                from event_memory import auto_record_today, get_scenario_signal, record_market_scenario
                 await asyncio.to_thread(auto_record_today)
+                await asyncio.to_thread(record_market_scenario)
+
+                # Use scenario signal to log market context
+                _sig, _sig_reason = await asyncio.to_thread(get_scenario_signal)
+                if _sig in ("bearish", "caution"):
+                    logger.warning(f"[SCENARIO MEMORY] {_sig.upper()}: {_sig_reason}")
+                elif _sig == "bullish":
+                    logger.info(f"[SCENARIO MEMORY] BULLISH: {_sig_reason}")
             except Exception:
                 pass
 

@@ -221,3 +221,209 @@ def get_memory_summary() -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"שגיאה: {e}"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Market Scenario Memory — הבוט זוכר מה השוק עשה במצבים דומים
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _ensure_scenario_table(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS market_scenarios (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            date         TEXT NOT NULL,
+            spy_pct_1d   REAL,   -- שינוי SPY אותו יום
+            spy_pct_3d   REAL,   -- שינוי SPY 3 ימים אחר כך
+            spy_pct_5d   REAL,   -- שינוי SPY 5 ימים אחר כך
+            vix          REAL,   -- VIX אותו יום
+            spy_rsi      REAL,   -- RSI של SPY
+            above_sma50  INTEGER, -- SPY מעל SMA50? 1/0
+            leading_sector TEXT, -- איזה סקטור הוביל
+            market_label TEXT,   -- "rally" | "selloff" | "flat" | "volatile"
+            notes        TEXT,
+            recorded_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+
+
+def record_market_scenario() -> None:
+    """
+    תעד את מצב השוק היום + מה קרה אחר כך (retroactively after 5 days).
+    קורא אוטומטית מ-yfinance כל יום.
+    """
+    try:
+        import yfinance as yf
+        import numpy as np
+
+        today_str = date.today().isoformat()
+        conn = _get_conn()
+        _ensure_scenario_table(conn)
+
+        # Don't re-record same day
+        if conn.execute("SELECT id FROM market_scenarios WHERE date=?", (today_str,)).fetchone():
+            conn.close()
+            return
+
+        # Fetch SPY history
+        spy = yf.Ticker("SPY").history(period="60d", auto_adjust=True)
+        if spy.empty or len(spy) < 10:
+            conn.close()
+            return
+
+        closes = spy["Close"].dropna()
+        today_close = float(closes.iloc[-1])
+        prev_close  = float(closes.iloc[-2])
+        spy_1d = (today_close - prev_close) / prev_close * 100
+
+        # SPY RSI
+        delta = closes.diff()
+        gain  = delta.where(delta > 0, 0).ewm(alpha=1/14, min_periods=14).mean()
+        loss  = (-delta).where(delta < 0, 0).ewm(alpha=1/14, min_periods=14).mean()
+        rs    = gain / (loss + 1e-10)
+        rsi_series = 100 - (100 / (1 + rs))
+        spy_rsi = float(rsi_series.iloc[-1]) if len(rsi_series) >= 14 else 50.0
+
+        # SMA50
+        sma50 = float(closes.rolling(50).mean().iloc[-1]) if len(closes) >= 50 else today_close
+        above_sma50 = 1 if today_close > sma50 else 0
+
+        # VIX
+        vix_val = None
+        try:
+            vix = yf.Ticker("^VIX").history(period="5d", auto_adjust=True)
+            if not vix.empty:
+                vix_val = float(vix["Close"].iloc[-1])
+        except Exception:
+            pass
+
+        # Market label
+        if spy_1d > 1.5:
+            label = "rally"
+        elif spy_1d < -1.5:
+            label = "selloff"
+        elif (vix_val or 20) > 25:
+            label = "volatile"
+        else:
+            label = "flat"
+
+        conn.execute("""
+            INSERT INTO market_scenarios
+                (date, spy_pct_1d, vix, spy_rsi, above_sma50, market_label)
+            VALUES (?,?,?,?,?,?)
+        """, (today_str, round(spy_1d, 2), vix_val, round(spy_rsi, 1), above_sma50, label))
+        conn.commit()
+
+        # Retroactively fill 3d/5d returns for scenarios from 3 & 5 days ago
+        for lag, col in [(3, "spy_pct_3d"), (5, "spy_pct_5d")]:
+            target_date = (date.today() - timedelta(days=lag*1 + 1)).isoformat()
+            row = conn.execute(
+                f"SELECT id, spy_pct_1d FROM market_scenarios WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                (target_date,)
+            ).fetchone()
+            if row:
+                # find close on target date from spy history
+                try:
+                    idx = list(closes.index)
+                    # find price lag days ago
+                    target_close = float(closes.iloc[-(lag+1)])
+                    target_prev  = float(closes.iloc[-(lag+2)])
+                    cumret = (today_close - target_close) / target_close * 100
+                    conn.execute(
+                        f"UPDATE market_scenarios SET {col}=? WHERE id=?",
+                        (round(cumret, 2), row[0])
+                    )
+                except Exception:
+                    pass
+
+        conn.commit()
+        conn.close()
+        logger.info(f"[SCENARIO] תועד: {today_str} | SPY {spy_1d:+.1f}% | VIX={vix_val} | RSI={spy_rsi:.0f} | {label}")
+
+    except Exception as e:
+        logger.debug(f"[SCENARIO] record error: {e}")
+
+
+def get_scenario_signal() -> tuple[str, str]:
+    """
+    בדוק מה השוק עשה בעבר כשהתנאים היו דומים לעכשיו.
+    מחזיר: (signal, explanation)
+    signal: "bullish" | "bearish" | "neutral" | "caution"
+    """
+    try:
+        import yfinance as yf
+
+        conn = _get_conn()
+        _ensure_scenario_table(conn)
+
+        # Current conditions
+        spy = yf.Ticker("SPY").history(period="60d", auto_adjust=True)
+        if spy.empty or len(spy) < 15:
+            conn.close()
+            return "neutral", "אין מספיק נתוני SPY"
+
+        closes = spy["Close"].dropna()
+        today_close = float(closes.iloc[-1])
+        prev_close  = float(closes.iloc[-2])
+        today_pct = (today_close - prev_close) / prev_close * 100
+
+        # RSI
+        delta = closes.diff()
+        gain  = delta.where(delta > 0, 0).ewm(alpha=1/14).mean()
+        loss  = (-delta).where(delta < 0, 0).ewm(alpha=1/14).mean()
+        rs    = gain / (loss + 1e-10)
+        rsi_now = float((100 - 100/(1+rs)).iloc[-1])
+
+        sma50     = float(closes.rolling(50).mean().iloc[-1]) if len(closes) >= 50 else today_close
+        above_now = 1 if today_close > sma50 else 0
+
+        vix_now = None
+        try:
+            vix = yf.Ticker("^VIX").history(period="5d", auto_adjust=True)
+            if not vix.empty:
+                vix_now = float(vix["Close"].iloc[-1])
+        except Exception:
+            pass
+
+        # Find similar historical scenarios
+        rows = conn.execute("""
+            SELECT spy_pct_1d, spy_pct_5d, market_label, date
+            FROM market_scenarios
+            WHERE above_sma50 = ?
+              AND spy_rsi BETWEEN ? AND ?
+              AND spy_pct_5d IS NOT NULL
+            ORDER BY date DESC
+            LIMIT 20
+        """, (above_now, rsi_now - 10, rsi_now + 10)).fetchall()
+        conn.close()
+
+        if len(rows) < 3:
+            return "neutral", f"מעט מדי תרחישים דומים (RSI≈{rsi_now:.0f}, {'מעל' if above_now else 'מתחת'} SMA50)"
+
+        forward_5d  = [r[1] for r in rows if r[1] is not None]
+        if not forward_5d:
+            return "neutral", "אין נתוני תשואה קדימה"
+
+        avg_5d  = sum(forward_5d) / len(forward_5d)
+        pos_pct = sum(1 for x in forward_5d if x > 0.5) / len(forward_5d) * 100
+        n       = len(forward_5d)
+
+        summary = (
+            f"RSI≈{rsi_now:.0f}, {'מעל' if above_now else 'מתחת'} SMA50 | "
+            f"{n} תרחישים דומים | "
+            f"ממוצע 5 ימים: {avg_5d:+.1f}% | "
+            f"חיובי {pos_pct:.0f}% מהפעמים"
+        )
+
+        if avg_5d > 1.0 and pos_pct >= 65:
+            return "bullish", summary
+        elif avg_5d < -1.0 or pos_pct <= 35:
+            return "bearish", summary
+        elif (vix_now or 20) > 28:
+            return "caution", f"VIX גבוה ({vix_now:.1f}) + {summary}"
+        else:
+            return "neutral", summary
+
+    except Exception as e:
+        logger.debug(f"[SCENARIO] signal error: {e}")
+        return "neutral", f"שגיאה: {e}"
