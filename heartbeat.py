@@ -1209,6 +1209,7 @@ async def auto_invest_loop():
                             logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
 
                         # Sector diversification — skip if already holding a stock from same sector
+                        # Also skip defensive/commodity sectors in bull market (SPY above SMA50)
                         try:
                             from sector_rotation import get_sector_for_ticker as _sector_of
                             _new_sector = _sector_of(ticker)
@@ -1221,6 +1222,25 @@ async def auto_invest_loop():
                                         f"sector {_new_sector} already held"
                                     )
                                     continue
+
+                            # Avoid defensive/commodity sectors in bull market
+                            _WEAK_SECTORS_IN_BULL = {
+                                "XLE",   # אנרגיה (GLD, GDX)
+                                "GLD",   # זהב
+                                "XLV",   # בריאות
+                                "XLU",   # תשתיות
+                                "XLP",   # צרכנות בסיסית (MCD)
+                            }
+                            # Check if ticker itself is a defensive ETF
+                            if ticker.upper() in {"GLD", "GDX", "XLV", "XLU", "XLP", "SLV", "USO"}:
+                                try:
+                                    from indicators import get_market_conditions as _gmc
+                                    _mc = _gmc()
+                                    if _mc.get("spy_above_sma50"):
+                                        logger.info(f"AUTO-INVEST: {ticker} skipped — defensive in bull market")
+                                        continue
+                                except Exception:
+                                    pass
                         except Exception:
                             pass  # fail-open: proceed if sector check fails
 
