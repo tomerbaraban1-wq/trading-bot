@@ -1332,23 +1332,27 @@ async def auto_invest_loop():
                     try:
                         from config import settings as _cfg
                         from telegram_chat import _fmt_price as _fp
-                        lines = [f"🛒 <b>קנינו {len(_bought_list)} מניות!</b>", "━━━━━━━━━━━━━━━━"]
+                        n = len(_bought_list)
+                        lines = [
+                            f"🛒 <b>קנינו {n} {'מניה' if n==1 else 'מניות'}! 🎉</b>",
+                            "━━━━━━━━━━━━━━━━"
+                        ]
                         for _b in _bought_list:
-                            _p  = _b["price"]
-                            _sl = round(_p * (1 - _cfg.STOP_LOSS_PCT  / 100), 2)
-                            _tp = round(_p * (1 + _cfg.TAKE_PROFIT_PCT / 100), 2)
+                            _p   = _b["price"]
+                            _sl  = round(_p * (1 - _cfg.STOP_LOSS_PCT  / 100), 2)
+                            _tp  = round(_p * (1 + _cfg.TAKE_PROFIT_PCT / 100), 2)
                             _qty = f"{_b['qty']:.4f}".rstrip('0').rstrip('.')
-                            lines.append(
-                                f"📌 מניה: <b>{_b['ticker']}</b>\n"
-                                f"🔢 כמות: {_qty} מניות\n"
-                                f"💵 מחיר קנייה: {_fp(_p)}\n"
-                                f"✅ יצא ברווח: {_fp(_tp)} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)\n"
-                                f"❌ יצא בהפסד: {_fp(_sl)} (-{_cfg.STOP_LOSS_PCT:.0f}%)"
-                            )
+                            _notional = _p * _b["qty"]
+                            lines.append(f"🏷️ מניה:          <b>{_b['ticker']}</b>")
+                            lines.append(f"🔢 כמות:          {_qty} מניות")
+                            lines.append(f"💵 מחיר קנייה:   {_fp(_p)}")
+                            lines.append(f"💸 הושקע:         {_fp(_notional)}")
+                            lines.append(f"✅ יצא ברווח:    {_fp(_tp)} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)")
+                            lines.append(f"❌ יצא בהפסד:   {_fp(_sl)} (-{_cfg.STOP_LOSS_PCT:.0f}%)")
                             if _b != _bought_list[-1]:
                                 lines.append("━━━━━━━━━━━━━━━━")
                         lines.append("━━━━━━━━━━━━━━━━")
-                        lines.append(f"💵 מזומן נותר: {_fp(remaining)}")
+                        lines.append(f"💰 מזומן נותר:   {_fp(remaining)}")
                         _create_background_task(send_message("\n".join(lines)))
                     except Exception as _te:
                         logger.warning(f"[NOTIFY] combined buy message failed: {_te}")
