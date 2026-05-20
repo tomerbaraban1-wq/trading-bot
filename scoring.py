@@ -13,19 +13,25 @@ from indicators import get_current_indicators, get_market_conditions, get_stock_
 logger = logging.getLogger(__name__)
 
 # ── Higher-Timeframe (Weekly) Cache ──────────────────────────────────────────
-# Stores (timestamp, is_bearish: bool) per ticker; TTL = 4 hours
 _htf_cache: dict[str, tuple[float, bool]] = {}
-_HTF_CACHE_TTL = 4 * 3600  # seconds
+_HTF_CACHE_TTL = 4 * 3600
+_MAX_CACHE_SIZE = 300  # prevent unbounded memory growth
 
 # ── Relative Strength vs SPY Cache ───────────────────────────────────────────
-# RS calc downloads 3 months of data — cache for 2 hours (changes slowly)
-_rs_cache: dict[str, tuple[float, float]] = {}  # ticker → (rs_ratio, timestamp)
+_rs_cache: dict[str, tuple[float, float]] = {}
 _RS_CACHE_TTL = 2 * 3600
 
 # ── Pre-Market Gap Cache ──────────────────────────────────────────────────────
-# Stores (timestamp, result_dict) per ticker; TTL = 30 minutes
 _premarket_gap_cache: dict[str, tuple[float, dict]] = {}
-_PREMARKET_GAP_TTL = 30 * 60  # 30 minutes
+_PREMARKET_GAP_TTL = 30 * 60
+
+def _evict_cache(cache: dict, max_size: int = _MAX_CACHE_SIZE) -> None:
+    """Remove oldest entries when cache exceeds max_size."""
+    if len(cache) > max_size:
+        # Remove oldest 20% of entries
+        to_remove = sorted(cache.items(), key=lambda x: x[1][0])[:max_size // 5]
+        for k, _ in to_remove:
+            cache.pop(k, None)
 
 
 def get_premarket_gap(ticker: str) -> dict | None:
@@ -76,6 +82,7 @@ def get_premarket_gap(ticker: str) -> dict | None:
             "gap_up":   gap_pct > 0,
             "gap_down": gap_pct < 0,
         }
+        _evict_cache(_premarket_gap_cache)
         _premarket_gap_cache[ticker] = (now_ts, result)
         logger.debug(f"[PREMARKET] {ticker}: prev_close={prev_close:.2f} current={current_price:.2f} gap={gap_pct:.2f}%")
         return result
@@ -608,6 +615,7 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
                 _sr = float(_tickers_dl[ticker].dropna().iloc[-1] / _tickers_dl[ticker].dropna().iloc[0])
                 _sb = float(_tickers_dl["SPY"].dropna().iloc[-1] / _tickers_dl["SPY"].dropna().iloc[0])
                 _rs = _sr / _sb if _sb > 0 else 1.0
+                _evict_cache(_rs_cache)
                 _rs_cache[ticker] = (_rs, _rs_now)
             else:
                 _rs = 1.0

@@ -173,8 +173,28 @@ def _get_account_equity() -> tuple[float, float]:
     equity = cash + open positions market value.
     Raises on broker failure (caller handles).
     """
-    account   = broker.get_account()
-    positions = broker.get_positions()
+    import threading
+    result = {}
+    err    = []
+
+    def _fetch():
+        try:
+            result['account']   = broker.get_account()
+            result['positions'] = broker.get_positions()
+        except Exception as e:
+            err.append(e)
+
+    t = threading.Thread(target=_fetch, daemon=True)
+    t.start()
+    t.join(timeout=15)  # 15s hard timeout — prevents blocking async loop
+
+    if err:
+        raise err[0]
+    if not result:
+        raise TimeoutError("broker.get_account timed out after 15s")
+
+    account   = result['account']
+    positions = result['positions']
     cash      = float(account.get("cash") or 0)
     pos_value = sum(float(p.get("market_value") or 0) for p in positions)
     equity    = cash + pos_value

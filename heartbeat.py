@@ -882,8 +882,10 @@ async def auto_invest_loop():
                     logger.info(f"AUTO-INVEST: VIX={_vix:.1f} extreme fear — skipping buys")
                     await asyncio.sleep(5 * 60)
                     continue
-            except Exception:
-                pass   # fail-open: proceed if market data unavailable
+            except asyncio.TimeoutError:
+                logger.warning("AUTO-INVEST: market conditions timeout — proceeding fail-open")
+            except Exception as _mkt_e:
+                logger.debug(f"AUTO-INVEST: market conditions error ({type(_mkt_e).__name__}) — proceeding fail-open")
 
             # ── Event Memory: record today + read scenario signal (with timeouts) ──
             try:

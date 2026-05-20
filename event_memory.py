@@ -26,20 +26,24 @@ _DB_PATH = Path(settings.DATABASE_PATH)
 
 
 def _get_conn():
-    conn = sqlite3.connect(str(_DB_PATH))
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS event_memory (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_type   TEXT NOT NULL,       -- CPI | NFP | FOMC | EARNINGS
-            event_date   TEXT NOT NULL,       -- YYYY-MM-DD
-            spy_pct      REAL,               -- SPY % change on event day
-            nasdaq_pct   REAL,               -- Nasdaq % change
-            notes        TEXT,               -- תיאור קצר
-            recorded_at  TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    return conn
+    try:
+        conn = sqlite3.connect(str(_DB_PATH), timeout=10)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS event_memory (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type   TEXT NOT NULL,
+                event_date   TEXT NOT NULL,
+                spy_pct      REAL,
+                nasdaq_pct   REAL,
+                notes        TEXT,
+                recorded_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        return conn
+    except Exception as e:
+        logger.error(f"[EVENT MEMORY] DB connection failed: {e}")
+        raise
 
 
 def record_event(event_type: str, event_date: str,
@@ -57,23 +61,23 @@ def record_event(event_type: str, event_date: str,
     """
     try:
         conn = _get_conn()
-        # Don't double-record same event
-        existing = conn.execute(
-            "SELECT id FROM event_memory WHERE event_type=? AND event_date=?",
-            (event_type.upper(), event_date)
-        ).fetchone()
-        if existing:
-            logger.debug(f"[EVENT] {event_type} {event_date} already recorded")
-            conn.close()
-            return
+        try:
+            existing = conn.execute(
+                "SELECT id FROM event_memory WHERE event_type=? AND event_date=?",
+                (event_type.upper(), event_date)
+            ).fetchone()
+            if existing:
+                logger.debug(f"[EVENT] {event_type} {event_date} already recorded")
+                return
 
-        conn.execute(
-            "INSERT INTO event_memory (event_type, event_date, spy_pct, nasdaq_pct, notes) "
-            "VALUES (?,?,?,?,?)",
-            (event_type.upper(), event_date, spy_pct, nasdaq_pct, notes)
-        )
-        conn.commit()
-        conn.close()
+            conn.execute(
+                "INSERT INTO event_memory (event_type, event_date, spy_pct, nasdaq_pct, notes) "
+                "VALUES (?,?,?,?,?)",
+                (event_type.upper(), event_date, spy_pct, nasdaq_pct, notes)
+            )
+            conn.commit()
+        finally:
+            conn.close()
         direction = "עלה" if spy_pct > 0 else "ירד"
         logger.info(
             f"[EVENT MEMORY] שמרתי: {event_type} {event_date} | "
