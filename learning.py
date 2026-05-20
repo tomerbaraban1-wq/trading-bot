@@ -10,10 +10,10 @@ _THRESHOLD_UPDATE_INTERVAL: float = 3600.0   # 1 hour
 
 # Dynamic thresholds — updated automatically based on trade history
 _dynamic_thresholds = {
-    "min_sentiment": 4,       # minimum sentiment score to buy
-    "max_rsi": 75,            # raised 70→75: allow momentum stocks in uptrend
-    "min_rsi": 25,            # min RSI to enter (avoid oversold crash)
-    "max_bb_position": 0.95,  # raised 0.85→0.95: allow near top in strong uptrend
+    "min_sentiment": 5,       # raised 4→5: require positive news (not just neutral)
+    "max_rsi": 75,            # allow momentum stocks in uptrend
+    "min_rsi": 30,            # raised 25→30: avoid deeply oversold crashes
+    "max_bb_position": 0.95,  # allow near top in strong uptrend
     "min_volume_ratio": 0.5,  # avoid low-volume days
 }
 
