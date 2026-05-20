@@ -940,9 +940,9 @@ def _handle_command(text: str, context: dict) -> str | None:
 
             def _idx_line(name, chg):
                 if chg is None:
-                    return f"  {name}: —"
+                    return f"{name}:   —"
                 icon = "📈" if chg >= 0 else "📉"
-                return f"  {icon} {name}: <b>{chg:+.2f}%</b>"
+                return f"{name}:   {icon} <b>{chg:+.2f}%</b>"
 
             # VIX bar
             vix_val  = vix or 20
@@ -2929,26 +2929,31 @@ def _handle_command(text: str, context: dict) -> str | None:
             opened = [t for t in all_trades if str(t.get("entry_time") or "")[:10] == today_str]
             closed = [t for t in all_trades if str(t.get("exit_time") or "")[:10] == today_str]
             total_pnl = sum(float(t.get("pnl_gross") or 0) for t in closed)
-            lines = [f"📅 <b>סיכום היום — {today_str}</b>\n━━━━━━━━━━━━━━━━"]
-            lines.append(f"🛒  קניות היום:  <b>{len(opened)}</b>")
-            lines.append(f"💸  מכירות היום:  <b>{len(closed)}</b>")
+            lines = [f"📅 <b>סיכום היום</b>", "━━━━━━━━━━━━━━━━"]
+            lines.append(f"📆 תאריך:         {today_str}")
+            lines.append(f"🛒 קניות:          <b>{len(opened)}</b>")
+            lines.append(f"💸 מכירות:        <b>{len(closed)}</b>")
             if closed:
-                lines.append(f"💰  רווח/הפסד:  {_fmt_pnl(total_pnl)}")
-                # Show each closed trade
+                lines.append(f"💰 רווח/הפסד:   {_fmt_pnl(total_pnl)}")
+                lines.append("━━━━━━━━━━━━━━━━")
                 for _ct in closed:
-                    _sym  = _ct.get("ticker", "?")
+                    _sym  = _ct.get("ticker","?")
                     _pnl  = float(_ct.get("pnl_gross") or 0)
                     _ep   = float(_ct.get("entry_price") or 0)
                     _xp   = float(_ct.get("exit_price") or 0)
-                    _pct  = (_xp - _ep) / _ep * 100 if _ep else 0
+                    _pct  = (_xp-_ep)/_ep*100 if _ep else 0
                     _icon = "🟢" if _pnl >= 0 else "🔴"
-                    lines.append(f"  {_icon} <b>{_sym}</b>  {_pct:+.1f}%  |  {_fmt_pnl(_pnl, False)}")
+                    lines.append(f"{_icon} <b>{_sym}</b>")
+                    lines.append(f"   📍 שינוי:      {_pct:+.1f}%")
+                    lines.append(f"   💰 רווח:       {_fmt_pnl(_pnl, False)}")
             if opened:
-                lines.append(f"\n📂  פתוחות היום:")
+                lines.append("━━━━━━━━━━━━━━━━")
+                lines.append(f"📂 נקנו היום:")
                 for _ot in opened:
-                    lines.append(f"  📌 <b>{_ot.get('ticker','?')}</b>  @ {_fmt_price(_ot.get('entry_price', 0))}")
+                    lines.append(f"   📌 <b>{_ot.get('ticker','?')}</b>  @ {_fmt_price(_ot.get('entry_price',0))}")
             if not opened and not closed:
-                lines.append("\n😴  לא היו עסקאות היום")
+                lines.append("━━━━━━━━━━━━━━━━")
+                lines.append("😴 לא היו עסקאות היום")
             return "\n".join(lines)
         except Exception as _e:
             logger.error(f"[/today] Error: {_e}")
