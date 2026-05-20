@@ -885,20 +885,23 @@ async def auto_invest_loop():
             except Exception:
                 pass   # fail-open: proceed if market data unavailable
 
-            # ── Event Memory: record today + read scenario signal ────────────────
+            # ── Event Memory: record today + read scenario signal (with timeouts) ──
             try:
                 from event_memory import auto_record_today, get_scenario_signal, record_market_scenario
-                await asyncio.to_thread(auto_record_today)
-                await asyncio.to_thread(record_market_scenario)
+                await asyncio.wait_for(asyncio.to_thread(auto_record_today), timeout=20)
+                await asyncio.wait_for(asyncio.to_thread(record_market_scenario), timeout=20)
 
-                # Use scenario signal to log market context
-                _sig, _sig_reason = await asyncio.to_thread(get_scenario_signal)
+                _sig, _sig_reason = await asyncio.wait_for(
+                    asyncio.to_thread(get_scenario_signal), timeout=20
+                )
                 if _sig in ("bearish", "caution"):
                     logger.warning(f"[SCENARIO MEMORY] {_sig.upper()}: {_sig_reason}")
                 elif _sig == "bullish":
                     logger.info(f"[SCENARIO MEMORY] BULLISH: {_sig_reason}")
-            except Exception:
-                pass
+            except asyncio.TimeoutError:
+                logger.warning("[SCENARIO MEMORY] timed out — skipping")
+            except Exception as _se:
+                logger.debug(f"[SCENARIO MEMORY] {type(_se).__name__}")
 
             # High-impact economic event guard (CPI / NFP) — check BEFORE
             # is_ok_to_trade() so we can send a Telegram notification on these days.
@@ -954,7 +957,14 @@ async def auto_invest_loop():
 
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 
-            status = await _asyncio.to_thread(get_budget_status)
+            try:
+                status = await _asyncio.wait_for(
+                    _asyncio.to_thread(get_budget_status), timeout=20
+                )
+            except _asyncio.TimeoutError:
+                logger.warning("AUTO-INVEST: budget status timed out — skipping cycle")
+                await asyncio.sleep(60)
+                continue
             remaining = float(status.get("cash_available", 0))
 
             if remaining < 10:
@@ -979,7 +989,9 @@ async def auto_invest_loop():
                                 _asyncio.to_thread(get_composite_score, _tsym, 5), timeout=20
                             )
                             if _tscore.get("composite_score", 100) < _rebalance_threshold:
-                                _pos = await _asyncio.to_thread(broker.get_position, _tsym)
+                                _pos = await _asyncio.wait_for(
+                                    _asyncio.to_thread(broker.get_position, _tsym), timeout=15
+                                )
                                 if _pos:
                                     _cprice = float(_pos.get("current_price", _t["entry_price"]))
                                     logger.info(f"AUTO-REBALANCE: selling weak {_tsym} "
@@ -1016,7 +1028,14 @@ async def auto_invest_loop():
                     import yfinance as _yf
                     _sample = [t for t in shuffled[:30] if not database.get_open_trade_by_ticker(t)]
                     if _sample:
-                        _prices = _yf.download(_sample, period="2d", progress=False, auto_adjust=True)
+                        # Wrap yfinance with timeout — prevents hangs
+                        _prices = await _asyncio.wait_for(
+                            _asyncio.to_thread(
+                                _yf.download, _sample, period="2d",
+                                progress=False, auto_adjust=True
+                            ),
+                            timeout=20
+                        )
                         # yf.download returns MultiIndex columns for multiple tickers
                         # Check top-level with get_level_values to avoid always-False bug
                         _has_close = (
@@ -1078,17 +1097,21 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             continue
 
-                        # Learning check
+                        # Learning check — wrap with timeout to prevent yfinance hangs
                         try:
                             from learning import should_override_buy as _sob
                             from indicators import get_current_indicators as _gci
-                            _ind = _gci(ticker) or {}
+                            _ind = await _asyncio.wait_for(
+                                _asyncio.to_thread(_gci, ticker), timeout=15
+                            ) or {}
                             _block, _block_reason = _sob(ticker, _ind)
                             if _block:
                                 logger.info(f"AUTO-INVEST: {ticker} blocked by learning — {_block_reason}")
                                 continue
-                        except Exception:
-                            pass
+                        except _asyncio.TimeoutError:
+                            logger.warning(f"AUTO-INVEST: {ticker} indicators timed out (15s) — skipping learning check")
+                        except Exception as _le:
+                            logger.debug(f"AUTO-INVEST: {ticker} learning error — {type(_le).__name__}")
 
                         _scored_candidates.append((ticker, score, composite, sentiment))
                     except _asyncio.TimeoutError:
@@ -1330,6 +1353,8 @@ async def auto_invest_loop():
 
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            logger.warning("AUTO-INVEST: scan iteration timed out — moving to next cycle")
         except Exception as e:
             logger.error(f"AUTO-INVEST loop error: {e}")
             _create_background_task(notify_error("loop_error", "", f"שגיאה ב-auto_invest_loop"))
