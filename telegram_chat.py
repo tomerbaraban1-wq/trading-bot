@@ -974,15 +974,16 @@ def _handle_command(text: str, context: dict) -> str | None:
                 verdict = "⚠️ <b>שוק חמדני — זהירות</b>"
 
             lines = [
-                f"🌍 <b>מצב השוק</b>\n━━━━━━━━━━━━━━━━",
-                f"<b>מדדים עיקריים:</b>",
-                _idx_line("SPY (S&P500)", spy_chg),
-                _idx_line("QQQ (נאסד\"ק)", qqq_chg),
-                _idx_line("DIA (דאו)", dia_chg),
-                f"\n<b>מדד הפחד:</b>",
-                f"  {vix_icon} VIX: <b>{vix_val:.1f}</b>\n  <code>{vix_bar}</code>",
-                f"\n💭 Fear & Greed: <b>{fg_label}</b>",
-                f"\n━━━━━━━━━━━━━━━━\n{verdict}",
+                f"🌍 <b>מצב השוק</b>",
+                f"━━━━━━━━━━━━━━━━",
+                _idx_line("📊 SPY (S&P500)", spy_chg),
+                _idx_line("💻 QQQ (נאסד\"ק)", qqq_chg),
+                _idx_line("🏭 DIA (דאו)", dia_chg),
+                f"━━━━━━━━━━━━━━━━",
+                f"{vix_icon} VIX:            <b>{vix_val:.1f}</b>",
+                f"😰 פחד/חמדנות:  <b>{fg_label}</b>",
+                f"━━━━━━━━━━━━━━━━",
+                f"{verdict}",
             ]
             return "\n".join(lines)
         except Exception as e:
@@ -2495,12 +2496,13 @@ def _handle_command(text: str, context: dict) -> str | None:
                 qty_str = f"{p['qty']:.4f}".rstrip('0').rstrip('.')
                 val = p.get("value") or round(p["current"] * p["qty"], 2)
                 held = _fmt_held(p.get("held_hours", 0))
-                lines.append(
-                    f"\n{e} <b>{p['ticker']}</b>  ({qty_str} מניות)\n"
-                    f"   כניסה: {_fmt_price(p['entry'])} → עכשיו: <b>{_fmt_price(p['current'])}</b>\n"
-                    f"   {_fmt_pnl(p['pnl'], False)}  <i>({p['pct']:+.2f}%)</i>  |  שווי: {_fmt_price(val)}\n"
-                    f"   ⏱️ הוחזק: {held}"
-                )
+                lines.append(f"\n{e} <b>{p['ticker']}</b>")
+                lines.append(f"   🔢 כמות:          {qty_str} מניות")
+                lines.append(f"   💵 כניסה:         {_fmt_price(p['entry'])}")
+                lines.append(f"   📍 עכשיו:         <b>{_fmt_price(p['current'])}</b>  ({p['pct']:+.2f}%)")
+                lines.append(f"   💰 רווח/הפסד:   {_fmt_pnl(p['pnl'], False)}")
+                lines.append(f"   💼 שווי:           {_fmt_price(val)}")
+                lines.append(f"   ⏱️ הוחזק:         {held}")
         else:
             lines.append("אין פוזיציות פתוחות כרגע")
 
