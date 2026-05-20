@@ -14,7 +14,7 @@ _dynamic_thresholds = {
     "max_rsi": 75,            # allow momentum stocks in uptrend
     "min_rsi": 30,            # raised 25→30: avoid deeply oversold crashes
     "max_bb_position": 0.95,  # allow near top in strong uptrend
-    "min_volume_ratio": 0.5,  # avoid low-volume days
+    "min_volume_ratio": 0.7,  # raised 0.5→0.7: wins avg 0.87 vs losses avg 0.68
 }
 
 

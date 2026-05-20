@@ -1231,16 +1231,18 @@ async def auto_invest_loop():
                                 "XLU",   # תשתיות
                                 "XLP",   # צרכנות בסיסית (MCD)
                             }
-                            # Check if ticker itself is a defensive ETF
-                            if ticker.upper() in {"GLD", "GDX", "XLV", "XLU", "XLP", "SLV", "USO"}:
-                                try:
-                                    from indicators import get_market_conditions as _gmc
-                                    _mc = _gmc()
-                                    if _mc.get("spy_above_sma50"):
-                                        logger.info(f"AUTO-INVEST: {ticker} skipped — defensive in bull market")
-                                        continue
-                                except Exception:
-                                    pass
+                            # Block ALL ETFs — data shows ETFs consistently underperform vs individual stocks
+                            _BLOCKED_ETFS = {
+                                # Commodity/Defensive ETFs (biggest losers)
+                                "GLD","GDX","SLV","USO","UNG","GDX","GDXJ",
+                                # Sector ETFs — buy the individual stock instead
+                                "XLV","XLP","XLU","XLE","XLF","XLI","XLK","XLY","XLB","XLRE",
+                                # Broad market ETFs
+                                "SPY","QQQ","IWM","DIA","VTI","VXX",
+                            }
+                            if ticker.upper() in _BLOCKED_ETFS:
+                                logger.info(f"AUTO-INVEST: {ticker} skipped — ETF (buy individual stocks instead)")
+                                continue
                         except Exception:
                             pass  # fail-open: proceed if sector check fails
 
