@@ -1211,15 +1211,25 @@ async def auto_invest_loop():
                         # Sector diversification — skip if already holding a stock from same sector
                         # Also skip defensive/commodity sectors in bull market (SPY above SMA50)
                         try:
-                            from sector_rotation import get_sector_for_ticker as _sector_of
+                            from sector_rotation import get_sector_for_ticker as _sector_of, get_leading_sectors as _gls
                             _new_sector = _sector_of(ticker)
                             if _new_sector:
                                 _open_trades = database.get_open_trades()
                                 _open_sectors = [_sector_of(_ot["ticker"]) for _ot in _open_trades]
-                                if _open_sectors.count(_new_sector) >= 1:
+                                # Allow up to 3 stocks in leading sector, 1 in others
+                                _max_per_sector = 1
+                                try:
+                                    _leaders = _gls()
+                                    if _leaders and _new_sector == _leaders[0].get("symbol"):
+                                        _max_per_sector = 3   # 3 stocks in leading sector
+                                    elif _leaders and _new_sector in [s.get("symbol") for s in _leaders[:2]]:
+                                        _max_per_sector = 2   # 2 stocks in 2nd-ranked sector
+                                except Exception:
+                                    pass
+                                if _open_sectors.count(_new_sector) >= _max_per_sector:
                                     logger.info(
                                         f"AUTO-INVEST: {ticker} skipped — "
-                                        f"sector {_new_sector} already held"
+                                        f"sector {_new_sector} full ({_open_sectors.count(_new_sector)}/{_max_per_sector})"
                                     )
                                     continue
 
