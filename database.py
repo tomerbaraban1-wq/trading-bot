@@ -229,10 +229,15 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_journal_time ON trade_journal(created_at DESC)")
 
     # Migrate qty columns to REAL (fractional share support)
-    # SQLite stores INTEGER as REAL transparently — just cast existing values
-    for tbl_col in ("trade_log.qty", "shadow_trades.qty", "slippage_log.qty"):
-        tbl, col = tbl_col.split(".")
+    # Whitelist table/column names to prevent SQL injection
+    _ALLOWED_MIGRATIONS = {
+        ("trade_log",    "qty"),
+        ("shadow_trades","qty"),
+        ("slippage_log", "qty"),
+    }
+    for tbl, col in _ALLOWED_MIGRATIONS:
         try:
+            # Safe: tbl and col are whitelisted constants, not user input
             conn.execute(f"UPDATE {tbl} SET {col} = CAST({col} AS REAL) WHERE {col} IS NOT NULL")
         except Exception:
             pass
