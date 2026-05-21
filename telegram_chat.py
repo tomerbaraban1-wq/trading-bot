@@ -129,7 +129,7 @@ def _fmt_held(hours: float) -> str:
 
 # Context cache — avoid hammering broker API on every Telegram message
 _context_cache: tuple[float, dict] = (0.0, {})
-_CONTEXT_CACHE_TTL = 120  # 2 minutes — reduces slow yfinance/broker calls
+_CONTEXT_CACHE_TTL = 300  # 5 minutes — reduces slow yfinance/broker calls
 
 # Conversation memory — remember last N exchanges for follow-up questions
 # Keyed by chat_id (str). Each entry: list of (role, content) tuples.
@@ -507,20 +507,30 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
 """
 
     try:
+        # Detect simple vs complex question for token optimization
+        _msg_len = len(user_message)
+        _is_simple = (
+            _msg_len < 40                          # short question
+            or user_message.startswith("/")        # command
+            or any(w in user_message for w in ["כמה", "מה המחיר", "מה הרווח", "כן", "לא"])
+        )
+        _max_tokens = 180 if _is_simple else 450
+        _temp       = 0.2 if _is_simple else 0.4
+
         # Build message chain with conversation history (if any)
         messages = [{"role": "system", "content": system_prompt}]
-        if history:
-            # Add previous turns (already capped to last 10 msgs by _remember)
-            for h in history:
+        if history and not _is_simple:
+            # Include history only for complex questions (saves tokens on simple ones)
+            for h in history[-6:]:   # last 3 turns
                 if h.get("role") in ("user", "assistant"):
-                    messages.append({"role": h["role"], "content": h.get("content", "")[:500]})
+                    messages.append({"role": h["role"], "content": h.get("content", "")[:300]})
         messages.append({"role": "user", "content": user_message})
 
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=messages,
-            max_tokens=500,
-            temperature=0.4,
+            max_tokens=_max_tokens,
+            temperature=_temp,
         )
         reply = response.choices[0].message.content.strip()
 

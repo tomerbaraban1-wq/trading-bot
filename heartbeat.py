@@ -54,22 +54,25 @@ def _is_quiet() -> bool:
 
 
 async def telegram_context_warmup_loop():
-    """Pre-build Telegram context every 60s so replies are instant."""
-    await asyncio.sleep(30)
+    """Pre-build Telegram context every 3 min so replies are instant.
+    Forces cache invalidation so the next user message gets fresh data immediately.
+    """
+    await asyncio.sleep(20)   # start fast after boot
     while True:
         try:
+            tc = __import__('telegram_chat')
+            # Force cache expiry then rebuild so next message hits warm cache
+            tc._context_cache = (0.0, {})
             await asyncio.wait_for(
-                asyncio.to_thread(
-                    lambda: __import__('telegram_chat')._build_context()
-                ),
-                timeout=30,
+                asyncio.to_thread(tc._build_context),
+                timeout=25,
             )
             logger.debug("[CHAT] Context pre-warmed")
         except asyncio.TimeoutError:
             logger.warning("[CHAT] Context warmup timeout — skipping cycle")
         except Exception:
             pass
-        await asyncio.sleep(60)
+        await asyncio.sleep(180)   # every 3 minutes (cache TTL is 5 min)
 
 
 async def keep_alive_loop():
