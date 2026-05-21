@@ -2396,16 +2396,30 @@ async def market_closed_training_loop():
                     f"WR={own_summary_fresh['win_rate']:.0f}% | avg={own_summary_fresh['avg_return']:+.1f}%\n"
                     if own_summary_fresh.get("simulated", 0) > 0 else ""
                 )
-                # רשימת המניות שנבדקו — כל מניה בשורה נפרדת
-                tickers_lines = "\n".join(f"   • {t}" for t in tickers)
+                # פירוט פר-מניה — ממוין לפי אחוז הצלחה
+                ticker_stats = getattr(result, "ticker_stats", [])
+                if ticker_stats:
+                    stats_lines = []
+                    for ts in ticker_stats:
+                        wr   = ts["win_rate"]
+                        ret  = ts["avg_return"]
+                        icon = "✅" if wr >= 55 else ("⚠️" if wr >= 40 else "❌")
+                        stats_lines.append(
+                            f"{icon} <b>{ts['ticker']}</b>: "
+                            f"WR={wr:.0f}% | avg={ret:+.1f}% | {ts['signals']} סיגנלים"
+                        )
+                    ticker_block = "\n".join(stats_lines)
+                else:
+                    ticker_block = "\n".join(f"   • {t}" for t in tickers)
+
                 _create_background_task(send_message(
                     f"🎓 <b>אימון הושלם</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"{own_line}"
-                    f"📊 {result.tickers_analyzed} מניות נבדקו:\n"
-                    f"{tickers_lines}\n"
+                    f"📊 <b>{result.tickers_analyzed} מניות שנבדקו:</b>\n"
+                    f"{ticker_block}\n"
                     f"━━━━━━━━━━━━━━━━\n"
-                    f"✅ אחוז הצלחה: <b>{result.overall_win_rate:.1f}%</b>\n"
+                    f"✅ אחוז הצלחה כולל: <b>{result.overall_win_rate:.1f}%</b>\n"
                     f"📈 תשואה ממוצעת: {result.avg_return:+.2f}%\n"
                     f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
                     f"{score_line}"

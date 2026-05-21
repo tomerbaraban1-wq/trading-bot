@@ -72,6 +72,7 @@ class BacktestResult:
     worst_conditions:  list  = field(default_factory=list)
     optimal_min_score: int   = 58
     computed_at:       str   = ""
+    ticker_stats:      list  = field(default_factory=list)  # [{ticker, signals, win_rate, avg_return}]
 
     def to_dict(self) -> dict:
         return {
@@ -116,11 +117,23 @@ def run_backtest(tickers: list[str], lookback_days: int = LOOKBACK_DAYS) -> Back
 
     all_signals: list[dict] = []
     indicator_wins: dict[str, list[float]] = {}  # indicator_condition -> list of forward returns
+    per_ticker: list[dict] = []  # per-ticker stats for Telegram reporting
 
     for ticker in tickers[:30]:  # cap at 30 to save memory/time
         try:
             signals = _analyze_ticker(ticker, lookback_days)
             all_signals.extend(signals)
+
+            # Per-ticker stats
+            if signals:
+                t_returns = [s["forward_return"] for s in signals]
+                t_wins = sum(1 for r in t_returns if r >= WIN_THRESHOLD)
+                per_ticker.append({
+                    "ticker":     ticker,
+                    "signals":    len(signals),
+                    "win_rate":   round(t_wins / len(signals) * 100, 1),
+                    "avg_return": round(float(np.mean(t_returns)), 2),
+                })
 
             # Track indicator performance
             for sig in signals:
@@ -138,6 +151,8 @@ def run_backtest(tickers: list[str], lookback_days: int = LOOKBACK_DAYS) -> Back
 
     result.tickers_analyzed = len(set(s["ticker"] for s in all_signals))
     result.total_signals    = len(all_signals)
+    # Sort per-ticker by win_rate descending for readable Telegram display
+    result.ticker_stats = sorted(per_ticker, key=lambda x: x["win_rate"], reverse=True)
 
     returns = [s["forward_return"] for s in all_signals]
     result.win_signals  = sum(1 for r in returns if r >= WIN_THRESHOLD)
