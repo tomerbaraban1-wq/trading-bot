@@ -282,7 +282,7 @@ async def lifespan(app: FastAPI):
                            news_refresh_loop, news_monitor_loop, morning_briefing_loop,
                            position_alert_loop, backtest_learning_loop, eod_sweep_loop,
                            price_alert_loop, market_closed_training_loop,
-                           telegram_context_warmup_loop)
+                           telegram_context_warmup_loop, earnings_monitor_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -298,7 +298,8 @@ async def lifespan(app: FastAPI):
     price_alert_task       = asyncio.create_task(price_alert_loop())
     morning_briefing_task  = asyncio.create_task(morning_briefing_loop())
     news_refresh_task      = asyncio.create_task(news_refresh_loop())
-    news_monitor_task      = asyncio.create_task(news_monitor_loop())   # 🆕 real-time news → sell/tighten
+    news_monitor_task      = asyncio.create_task(news_monitor_loop())   # real-time news → sell/tighten
+    earnings_monitor_task  = asyncio.create_task(earnings_monitor_loop())  # דוחות → פעולה מיידית
 
     # ── Optional tasks (disabled on free tier to save memory) ────────
     import os as _os
@@ -320,6 +321,7 @@ async def lifespan(app: FastAPI):
         keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
         portfolio_update_task, news_refresh_task, news_monitor_task, morning_briefing_task,
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
+        earnings_monitor_task,
     ] if t is not None]
 
     # Cancel all background tasks

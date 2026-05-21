@@ -1709,6 +1709,125 @@ async def morning_briefing_loop():
 # (Moved to top of file — defined near _smart_sell_low_count)
 
 
+async def earnings_monitor_loop():
+    """
+    בודק כל 30 דקות אם יצא דוח לאחת מהפוזיציות הפתוחות.
+    פועל מיידית:
+      - הפסד גדול (miss + ירידה >3%): מוכר מיידי
+      - הפסד קטן (miss): מהדק stop ל-1% מתחת מחיר
+      - הצלחה (beat): מרפה stop קצת + שולח התראה
+      - הצלחה גדולה (beat + עלייה >5%): שולח "שקול הוספה"
+    """
+    await asyncio.sleep(5 * 60)  # wait 5 min after startup
+    _checked: dict[str, str] = {}  # ticker → last earnings date checked
+
+    while True:
+        try:
+            open_trades = await asyncio.to_thread(database.get_open_trades)
+            if not open_trades:
+                await asyncio.sleep(30 * 60)
+                continue
+
+            from earnings import check_post_earnings_momentum
+
+            for trade in open_trades:
+                if trade.get("action") != "buy":
+                    continue
+                ticker = trade["ticker"]
+                try:
+                    em = await asyncio.wait_for(
+                        asyncio.to_thread(check_post_earnings_momentum, ticker),
+                        timeout=20
+                    )
+                    if not em.get("post_earnings"):
+                        continue
+
+                    earn_key = f"{ticker}:{em.get('days_since')}"
+                    if _checked.get(ticker) == earn_key:
+                        continue  # already handled this earnings report
+                    _checked[ticker] = earn_key
+
+                    days   = em.get("days_since", 0)
+                    beat   = em.get("beat")
+                    react  = em.get("price_reaction", 0.0)  # % on earnings day
+                    surprise = em.get("momentum_score", 5)
+
+                    entry   = trade["entry_price"]
+                    cur_p   = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_price, ticker), timeout=10
+                    ) or entry
+                    plpc    = (cur_p - entry) / entry * 100
+                    atr_stop = trade.get("atr_stop_price") or (entry * 0.97)
+
+                    beat_str = "✅ עקף תחזיות" if beat is True else ("❌ פספס תחזיות" if beat is False else "❔ לא ידוע")
+                    react_str = f"{react:+.1f}%" if react else "N/A"
+
+                    # ── Miss + ירידה גדולה → מכור מיידי ──────────────────
+                    if beat is False and react < -3.0:
+                        logger.warning(f"[EARNINGS] {ticker}: MISS + react={react:.1f}% — selling immediately")
+                        await _close_position(
+                            trade, cur_p, "earnings_miss",
+                            f"דוח: פספס תחזיות | תגובה {react:.1f}%"
+                        )
+                        _create_background_task(send_message(
+                            f"📉 <b>מכרתי — דוח רע: {ticker}</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📊 {beat_str} | תגובה: {react_str}\n"
+                            f"💵 מכרתי @ ${cur_p:.2f} ({plpc:+.1f}%)\n"
+                            f"⚡ פעולה מיידית — הגנה על ההון"
+                        ))
+                        continue
+
+                    # ── Miss → מהדק stop ──────────────────────────────────
+                    if beat is False:
+                        new_stop = round(cur_p * 0.99, 4)  # 1% stop
+                        if new_stop > atr_stop:
+                            await asyncio.to_thread(
+                                database.update_trade_stop, trade["id"], new_stop, cur_p
+                            )
+                            _create_background_task(send_message(
+                                f"⚠️ <b>דוח חלש — הידקתי עצירה: {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📊 {beat_str} | תגובה: {react_str}\n"
+                                f"🛑 עצירה חדשה: ${new_stop:.2f} (1% מתחת)\n"
+                                f"📍 מחיר עכשיו: ${cur_p:.2f} ({plpc:+.1f}%)"
+                            ))
+                        continue
+
+                    # ── Beat גדול + עלייה → שלח התראה ──────────────────
+                    if beat is True and react > 5.0:
+                        _create_background_task(send_message(
+                            f"🚀 <b>דוח מצוין — {ticker}</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📊 {beat_str} | תגובה: {react_str}\n"
+                            f"💵 מחיר: ${cur_p:.2f} ({plpc:+.1f}% מהכניסה)\n"
+                            f"💡 שקול להוסיף לפוזיציה — מומנטום חזק!"
+                        ))
+                        continue
+
+                    # ── Beat רגיל → עדכן + שלח ──────────────────────────
+                    if beat is True:
+                        _create_background_task(send_message(
+                            f"✅ <b>דוח טוב — {ticker}</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📊 {beat_str} | תגובה: {react_str}\n"
+                            f"💵 מחיר: ${cur_p:.2f} ({plpc:+.1f}%)\n"
+                            f"📌 מחזיק — ממשיך לנטר"
+                        ))
+
+                except asyncio.TimeoutError:
+                    logger.debug(f"[EARNINGS] {ticker}: timeout — skipping")
+                except Exception as _ee:
+                    logger.debug(f"[EARNINGS] {ticker}: {_ee}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"earnings_monitor_loop error: {e}")
+
+        await asyncio.sleep(30 * 60)  # check every 30 min
+
+
 async def price_alert_loop():
     """
     Check user-defined price alerts every 2 minutes.
