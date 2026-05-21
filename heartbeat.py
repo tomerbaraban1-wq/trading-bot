@@ -1830,6 +1830,80 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def market_pulse_loop():
+    """
+    פעימת שוק 24/7 — הבוט תמיד פעיל ומדווח מה הוא עושה.
+    כל שעתיים שולח עדכון: מה הוא רואה בשוק, מה הוא עושה.
+
+    כשהשוק פתוח: סורק להזדמנויות + מנתח חדשות
+    כשהשוק סגור: מתאמן + קורא חדשות + מכין רשימה ליום הבא
+    """
+    await asyncio.sleep(15 * 60)   # 15 min after startup
+
+    while True:
+        try:
+            # Read market state
+            is_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+
+            # Read market conditions (works 24/7)
+            try:
+                from indicators import get_market_conditions
+                mkt = await asyncio.wait_for(
+                    asyncio.to_thread(get_market_conditions), timeout=20
+                )
+                vix = mkt.get("vix", 0)
+                spy_up = mkt.get("spy_above_sma50")
+                spy_rsi = mkt.get("spy_rsi", 50)
+            except Exception:
+                vix, spy_up, spy_rsi = 0, None, 50
+
+            # Read open positions
+            open_trades = await asyncio.to_thread(database.get_open_trades)
+            n_pos = len(open_trades)
+
+            # Build market mood line
+            if vix and vix > 0:
+                if vix < 18:    mood = f"🟢 שוק רגוע (VIX={vix:.1f})"
+                elif vix < 25:  mood = f"🟡 שוק זהיר (VIX={vix:.1f})"
+                else:           mood = f"🔴 שוק בפחד (VIX={vix:.1f})"
+            else:
+                mood = "📊 אין נתוני VIX"
+
+            trend = "📈 מגמת עליה (SPY מעל ממוצע 50)" if spy_up else (
+                "📉 מגמת ירידה (SPY מתחת ממוצע 50)" if spy_up is False else "⚪ מגמה לא ברורה"
+            )
+
+            # Build "what bot is doing" line
+            if is_open:
+                if n_pos > 0:
+                    activity = f"🔍 מנהל {n_pos} פוזיציות + מחפש הזדמנויות חדשות"
+                else:
+                    activity = "🔍 סורק את השוק להזדמנויות"
+            else:
+                activity = "🧠 השוק סגור — מתאמן על נתוני עבר + קורא חדשות"
+
+            # Send update
+            _create_background_task(send_message(
+                f"💓 <b>פעימת שוק</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{mood}\n"
+                f"{trend}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"⚙️ מה אני עושה עכשיו:\n"
+                f"   {activity}\n"
+                + (f"\n📂 פוזיציות פתוחות: {n_pos}" if n_pos > 0 else "")
+            ))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"market_pulse error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # every 2 hours
+
+
 async def price_alert_loop():
     """
     Check user-defined price alerts every 2 minutes.
