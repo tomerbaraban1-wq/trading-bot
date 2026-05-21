@@ -1628,33 +1628,17 @@ async def morning_briefing_loop():
             all_headlines = pos_news_lines + headlines
             all_headlines = all_headlines[:7]
 
-            # Translate headlines to Hebrew using Groq LLM
-            if all_headlines and settings.GROQ_API_KEY:
+            # Translate headlines to Hebrew (Groq → Google Translate → English fallback)
+            if all_headlines:
                 try:
-                    from openai import OpenAI as _OAI
-                    _cli = _OAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
-                    _raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(all_headlines))
-                    _prompt = (
-                        "תרגם את הכותרות הבאות לעברית קצרה (עד 12 מילים כל אחת).\n"
-                        "שמור על שמות מניות באנגלית (AAPL, SAP וכו').\n"
-                        "החזר רק את הכותרות המתורגמות, ממוספרות:\n" + _raw
+                    from translator import translate_headlines
+                    all_headlines = await asyncio.wait_for(
+                        asyncio.to_thread(translate_headlines, all_headlines),
+                        timeout=20,
                     )
-                    _resp = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            lambda: _cli.chat.completions.create(
-                                model=settings.LLM_MODEL,
-                                messages=[{"role": "user", "content": _prompt}],
-                                max_tokens=400, temperature=0.3,
-                            )
-                        ),
-                        timeout=25,
-                    )
-                    _lines = _resp.choices[0].message.content.strip().split("\n")
-                    _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
-                    all_headlines = _translated[:7] if _translated else []
                 except Exception as _te:
                     logger.debug(f"[BRIEFING] Translation failed: {_te}")
-                    all_headlines = []
+                    # Keep original headlines (English) — better than nothing
 
             news_text = "\n".join(f"• {h}" for h in all_headlines) if all_headlines else "אין חדשות זמינות כרגע"
 
@@ -2199,41 +2183,21 @@ async def news_monitor_loop():
                     atr_stop  = trade.get("atr_stop_price") or (entry * 0.97)
 
                     # Translate headlines + reasoning to Hebrew
+                    # Uses Groq → Google Translate → English fallback chain
                     async def _translate_news(hl: list[str], reason: str) -> tuple[list[str], str]:
-                        """Translate English headlines and reasoning to Hebrew using Groq."""
                         try:
-                            if not settings.GROQ_API_KEY:
-                                return hl, reason
-                            from openai import OpenAI as _OAI
-                            _cli = _OAI(api_key=settings.GROQ_API_KEY,
-                                        base_url="https://api.groq.com/openai/v1")
-                            raw = "\n".join(f"{i+1}. {h}" for i, h in enumerate(hl))
-                            prompt = (
-                                f"תרגם לעברית קצרה (עד 10 מילים לכל כותרת). "
-                                f"החזר רק את הכותרות המתורגמות ממוספרות, ואחר כך שורה:\n"
-                                f"ניתוח: [תרגום קצר של הניתוח]\n\n"
-                                f"כותרות:\n{raw}\n\nניתוח מקורי: {reason}"
+                            from translator import translate_headlines, translate_to_hebrew
+                            translated_hl = await asyncio.wait_for(
+                                asyncio.to_thread(translate_headlines, hl),
+                                timeout=15,
                             )
-                            resp = await asyncio.wait_for(
-                                asyncio.to_thread(lambda: _cli.chat.completions.create(
-                                    model=settings.LLM_MODEL,
-                                    messages=[{"role": "user", "content": prompt}],
-                                    max_tokens=300, temperature=0.2,
-                                )),
-                                timeout=25,
+                            translated_reason = await asyncio.wait_for(
+                                asyncio.to_thread(translate_to_hebrew, reason),
+                                timeout=10,
                             )
-                            lines = resp.choices[0].message.content.strip().split("\n")
-                            translated_hl = []
-                            translated_reason = reason
-                            for line in lines:
-                                line = line.strip()
-                                if line.startswith("ניתוח:"):
-                                    translated_reason = line[6:].strip()
-                                elif line and line[0].isdigit():
-                                    translated_hl.append(line.split(". ", 1)[-1].strip())
-                            return translated_hl or hl, translated_reason
+                            return translated_hl or hl, translated_reason or reason
                         except Exception:
-                            return hl, reason  # fallback — return original if translation fails
+                            return hl, reason
 
                     headlines_he, reasoning_he = await _translate_news(headlines, reasoning)
                     news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "📰 לא נמצאו חדשות"
