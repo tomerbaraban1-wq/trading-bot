@@ -578,6 +578,7 @@ async def _handle_sell(payload: WebhookPayload) -> dict:
         import heartbeat as _hb
         _hb._smart_sell_last_check.pop(ticker, None)
         _hb._position_alert_sent.pop(ticker, None)
+        _hb._smart_sell_low_count.pop(ticker, None)
     except Exception:
         pass
 

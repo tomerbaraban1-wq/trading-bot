@@ -350,7 +350,7 @@ def get_learning_entries(pattern_type: str | None = None, limit: int = 50) -> li
     return [dict(row) for row in rows]
 
 
-_CLOSED_STATUSES = "('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart')"
+_CLOSED_STATUSES = "('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart','momentum_exit','partial_tp')"
 
 
 def get_loss_trades(limit: int = 20) -> list[dict]:
@@ -405,7 +405,7 @@ def get_tax_summary() -> dict:
             COALESCE(SUM(pnl_gross), 0) as realized_pnl_gross,
             COALESCE(SUM(CASE WHEN pnl_gross > 0 THEN tax_reserved ELSE 0 END), 0) as tax_reserved,
             COALESCE(SUM(pnl_net), 0) as realized_pnl_net
-        FROM trade_log WHERE status IN ('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart')"""
+        FROM trade_log WHERE status IN {_CLOSED_STATUSES}"""
     ).fetchone()
     tax_bal = get_tax_balance()
     return {
@@ -575,7 +575,7 @@ def get_open_shadow_trades() -> list[dict]:
 def get_open_shadow_trade_by_ticker(ticker: str) -> dict | None:
     conn = get_connection()
     row = conn.execute(
-        "SELECT * FROM shadow_trades WHERE ticker=? AND status='open' LIMIT 1",
+        "SELECT * FROM shadow_trades WHERE ticker=? AND status='open' ORDER BY entry_time DESC LIMIT 1",
         (ticker,),
     ).fetchone()
     return dict(row) if row else None

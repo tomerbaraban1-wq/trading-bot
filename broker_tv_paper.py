@@ -497,29 +497,33 @@ class TVPaperBroker(BrokerBase):
         """
         ticker = ticker.upper()
 
-        pos = TVPaperBroker._positions.get(ticker)
-        if not pos:
+        # Pre-check outside lock (fast path — avoid price fetch under lock)
+        if ticker not in TVPaperBroker._positions:
             raise ValueError(f"No open virtual position for {ticker}")
-
-        held_qty = pos["qty"]
-
-        if qty is None or qty >= held_qty:
-            # Sell the entire position
-            sell_qty = held_qty
-        else:
-            if qty <= 0:
-                raise ValueError(f"qty must be positive, got {qty}")
-            sell_qty = qty
 
         # Use the provided price to avoid redundant yfinance network call
         if price is not None and price > 0:
             current_price = float(price)
         else:
             current_price = self._get_price(ticker)  # raises if price = 0
-        proceeds = current_price * sell_qty
 
-        # Atomic state mutation under lock
+        # Atomic state mutation under lock — re-read qty INSIDE lock to prevent race
         with TVPaperBroker._lock:
+            pos = TVPaperBroker._positions.get(ticker)
+            if not pos:
+                raise ValueError(f"No open virtual position for {ticker}")
+
+            held_qty = pos["qty"]   # re-read inside lock
+
+            if qty is None or qty >= held_qty:
+                sell_qty = held_qty
+            else:
+                if qty <= 0:
+                    raise ValueError(f"qty must be positive, got {qty}")
+                sell_qty = qty
+
+            proceeds = current_price * sell_qty
+
             if sell_qty >= held_qty:
                 TVPaperBroker._positions.pop(ticker, None)
             else:

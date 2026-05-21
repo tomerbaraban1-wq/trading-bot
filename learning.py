@@ -90,7 +90,7 @@ def _update_thresholds():
     if loss_vols:
         low_vol_losses = [v for v in loss_vols if v < 0.7]
         if len(low_vol_losses) >= 2:
-            new_min_vol = min(0.6, max(low_vol_losses) + 0.1)
+            new_min_vol = min(0.95, max(low_vol_losses) + 0.1)
             if new_min_vol > _dynamic_thresholds["min_volume_ratio"]:
                 logger.info(f"LEARNING: Raising min_volume_ratio → {new_min_vol:.2f}")
                 _dynamic_thresholds["min_volume_ratio"] = round(new_min_vol, 2)

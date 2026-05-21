@@ -440,8 +440,8 @@ def get_budget_status() -> dict:
         "realized_pnl_net":    round(tax["realized_pnl_net"], 2),
         "tax_reserved":        round(tax["tax_reserved"], 2),
         "tax_credit":          round(tax["tax_credit"], 2),
-        "budget_used_pct":     round(pos_value / settings.MAX_BUDGET * 100, 2)
-                               if settings.MAX_BUDGET > 0 else 0,
+        "budget_used_pct":     round(pos_value / equity * 100, 2)
+                               if equity > 0 else 0,
         "risk_per_trade_pct":  RISK_PER_TRADE_PCT,
         "max_open_positions":  MAX_OPEN_POSITIONS,
     }
