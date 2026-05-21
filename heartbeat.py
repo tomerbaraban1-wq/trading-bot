@@ -58,10 +58,15 @@ async def telegram_context_warmup_loop():
     await asyncio.sleep(30)
     while True:
         try:
-            await asyncio.to_thread(
-                lambda: __import__('telegram_chat')._build_context()
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: __import__('telegram_chat')._build_context()
+                ),
+                timeout=30,
             )
             logger.debug("[CHAT] Context pre-warmed")
+        except asyncio.TimeoutError:
+            logger.warning("[CHAT] Context warmup timeout — skipping cycle")
         except Exception:
             pass
         await asyncio.sleep(60)
@@ -396,9 +401,20 @@ async def stop_loss_monitor():
 
                     # Initialise on first encounter (new trade or legacy trade)
                     if atr_stop is None:
-                        atr_stop, stop_meta = await asyncio.to_thread(
-                            compute_initial_stop, ticker, trade["entry_price"]
-                        )
+                        try:
+                            atr_stop, stop_meta = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    compute_initial_stop, ticker, trade["entry_price"]
+                                ),
+                                timeout=25,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                f"[ATR STOP] {ticker}: compute_initial_stop timed out — "
+                                f"using fallback (entry × 0.96)"
+                            )
+                            atr_stop = trade["entry_price"] * 0.96
+                            stop_meta = {"stop_pct": 4.0, "fallback": True}
                         high_wm = trade["entry_price"]
                         await asyncio.to_thread(
                             database.update_trade_stop, trade["id"], atr_stop, high_wm
@@ -429,10 +445,19 @@ async def stop_loss_monitor():
                             pass
 
                     # Trail the stop upward as price rises
-                    new_stop, new_wm, raised = await asyncio.to_thread(
-                        update_trailing_stop,
-                        ticker, cur_price, atr_stop, high_wm, trade["entry_price"]
-                    )
+                    try:
+                        new_stop, new_wm, raised = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                update_trailing_stop,
+                                ticker, cur_price, atr_stop, high_wm, trade["entry_price"]
+                            ),
+                            timeout=20,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"[ATR STOP] {ticker}: update_trailing_stop timed out — keeping current"
+                        )
+                        new_stop, new_wm, raised = atr_stop, high_wm, False
                     if raised or new_wm != high_wm:
                         await asyncio.to_thread(
                             database.update_trade_stop, trade["id"], new_stop, new_wm
@@ -900,7 +925,9 @@ async def auto_invest_loop():
             # SPY trend guard — skip if overall market is in downtrend
             try:
                 from indicators import get_market_conditions
-                _mkt = await asyncio.to_thread(get_market_conditions)
+                _mkt = await asyncio.wait_for(
+                    asyncio.to_thread(get_market_conditions), timeout=20
+                )
                 if _mkt.get("spy_above_sma50") is False:
                     logger.info("AUTO-INVEST: SPY below SMA50 (downtrend) — skipping buys")
                     await asyncio.sleep(5 * 60)
