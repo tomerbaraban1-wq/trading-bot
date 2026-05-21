@@ -1821,6 +1821,55 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def webhook_keeper_loop():
+    """
+    שומר על Telegram webhook על URL הנכון.
+    אם בוט אחר משכתב — מתקן תוך 5 דקות.
+    """
+    import os as _os
+    await asyncio.sleep(5 * 60)   # 5 min after startup
+    while True:
+        try:
+            render_url = _os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+            token      = settings.TELEGRAM_BOT_TOKEN
+            secret     = settings.WEBHOOK_SECRET
+            if not render_url or not token:
+                await asyncio.sleep(15 * 60)
+                continue
+            expected = f"{render_url}/telegram/webhook"
+
+            # Check current webhook
+            import aiohttp
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(
+                    f"https://api.telegram.org/bot{token}/getWebhookInfo",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    info = await resp.json()
+                current = info.get("result", {}).get("url", "")
+
+                if current != expected:
+                    logger.warning(f"[WEBHOOK KEEPER] webhook drifted: '{current}' → fixing to '{expected}'")
+                    async with sess.post(
+                        f"https://api.telegram.org/bot{token}/setWebhook",
+                        json={
+                            "url": expected,
+                            "drop_pending_updates": False,
+                            "secret_token": secret,
+                        },
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as r2:
+                        result = await r2.json()
+                        if result.get("ok"):
+                            logger.info(f"[WEBHOOK KEEPER] webhook reset to {expected}")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[WEBHOOK KEEPER] error: {e}")
+
+        await asyncio.sleep(5 * 60)   # check every 5 min
+
+
 async def market_pulse_loop():
     """
     פעימת שוק 24/7 — הבוט תמיד פעיל ומדווח מה הוא עושה.
