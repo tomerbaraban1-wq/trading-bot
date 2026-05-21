@@ -2363,6 +2363,20 @@ async def market_closed_training_loop():
             from scanner import get_watchlist as _gwl
             tickers = _gwl()[:20]
 
+            # ── הודעת "מתחיל אימון" כל 30 דקות ──────────────────────────
+            import time as _t
+            now_ts = _t.time()
+            if now_ts - _last_tg_notify_ts >= 30 * 60:
+                tickers_preview = ", ".join(tickers[:10])
+                extra = f" ועוד {len(tickers)-10}" if len(tickers) > 10 else ""
+                _create_background_task(send_message(
+                    f"🧠 <b>מתחיל אימון</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📋 מניות לניתוח:\n"
+                    + "\n".join(f"   • {t}" for t in tickers)
+                    + f"\n\n⏳ מנתח היסטוריה של כל מניה..."
+                ))
+
             # ── Run general historical backtest on watchlist ──────────────
             result = await asyncio.wait_for(
                 asyncio.to_thread(run_backtest, tickers),
@@ -2382,8 +2396,7 @@ async def market_closed_training_loop():
                 f"optimal_score={result.optimal_min_score}"
             )
 
-            # ── שלח לטלגרם רק כל 30 דקות (לא כל דקה) ────────────────────
-            import time as _t
+            # ── שלח תוצאות לטלגרם רק כל 30 דקות (לא כל דקה) ─────────────
             now_ts = _t.time()
             if now_ts - _last_tg_notify_ts >= 30 * 60:
                 _last_tg_notify_ts = now_ts
