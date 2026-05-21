@@ -2316,11 +2316,15 @@ async def market_closed_training_loop():
                     f"WR={own_summary_fresh['win_rate']:.0f}% | avg={own_summary_fresh['avg_return']:+.1f}%\n"
                     if own_summary_fresh.get("simulated", 0) > 0 else ""
                 )
+                # רשימת המניות שנבדקו — כל מניה בשורה נפרדת
+                tickers_lines = "\n".join(f"   • {t}" for t in tickers)
                 _create_background_task(send_message(
                     f"🎓 <b>אימון הושלם</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"{own_line}"
-                    f"📊 {result.tickers_analyzed} מניות | {result.total_signals} סיגנלים\n"
+                    f"📊 {result.tickers_analyzed} מניות נבדקו:\n"
+                    f"{tickers_lines}\n"
+                    f"━━━━━━━━━━━━━━━━\n"
                     f"✅ אחוז הצלחה: <b>{result.overall_win_rate:.1f}%</b>\n"
                     f"📈 תשואה ממוצעת: {result.avg_return:+.2f}%\n"
                     f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
