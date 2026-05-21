@@ -2577,8 +2577,8 @@ async def market_closed_training_loop():
                     logger.info(
                         f"[TRAINING] Own-trade chart analysis: "
                         f"{own_summary['simulated']} trades | "
-                        f"WR={own_summary['win_rate']:.0f}% | "
-                        f"avg={own_summary['avg_return']:+.2f}%"
+                        f"הצלחה={own_summary['win_rate']:.0f}% | "
+                        f"תשואה={own_summary['avg_return']:+.2f}%"
                     )
 
             # ── אימון רץ תמיד — גם בשוק פתוח (קל יותר) וגם בסגור (מלא) ──
@@ -2634,7 +2634,7 @@ async def market_closed_training_loop():
                 )
                 own_line = (
                     f"🔁 <b>עסקאות שלי:</b> {own_summary_fresh['simulated']} | "
-                    f"WR={own_summary_fresh['win_rate']:.0f}% | avg={own_summary_fresh['avg_return']:+.1f}%\n"
+                    f"הצלחה={own_summary_fresh['win_rate']:.0f}% | תשואה={own_summary_fresh['avg_return']:+.1f}%\n"
                     if own_summary_fresh.get("simulated", 0) > 0 else ""
                 )
                 # פירוט פר-מניה — ממוין לפי אחוז הצלחה
@@ -2647,7 +2647,7 @@ async def market_closed_training_loop():
                         icon = "✅" if wr >= 55 else ("⚠️" if wr >= 40 else "❌")
                         stats_lines.append(
                             f"{icon} <b>{ts['ticker']}</b>: "
-                            f"WR={wr:.0f}% | avg={ret:+.1f}% | {ts['signals']} הזדמנויות"
+                            f"הצלחה={wr:.0f}% | תשואה={ret:+.1f}% | {ts['signals']} הזדמנויות"
                         )
                     ticker_block = "\n".join(stats_lines)
                 else:

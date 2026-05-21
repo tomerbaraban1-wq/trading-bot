@@ -1469,9 +1469,9 @@ async def activity_feed(limit: int = 30):
     _PATTERNS = [
         # Training
         (r"TRAINING.*Own-trade chart analysis.*WR=(\d+)%.*avg=([+-]?[\d.]+)%",
-         lambda m: {"type":"train","icon":"🎓","text":f"סיים אימון על גרפים עבר — WR={m.group(1)}% | תשואה ממוצעת {m.group(2)}%"}),
+         lambda m: {"type":"train","icon":"🎓","text":f"סיים אימון על גרפים עבר — אחוז הצלחה={m.group(1)}% | ממוצע תשואה {m.group(2)}%"}),
         (r"TRAINING.*Done.*?(\d+) tickers.*?WR=([\d.]+)%.*?optimal_score=(\d+)",
-         lambda m: {"type":"train","icon":"📊","text":f"Backtest הושלם — {m.group(1)} מניות | WR={m.group(2)}% | ציון מומלץ: {m.group(3)}"}),
+         lambda m: {"type":"train","icon":"📊","text":f"אימון הושלם — {m.group(1)} מניות | אחוז הצלחה={m.group(2)}% | ציון מומלץ: {m.group(3)}"}),
         (r"TRAINING.*Market closed.*starting chart backtest",
          lambda m: {"type":"train","icon":"📈","text":"מתחיל backtest על ווטצ'ליסט..."}),
         (r"TRAINING.*Learning from bot",
