@@ -1467,8 +1467,8 @@ async def activity_feed(limit: int = 30):
     events = []
 
     _PATTERNS = [
-        # Training
-        (r"TRAINING.*Own-trade chart analysis.*WR=(\d+)%.*avg=([+-]?[\d.]+)%",
+        # Training — log lines now use Hebrew "הצלחה=" "תשואה=" after rename
+        (r"TRAINING.*Own-trade chart analysis.*הצלחה=(\d+)%.*תשואה=([+-]?[\d.]+)%",
          lambda m: {"type":"train","icon":"🎓","text":f"סיים אימון על גרפים עבר — אחוז הצלחה={m.group(1)}% | ממוצע תשואה {m.group(2)}%"}),
         (r"TRAINING.*Done.*?(\d+) tickers.*?WR=([\d.]+)%.*?optimal_score=(\d+)",
          lambda m: {"type":"train","icon":"📊","text":f"אימון הושלם — {m.group(1)} מניות | אחוז הצלחה={m.group(2)}% | ציון מומלץ: {m.group(3)}"}),

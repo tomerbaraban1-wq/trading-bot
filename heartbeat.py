@@ -767,14 +767,15 @@ async def stop_loss_monitor():
                                     # but skip adding guard so Stage1 can be retried safely
                                 else:
                                     _partial_sell_done.add(_s1_guard_key)  # guard only on success
-                                logger.info(f"[PARTIAL TP S1] {ticker}: sold 50% ({_half_qty} shares) "
+                                logger.info(f"[PARTIAL TP S1] {ticker}: sold 33% ({_half_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_half_pnl:+.2f} | remaining={_new_qty}")
                                 _create_background_task(send_message(
-                                    f"💰 <b>רווח חלקי שלב 1 — {ticker}</b>\n"
-                                    f"מכרתי 50% מהפוזיציה\n"
-                                    f"📊 {_half_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
-                                    f"💵 רווח ממומש: <b>${_half_pnl:+.2f}</b>\n"
-                                    f"השאר ממשיך לרוץ עם עצירה נגררת ✅"
+                                    f"💰 <b>נעלתי רווח קטן — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📊 מכרתי שליש מהפוזיציה ({_half_qty} מניות) ב-${cur_price:.2f}\n"
+                                    f"📈 רווח: {plpc:+.1f}%\n"
+                                    f"💚 הרווח על המכירה: <b>${_half_pnl:+.2f}</b>\n"
+                                    f"📌 שני שלישים נשארים לרווח גדול יותר"
                                 ))
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S1] {ticker}: half-sell failed: {_pe}")
@@ -787,14 +788,15 @@ async def stop_loss_monitor():
                                     continue  # sell + watermark OK — skip Smart Sell
 
                     elif _stage1_done and not _stage2_done and plpc >= _stage2_pct and _s2_guard_key not in _partial_sell_done:
-                        # Stage 2: sell 25% of ORIGINAL (= 50% of what's left after Stage 1)
-                        _orig_qty    = trade["qty"]   # already updated after Stage 1
-                        _quarter_qty = round(_orig_qty * 0.5, 6)   # 50% of remaining = 25% of original
+                        # Stage 2: sell half of remaining (≈ 33% of original — symmetric thirds with Stage 1)
+                        _orig_qty    = trade["qty"]   # already updated after Stage 1 (now ~67% of original)
+                        _quarter_qty = round(_orig_qty * 0.5, 6)   # 50% of remaining ≈ 33% of original
                         if _quarter_qty > 0:
                             _create_background_task(send_message(
-                                f"⚡ <b>הבוט עומד למכור 25% — {ticker}</b>\n"
-                                f"🎯  שלב 2: רווח חלקי ({plpc:+.1f}%)\n"
-                                f"💵  מחיר: ${cur_price:.2f}  |  מוכר: {_quarter_qty} מניות"
+                                f"⚡ <b>נועל עוד רווח — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📊 מוכר חצי ממה שנשאר ({_quarter_qty} מניות)\n"
+                                f"📈 רווח: {plpc:+.1f}% | מחיר: ${cur_price:.2f}"
                             ))
                             try:
                                 _s2_order = await asyncio.wait_for(
@@ -991,10 +993,10 @@ async def auto_invest_loop():
 
             # ── Time-of-day filter: avoid first/last 30 min (wide spreads, volatility) ──
             try:
-                import datetime as _dt2
-                _utc_now = _dt2.datetime.utcnow()
-                _et_hour  = (_utc_now.hour - 4) % 24   # UTC→ET (rough, EDT)
-                _et_min   = _utc_now.minute
+                from trading_hours import _now_et  # DST-aware (zoneinfo)
+                _et_now   = _now_et()
+                _et_hour  = _et_now.hour
+                _et_min   = _et_now.minute
                 _minutes_since_open  = (_et_hour - 9) * 60 + _et_min - 30   # since 9:30 ET
                 _minutes_before_close = (16 * 60) - (_et_hour * 60 + _et_min)  # to 4:00 ET
                 if _minutes_since_open < 30:
@@ -1744,9 +1746,14 @@ async def earnings_monitor_loop():
                     if not em.get("post_earnings"):
                         continue
 
-                    earn_key = f"{ticker}:{em.get('days_since')}"
+                    # Key by ACTUAL earnings date (today - days_since), not days_since itself.
+                    # Otherwise the key changes every day for the same report and we re-fire.
+                    import datetime as _dt_em
+                    _ds = em.get("days_since") or 0
+                    _earn_date = (_dt_em.date.today() - _dt_em.timedelta(days=_ds)).isoformat()
+                    earn_key = f"{ticker}:{_earn_date}"
                     if _checked.get(ticker) == earn_key:
-                        continue  # already handled this earnings report
+                        continue  # already handled this specific earnings report
                     _checked[ticker] = earn_key
 
                     days   = em.get("days_since", 0)
@@ -2560,6 +2567,7 @@ async def market_closed_training_loop():
     _last_tg_notify_ts  = 0.0   # last time we sent Telegram training update
 
     while True:
+        is_open = False   # safe default — used at end of iteration in sleep()
         try:
             import os as _os
 
@@ -2596,7 +2604,9 @@ async def market_closed_training_loop():
             # ── הודעת "מתחיל אימון" כל 30 דקות ──────────────────────────
             import time as _t
             now_ts = _t.time()
-            if now_ts - _last_tg_notify_ts >= 30 * 60:
+            _send_telegram_results = now_ts - _last_tg_notify_ts >= 30 * 60
+            if _send_telegram_results:
+                _last_tg_notify_ts = now_ts   # update immediately to prevent re-fire on timeout
                 _create_background_task(send_message(
                     f"🧠 <b>מתחיל אימון — {mode_label}</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"
@@ -2624,10 +2634,8 @@ async def market_closed_training_loop():
                 f"optimal_score={result.optimal_min_score}"
             )
 
-            # ── שלח תוצאות לטלגרם רק כל 30 דקות (לא כל דקה) ─────────────
-            now_ts = _t.time()
-            if now_ts - _last_tg_notify_ts >= 30 * 60:
-                _last_tg_notify_ts = now_ts
+            # ── שלח תוצאות לטלגרם אם שלחנו "מתחיל אימון" — באותו מחזור ────
+            if _send_telegram_results:
                 own_summary_fresh = await asyncio.wait_for(
                     asyncio.to_thread(__import__('backtest_learner').simulate_own_trade_history),
                     timeout=120

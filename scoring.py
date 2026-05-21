@@ -140,6 +140,13 @@ def _get_weekly_bearish(ticker: str) -> bool:
 import os as _os
 MIN_BUY_SCORE: int = int(_os.getenv("MIN_BUY_SCORE", "51"))  # מינימום 51 — קונה כל מניה מעל 50
 
+
+def get_min_buy_score() -> int:
+    """Read MIN_BUY_SCORE freshly from env — apply_insights() may have changed it.
+    Use this in scoring decisions to pick up training updates without restart.
+    """
+    return int(_os.getenv("MIN_BUY_SCORE", "51"))
+
 # ── Fundamental Quality Cache ─────────────────────────────────────────────────
 # Stores (timestamp, score: float) per ticker; TTL = 24 hours
 _fundamental_cache: dict[str, tuple[float, float]] = {}
@@ -702,7 +709,8 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         pass
 
     composite = round(composite, 1)
-    decision = "BUY ✅" if composite >= MIN_BUY_SCORE else "SKIP ❌"
+    _min_score = get_min_buy_score()  # read fresh — apply_insights may have updated env
+    decision = "BUY ✅" if composite >= _min_score else "SKIP ❌"
 
     logger.info(
         f"[SCORE] {ticker}: composite={composite}/100 "
@@ -712,9 +720,9 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     return {
         "ticker": ticker,
         "composite_score": composite,
-        "min_score": MIN_BUY_SCORE,
+        "min_score": _min_score,
         "decision": decision,
-        "should_buy": composite >= MIN_BUY_SCORE,
+        "should_buy": composite >= _min_score,
         "weights": {"technicals": f"{round(w_tech*100)}%", "market": f"{round(w_mkt*100)}%", "sentiment": f"{round(w_sent*100)}%"},
         "scores": {
             "technicals": tech_score,

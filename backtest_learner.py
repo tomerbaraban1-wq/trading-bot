@@ -473,11 +473,13 @@ def simulate_own_trade_history() -> dict:
 
     conn = _db.get_connection()
 
-    # Get all closed trades (including ghost-closed with pnl=0)
-    rows = conn.execute("""
+    # Get all closed trades — use the shared _CLOSED_STATUSES list to include
+    # all closure types (stop_loss, take_profit, smart_sell, momentum_exit, etc.)
+    from database import _CLOSED_STATUSES
+    rows = conn.execute(f"""
         SELECT id, ticker, entry_price, entry_time, qty
         FROM trade_log
-        WHERE status = 'closed'
+        WHERE status IN {_CLOSED_STATUSES}
         ORDER BY entry_time DESC
         LIMIT 50
     """).fetchall()

@@ -350,7 +350,7 @@ def get_learning_entries(pattern_type: str | None = None, limit: int = 50) -> li
     return [dict(row) for row in rows]
 
 
-_CLOSED_STATUSES = "('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart','momentum_exit','partial_tp')"
+_CLOSED_STATUSES = "('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart','momentum_exit','partial_tp','news_exit','earnings_miss')"
 
 
 def get_loss_trades(limit: int = 20) -> list[dict]:
@@ -401,7 +401,7 @@ def get_tax_balance() -> dict:
 def get_tax_summary() -> dict:
     conn = get_connection()
     row = conn.execute(
-        """SELECT
+        f"""SELECT
             COALESCE(SUM(pnl_gross), 0) as realized_pnl_gross,
             COALESCE(SUM(CASE WHEN pnl_gross > 0 THEN tax_reserved ELSE 0 END), 0) as tax_reserved,
             COALESCE(SUM(pnl_net), 0) as realized_pnl_net
