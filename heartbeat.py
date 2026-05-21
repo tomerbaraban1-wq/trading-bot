@@ -2226,10 +2226,10 @@ async def news_monitor_loop():
                                     translated_hl.append(line.split(". ", 1)[-1].strip())
                             return translated_hl or hl, translated_reason
                         except Exception:
-                            return [], "לא ניתן לתרגם"  # don't return English on failure
+                            return hl, reason  # fallback — return original if translation fails
 
                     headlines_he, reasoning_he = await _translate_news(headlines, reasoning)
-                    news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "אין כותרות מתורגמות"
+                    news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "📰 לא נמצאו חדשות"
                     reasoning = reasoning_he
 
                     # ── 1. CRITICAL (1-2): emergency sell immediately ─────────
