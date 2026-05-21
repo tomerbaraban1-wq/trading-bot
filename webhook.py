@@ -171,7 +171,7 @@ async def receive_webhook(payload: WebhookPayload, request: Request):
     # 0. Rate limiting check
     if not _check_rate_limit(request):
         logger.warning(f"Webhook rate limit exceeded from {request.client.host if request.client else 'unknown'}")
-        raise HTTPException(status_code=429, detail="Rate limit exceeded. Max 100 requests per 60 seconds")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     # 1. Authenticate — reject if secret is empty (misconfigured) or wrong
     if not settings.WEBHOOK_SECRET:
@@ -619,17 +619,29 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
     Full step-by-step diagnostic — shows EXACTLY why the bot is or isn't buying right now.
     Hit this URL in your browser to debug.
     """
+    import os as _os
     import random
     from scanner import get_watchlist
     from scoring import get_composite_score, MIN_BUY_SCORE
     from sentiment import score_sentiment
-    from trading_hours import is_ok_to_trade, get_status as hours_status_fn
+    from trading_hours import is_ok_to_trade, get_status as hours_status_fn, is_high_impact_day
     from market_regime import get_regime as get_regime_fn
     from volume_confirm import check as vol_check
     from sanity_check import run_all as sanity_run
     from budget import compute_position_size, get_budget_status
+    from indicators import get_market_conditions
 
     report = {}
+    blockers = []
+
+    # ── 0. Bot paused ─────────────────────────────────────────────────────────
+    bot_paused = _os.getenv("BOT_PAUSED", "").lower() == "true"
+    report["step0_bot_paused"] = {
+        "paused": bot_paused,
+        "verdict": "❌ BLOCKED — Bot is paused (BOT_PAUSED=true)" if bot_paused else "✅ PASS",
+    }
+    if bot_paused:
+        blockers.append("Bot is paused (BOT_PAUSED=true)")
 
     # ── 1. Market hours ────────────────────────────────────────────────────────
     hours_ok, hours_reason = is_ok_to_trade()
@@ -640,6 +652,10 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
         "reason": hours_reason,
         "verdict": "✅ PASS" if (mkt_open and hours_ok) else "❌ BLOCKED — market closed or outside session",
     }
+    if not mkt_open:
+        blockers.append("Market closed (broker check)")
+    if not hours_ok:
+        blockers.append(f"Trading hours: {hours_reason}")
 
     # ── 2. Budget ──────────────────────────────────────────────────────────────
     status = await asyncio.to_thread(get_budget_status)
@@ -651,6 +667,10 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
         "max_positions": settings.MAX_OPEN_POSITIONS,
         "verdict": "✅ PASS" if cash >= 10 and len(open_trades) < settings.MAX_OPEN_POSITIONS else f"❌ BLOCKED — cash=${cash:.2f}, positions={len(open_trades)}/{settings.MAX_OPEN_POSITIONS}",
     }
+    if cash < 10:
+        blockers.append(f"Not enough cash: ${cash:.2f}")
+    if len(open_trades) >= settings.MAX_OPEN_POSITIONS:
+        blockers.append(f"Max positions reached: {len(open_trades)}/{settings.MAX_OPEN_POSITIONS}")
 
     # ── 3. Circuit breaker ──────────────────────────────────────────────────────
     from circuit_breaker import check_circuit_breaker
@@ -660,6 +680,38 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
         "reason": cb_reason,
         "verdict": "✅ PASS" if cb_ok else f"❌ BLOCKED — {cb_reason}",
     }
+    if not cb_ok:
+        blockers.append(f"Circuit breaker: {cb_reason}")
+
+    # ── 3b. SPY trend + VIX guard (same checks as auto_invest_loop) ───────────
+    try:
+        _mkt = await asyncio.to_thread(get_market_conditions)
+        spy_ok = _mkt.get("spy_above_sma50")
+        vix = _mkt.get("vix")
+        spy_rsi = _mkt.get("spy_rsi")
+        report["step3b_market_guards"] = {
+            "spy_above_sma50": spy_ok,
+            "spy_rsi": round(spy_rsi, 1) if spy_rsi else None,
+            "vix": round(vix, 1) if vix else None,
+        }
+        if spy_ok is False:
+            report["step3b_market_guards"]["verdict"] = "❌ BLOCKED — SPY below SMA50 (downtrend)"
+            blockers.append("SPY below SMA50 — market downtrend blocks ALL buys")
+        elif vix and vix > 30:
+            report["step3b_market_guards"]["verdict"] = f"❌ BLOCKED — VIX={vix:.1f} extreme fear"
+            blockers.append(f"VIX={vix:.1f} > 30 — extreme fear blocks ALL buys")
+        else:
+            report["step3b_market_guards"]["verdict"] = "✅ PASS"
+    except Exception as e:
+        report["step3b_market_guards"] = {"error": str(e), "verdict": "⚠️ failed (fail-open)"}
+
+    # ── 3c. High-impact economic event (CPI / NFP) ────────────────────────────
+    _econ_impact, _econ_event = is_high_impact_day()
+    if _econ_impact:
+        report["step3c_economic_event"] = {"event": _econ_event, "verdict": "❌ BLOCKED"}
+        blockers.append(f"High-impact economic event: {_econ_event}")
+    else:
+        report["step3c_economic_event"] = {"event": None, "verdict": "✅ PASS"}
 
     # ── 4. Score 3 stocks through every filter ─────────────────────────────────
     watchlist = get_watchlist()
@@ -669,17 +721,51 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
     for ticker in sample:
         result = {"ticker": ticker, "filters": {}}
         try:
+            # Earnings blackout
+            try:
+                from earnings import check_earnings_risk
+                earn_risky, earn_reason, _ = await asyncio.wait_for(
+                    asyncio.to_thread(check_earnings_risk, ticker), timeout=10
+                )
+                if earn_risky:
+                    result["filters"]["earnings"] = f"❌ BLOCKED — {earn_reason}"
+                    stock_results.append(result)
+                    continue
+                result["filters"]["earnings"] = "✅ PASS"
+            except Exception:
+                result["filters"]["earnings"] = "⚠️ check failed (fail-open)"
+
             # Score
             sent = await asyncio.to_thread(score_sentiment, ticker)
             comp = await asyncio.to_thread(get_composite_score, ticker, sent.score)
             score = comp["composite_score"]
             result["score"] = round(score, 1)
             result["min_score"] = MIN_BUY_SCORE
+            result["sentiment"] = sent.score
             result["filters"]["scoring"] = "✅ PASS" if comp["should_buy"] else f"❌ BLOCKED — score={score:.0f} < {MIN_BUY_SCORE}"
 
             if comp["should_buy"]:
-                # Price
-                price = await asyncio.to_thread(broker.get_price, ticker)
+                # Learning override
+                try:
+                    from learning import should_override_buy as _sob
+                    from indicators import get_current_indicators as _gci
+                    _ind = _gci(ticker) or {}
+                    _block, _block_reason = _sob(ticker, _ind)
+                    result["filters"]["learning"] = f"❌ BLOCKED — {_block_reason}" if _block else "✅ PASS"
+                    if _block:
+                        stock_results.append(result)
+                        continue
+                except Exception:
+                    result["filters"]["learning"] = "⚠️ check failed (fail-open)"
+
+                # Price (with timeout — yfinance can hang)
+                try:
+                    price = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_price, ticker), timeout=10
+                    )
+                except (asyncio.TimeoutError, Exception) as _e:
+                    logger.warning(f"[SCAN] get_price timeout for {ticker}: {_e}")
+                    price = None
                 result["price"] = price
 
                 # Regime
@@ -690,7 +776,7 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
                     result["filters"]["market_regime"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
 
                 # Sanity
-                sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, {}), timeout=20)
+                sane, sane_reason = await asyncio.wait_for(asyncio.to_thread(sanity_run, ticker, price, None), timeout=20)
                 result["filters"]["sanity_check"] = "✅ PASS" if sane else f"❌ BLOCKED — {sane_reason}"
 
                 # Volume
@@ -699,6 +785,29 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
                     result["filters"]["volume"] = "✅ PASS" if vol_ok else f"❌ BLOCKED — {vol_reason} (ratio={vol_details.get('ratio', '?')})"
                 except Exception as e:
                     result["filters"]["volume"] = f"⚠️ timeout/error — {e} (fail-open, continues)"
+
+                # Correlation
+                try:
+                    from correlation import check as corr_check
+                    corr_blocked, corr_reason, _ = await asyncio.wait_for(asyncio.to_thread(corr_check, ticker), timeout=15)
+                    result["filters"]["correlation"] = f"❌ BLOCKED — {corr_reason}" if corr_blocked else "✅ PASS"
+                except Exception as e:
+                    result["filters"]["correlation"] = f"⚠️ timeout/error — {e} (fail-open)"
+
+                # Sector diversification
+                try:
+                    from sector_rotation import get_sector_for_ticker as _sector_of
+                    _new_sector = _sector_of(ticker)
+                    if _new_sector:
+                        _open_sectors = [_sector_of(_ot["ticker"]) for _ot in open_trades]
+                        if _open_sectors.count(_new_sector) >= 1:
+                            result["filters"]["sector"] = f"❌ BLOCKED — sector {_new_sector} already held"
+                        else:
+                            result["filters"]["sector"] = f"✅ PASS ({_new_sector})"
+                    else:
+                        result["filters"]["sector"] = "⚠️ sector unknown (continues)"
+                except Exception:
+                    result["filters"]["sector"] = "⚠️ check failed (fail-open)"
 
                 # Position sizing
                 qty, sizing_meta = await asyncio.to_thread(compute_position_size, price, score)
@@ -712,16 +821,9 @@ async def diagnose(_auth: None = Depends(_verify_secret)):
     report["step4_stock_samples"] = stock_results
 
     # ── Summary ────────────────────────────────────────────────────────────────
-    blockers = []
-    if not mkt_open:   blockers.append("Market is closed (broker check)")
-    if not hours_ok:   blockers.append(f"Trading hours blocked: {hours_reason}")
-    if cash < 10:      blockers.append(f"Not enough cash: ${cash:.2f}")
-    if len(open_trades) >= settings.MAX_OPEN_POSITIONS: blockers.append(f"Max positions reached: {len(open_trades)}/{settings.MAX_OPEN_POSITIONS}")
-    if not cb_ok:      blockers.append(f"Circuit breaker: {cb_reason}")
-
     report["summary"] = {
         "verdict": "✅ Bot SHOULD be buying (check stock scores above)" if not blockers else "❌ Bot BLOCKED",
-        "blockers": blockers if blockers else ["None — if still not buying, check stock scores above"],
+        "blockers": blockers if blockers else ["None — if still not buying, check stock scores in step4"],
     }
 
     return report

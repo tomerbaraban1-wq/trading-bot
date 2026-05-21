@@ -16,10 +16,16 @@ if os.path.exists(_cert):
 
 import asyncio
 import logging
+import socket
 import time
 import threading
 import signal
 from pathlib import Path
+
+# Global network safety net: any socket call that hangs >30s raises socket.timeout
+# instead of hanging forever. Protects yfinance, requests, urllib, httpx — anything
+# that uses sockets. Without this, a slow yahoo response can freeze the event loop.
+socket.setdefaulttimeout(30)
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse

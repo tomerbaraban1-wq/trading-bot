@@ -20,7 +20,7 @@ Why it's useful:
 Shadow strategy (intentionally more aggressive than live):
   - Lower composite score floor   (SHADOW_MIN_SCORE,     default 45)
   - Lower sentiment floor         (SHADOW_MIN_SENTIMENT, default 3)
-  - Skips volume confirmation     (SHADOW_SKIP_VOLUME,   default False)
+  - Skips volume confirmation     (SHADOW_SKIP_VOLUME,   default True)
   - Skips correlation filter      (SHADOW_SKIP_CORR,     default False)
   - Independent paper capital     (SHADOW_CAPITAL,       default $10,000)
   - Max position size as % of capital (SHADOW_POSITION_PCT, default 20%)
@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 ENABLED:           bool  = os.getenv("SHADOW_MODE_ENABLED",    "true").lower() == "true"
 MIN_SCORE:         float = float(os.getenv("SHADOW_MIN_SCORE",        "45"))
 MIN_SENTIMENT:     int   = int(os.getenv("SHADOW_MIN_SENTIMENT",       "3"))
-SKIP_VOLUME:       bool  = os.getenv("SHADOW_SKIP_VOLUME",    "false").lower() == "true"
+SKIP_VOLUME:       bool  = os.getenv("SHADOW_SKIP_VOLUME",    "true").lower() == "true"
 SKIP_CORR:         bool  = os.getenv("SHADOW_SKIP_CORR",      "false").lower() == "true"
 CAPITAL:           float = float(os.getenv("SHADOW_CAPITAL",         "10000"))
 POSITION_PCT:      float = float(os.getenv("SHADOW_POSITION_PCT",       "20"))

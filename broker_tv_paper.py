@@ -130,6 +130,19 @@ def _pg_save(cash: float, positions: dict) -> None:
         conn.commit()
 
 
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> int:
+    """Return the day-of-month for the nth occurrence of weekday in the given month."""
+    import calendar
+    cal = calendar.monthcalendar(year, month)
+    count = 0
+    for week in cal:
+        if week[weekday] != 0:
+            count += 1
+            if count == n:
+                return week[weekday]
+    return week[weekday]
+
+
 class TVPaperBroker(BrokerBase):
     """
     Built-in paper trading simulation — no API keys needed.
@@ -253,34 +266,53 @@ class TVPaperBroker(BrokerBase):
     # ------------------------------------------------------------------ #
 
     def _get_price(self, ticker: str) -> float:
-        """Fetch the latest market price for *ticker* via yfinance."""
+        """Fetch the latest market price for *ticker* via yfinance.
+
+        Hard-protected against hangs via threading timeout (12s).
+        Inside, also asks yfinance for timeout=10. Socket-level timeout (30s in
+        main.py) is the last line of defence.
+        """
         ticker = ticker.upper()
-        try:
-            t = yf.Ticker(ticker)
+        result: list = [None]
+        exc_box: list = [None]
 
-            # Try intraday history first (most accurate live price)
-            hist = t.history(period="1d", interval="1m")
-            if not hist.empty:
-                price = float(hist["Close"].iloc[-1])
-                if price > 0:
-                    return price
+        def _fetch():
+            try:
+                t = yf.Ticker(ticker)
+                # Intraday history first (most accurate live price)
+                hist = t.history(period="1d", interval="1m", timeout=10)
+                if not hist.empty:
+                    p = float(hist["Close"].iloc[-1])
+                    if p > 0:
+                        result[0] = p
+                        return
+                # Fall back to .info dict
+                info = t.info
+                p = float(
+                    info.get("regularMarketPrice")
+                    or info.get("currentPrice")
+                    or info.get("previousClose")
+                    or 0
+                )
+                if p > 0:
+                    result[0] = p
+            except Exception as e:
+                exc_box[0] = e
 
-            # Fall back to .info dict
-            info = t.info
-            price = float(
-                info.get("regularMarketPrice")
-                or info.get("currentPrice")
-                or info.get("previousClose")
-                or 0
-            )
-            if price > 0:
-                return price
-
-        except Exception as exc:
+        th = threading.Thread(target=_fetch, daemon=True)
+        th.start()
+        th.join(timeout=12)
+        if th.is_alive():
+            # yfinance hung — abandon the thread (daemon=True, so it dies with process)
             raise RuntimeError(
-                f"yfinance failed to fetch price for '{ticker}': {exc}"
-            ) from exc
-
+                f"yfinance hung >12s for '{ticker}' — aborted to protect event loop"
+            )
+        if exc_box[0] is not None:
+            raise RuntimeError(
+                f"yfinance failed to fetch price for '{ticker}': {exc_box[0]}"
+            ) from exc_box[0]
+        if result[0] is not None:
+            return result[0]
         raise RuntimeError(
             f"Could not obtain a valid price for '{ticker}' from yfinance. "
             "The ticker may be invalid or the market data feed is unavailable."
@@ -289,6 +321,22 @@ class TVPaperBroker(BrokerBase):
     @staticmethod
     def _order_id(ticker: str) -> str:
         return f"TV_{ticker.upper()}_{int(time.time())}"
+
+    @staticmethod
+    def _is_edt(now) -> bool:
+        """Determine if a UTC datetime falls within US Eastern Daylight Time.
+        DST: 2nd Sunday of March 07:00 UTC – 1st Sunday of November 06:00 UTC."""
+        import calendar
+        m = now.month
+        if 4 <= m <= 10:
+            return True
+        if m == 3:
+            second_sun = _nth_weekday(now.year, 3, calendar.SUNDAY, 2)
+            return now.day > second_sun or (now.day == second_sun and now.hour >= 7)
+        if m == 11:
+            first_sun = _nth_weekday(now.year, 11, calendar.SUNDAY, 1)
+            return now.day < first_sun or (now.day == first_sun and now.hour < 6)
+        return False
 
     def _portfolio_value(self) -> float:
         """Current market value of all virtual positions."""
@@ -511,16 +559,7 @@ class TVPaperBroker(BrokerBase):
         if now.weekday() >= 5:
             return False
 
-        month = now.month
-        # DST: EDT=Mar(2nd Sun)-Nov(1st Sun). Month approx: 4-10=EDT, 3 after 8th, 11 before 8th
-        if month in range(4, 11):
-            is_edt = True
-        elif month == 3:
-            is_edt = now.day >= 8   # EDT starts ~2nd Sunday of March
-        elif month == 11:
-            is_edt = now.day > 7    # EST starts 1st Sunday of November
-        else:
-            is_edt = False
+        is_edt = self._is_edt(now)
 
         if is_edt:
             regular_open  = now.replace(hour=13, minute=30, second=0, microsecond=0)
@@ -567,17 +606,7 @@ class TVPaperBroker(BrokerBase):
         now = datetime.datetime.now(datetime.timezone.utc)
         is_open = self.is_market_open()
 
-        # Determine EDT/EST
-        month = now.month
-        # DST: EDT=Mar(2nd Sun)-Nov(1st Sun). Month approx: 4-10=EDT, 3 after 8th, 11 before 8th
-        if month in range(4, 11):
-            is_edt = True
-        elif month == 3:
-            is_edt = now.day >= 8   # EDT starts ~2nd Sunday of March
-        elif month == 11:
-            is_edt = now.day > 7    # EST starts 1st Sunday of November
-        else:
-            is_edt = False
+        is_edt = self._is_edt(now)
         open_hour = 13 if is_edt else 14
         open_min = 30
         close_hour = 20 if is_edt else 21

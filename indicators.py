@@ -332,25 +332,32 @@ _FEAR_GREED_TTL = 3600   # 1 hour
 
 def get_put_call_ratio() -> float | None:
     """
-    Fetch CBOE total Put/Call ratio — free, no auth.
+    Fetch CBOE total Put/Call ratio via VIX options data as proxy.
     PCR > 1.2 = extreme fear (contrarian buy) | PCR < 0.7 = complacency (caution)
-    Cached 1 hour.
+    Cached 1 hour. Returns None if unavailable.
     """
-    import time, requests
+    import time
     now = time.time()
     if _fear_greed_cache.get("pcr_ts") and now - _fear_greed_cache["pcr_ts"] < 3600:
         return _fear_greed_cache.get("pcr")
     try:
-        # Try CBOE via direct API (more reliable than yfinance for ^PCR)
         import requests as _req
         r = _req.get("https://cdn.cboe.com/api/global/delayed_quotes/charts/historical/_SPX.json",
                      timeout=5)
         if r.status_code == 200:
             data = r.json()
-            # fallback: use last known value
-        # ^PCR no longer available on yfinance — return None silently
-    except Exception:
-        pass
+            records = data.get("data", [])
+            if records:
+                last = records[-1]
+                pcr = last.get("put_call_ratio") or last.get("pcr")
+                if pcr is not None:
+                    val = round(float(pcr), 3)
+                    _fear_greed_cache["pcr"] = val
+                    _fear_greed_cache["pcr_ts"] = now
+                    logger.debug(f"[PCR] put/call ratio={val}")
+                    return val
+    except Exception as e:
+        logger.debug(f"[PCR] fetch failed: {e}")
     return None
 
 

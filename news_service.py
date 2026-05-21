@@ -3,6 +3,10 @@ import time
 import threading
 import logging
 import requests
+try:
+    from defusedxml.ElementTree import fromstring as _safe_fromstring
+except ImportError:
+    from xml.etree.ElementTree import fromstring as _safe_fromstring
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -194,8 +198,8 @@ def _parse_rss(content: bytes, source_name: str) -> list[dict]:
     """Parse RSS 2.0 and Atom feed formats."""
     items = []
     try:
-        root = ET.fromstring(content)
-    except ET.ParseError:
+        root = _safe_fromstring(content)
+    except Exception:
         return items
 
     # RSS 2.0: <item> elements with <title> + <description>

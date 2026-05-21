@@ -208,22 +208,42 @@ def get_asset(ticker: str) -> dict | None:
 
 
 def get_price(ticker: str) -> float | None:
-    """Get the current market price for a ticker."""
-    try:
-        import yfinance as yf
-        t = yf.Ticker(ticker.upper())
-        hist = t.history(period="1d", interval="1m")
-        if not hist.empty:
-            price = float(hist["Close"].iloc[-1])
-            if price > 0:
-                return price
-        info = t.info
-        price = float(
-            info.get("regularMarketPrice") or
-            info.get("currentPrice") or
-            info.get("previousClose") or 0
-        )
-        return price if price > 0 else None
-    except Exception as e:
-        logger.warning(f"get_price failed for {ticker}: {e}")
+    """Get the current market price for a ticker.
+
+    Hard-protected against yfinance hangs via threading timeout (12s).
+    """
+    import threading
+    import yfinance as yf
+    result: list = [None]
+    exc_box: list = [None]
+
+    def _fetch():
+        try:
+            t = yf.Ticker(ticker.upper())
+            hist = t.history(period="1d", interval="1m", timeout=10)
+            if not hist.empty:
+                p = float(hist["Close"].iloc[-1])
+                if p > 0:
+                    result[0] = p
+                    return
+            info = t.info
+            p = float(
+                info.get("regularMarketPrice") or
+                info.get("currentPrice") or
+                info.get("previousClose") or 0
+            )
+            if p > 0:
+                result[0] = p
+        except Exception as e:
+            exc_box[0] = e
+
+    th = threading.Thread(target=_fetch, daemon=True)
+    th.start()
+    th.join(timeout=12)
+    if th.is_alive():
+        logger.warning(f"get_price hung >12s for {ticker} — aborted")
         return None
+    if exc_box[0] is not None:
+        logger.warning(f"get_price failed for {ticker}: {exc_box[0]}")
+        return None
+    return result[0]

@@ -22,8 +22,11 @@ def process_trade_close(trade_id: int, pnl_gross: float) -> dict:
 
 
 def _handle_profit(trade_id: int, pnl_gross: float) -> dict:
-    """Reserve tax on profit, offset with available credits."""
-    raw_tax = pnl_gross * settings.TAX_RATE
+    """Reserve tax on profit, offset with available credits.
+
+    Credits offset gains dollar-for-dollar: a $100 loss credit cancels
+    $100 of future gains, saving $25 tax (at 25% rate).
+    """
     try:
         tax_balance = get_tax_balance()
         available_credit = tax_balance["tax_credit"]
@@ -32,25 +35,25 @@ def _handle_profit(trade_id: int, pnl_gross: float) -> dict:
         available_credit = 0.0
 
     credit_used = 0.0
-    actual_tax = raw_tax
+    taxable_gain = pnl_gross
 
-    # Offset with available tax credits
+    # Offset gains with available loss credits (dollar-for-dollar)
     if available_credit > 0:
-        credit_used = min(available_credit, raw_tax)
-        actual_tax = raw_tax - credit_used
+        credit_used = min(available_credit, pnl_gross)
+        taxable_gain = pnl_gross - credit_used
 
-        # Deduct from credit pool (negative credit event)
         if credit_used > 0:
             save_tax_event(trade_id, "tax_credit", -credit_used)
-            logger.info(f"Trade #{trade_id}: Used ${credit_used:.2f} tax credit (offset)")
+            logger.info(f"Trade #{trade_id}: Used ${credit_used:.2f} loss credit (offset ${credit_used:.2f} of gains)")
 
-    # Reserve the remaining tax
+    actual_tax = max(0.0, taxable_gain * settings.TAX_RATE)
+
     if actual_tax > 0:
         save_tax_event(trade_id, "tax_reserved", actual_tax)
 
     logger.info(
         f"Trade #{trade_id} PROFIT: PnL=${pnl_gross:.2f} | "
-        f"Tax=${actual_tax:.2f} (credit used=${credit_used:.2f})"
+        f"Taxable=${taxable_gain:.2f} | Tax=${actual_tax:.2f} (credit used=${credit_used:.2f})"
     )
     return {"tax_amount": actual_tax, "credit_used": credit_used, "new_credit": 0.0}
 
