@@ -2198,11 +2198,9 @@ async def news_monitor_loop():
             try:
                 _mkt = await asyncio.wait_for(asyncio.to_thread(broker.is_market_open), timeout=15)
             except asyncio.TimeoutError:
-                await asyncio.sleep(5 * 60)
-                continue
-            if not _mkt:
-                await asyncio.sleep(5 * 60)
-                continue
+                _mkt = False
+            # NEW: בודק חדשות גם בשוק סגור (alert-only mode — בלי מכירה אחרי שעות)
+            _alert_only = not _mkt
 
             open_trades = await asyncio.to_thread(database.get_open_trades)
             if not open_trades:
@@ -2269,24 +2267,39 @@ async def news_monitor_loop():
                     news_preview = "\n".join(f"📰 {h[:90]}" for h in headlines_he) if headlines_he else "📰 לא נמצאו חדשות"
                     reasoning = reasoning_he
 
-                    # ── 1. CRITICAL (1-2): emergency sell immediately ─────────
+                    # ── 1. CRITICAL (1-2): emergency action ────────────────────
                     if score <= 2:
-                        logger.warning(
-                            f"[NEWS SELL] {ticker}: CRITICAL sentiment={score}/10 "
-                            f"— emergency exit | reason: {reasoning}"
-                        )
-                        await _close_position(
-                            trade, cur_price, "news_exit",
-                            f"חדשות קריטיות (ציון={score}/10) — {reasoning[:60]}"
-                        )
-                        await send_message(
-                            f"🚨 <b>יציאה חירום — חדשות קריטיות!</b>\n"
-                            f"━━━━━━━━━━━━━━━━\n"
-                            f"📌  <b>{ticker}</b>  ·  ציון חדשות: <b>{score}/10</b> 🔴\n\n"
-                            f"{news_preview}\n\n"
-                            f"💬 <b>ניתוח AI:</b> {reasoning[:120]}\n\n"
-                            f"⚡ מכרתי מיד — הפסד/רווח: <b>{plpc:+.1f}%</b>"
-                        )
+                        if _alert_only:
+                            # שוק סגור — רק התראה, אי אפשר למכור
+                            await send_message(
+                                f"⚠️ <b>חדשות קריטיות אחרי שעות — {ticker}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📌 ציון חדשות: <b>{score}/10</b> 🔴\n\n"
+                                f"{news_preview}\n\n"
+                                f"💬 <b>ניתוח AI:</b> {reasoning[:120]}\n\n"
+                                f"📍 שוק סגור — אמכור מיד עם הפתיחה"
+                            )
+                        else:
+                            logger.warning(
+                                f"[NEWS SELL] {ticker}: CRITICAL sentiment={score}/10 "
+                                f"— emergency exit | reason: {reasoning}"
+                            )
+                            await _close_position(
+                                trade, cur_price, "news_exit",
+                                f"חדשות קריטיות (ציון={score}/10) — {reasoning[:60]}"
+                            )
+                            await send_message(
+                                f"🚨 <b>יציאה חירום — חדשות קריטיות!</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📌  <b>{ticker}</b>  ·  ציון חדשות: <b>{score}/10</b> 🔴\n\n"
+                                f"{news_preview}\n\n"
+                                f"💬 <b>ניתוח AI:</b> {reasoning[:120]}\n\n"
+                                f"⚡ מכרתי מיד — הפסד/רווח: <b>{plpc:+.1f}%</b>"
+                            )
+                        continue
+
+                    # שאר הציונים (3-7, 8+) רק כשהשוק פתוח
+                    if _alert_only:
                         continue
 
                     # ── 2. BEARISH (3): sell if in profit, tighten if in loss ─
