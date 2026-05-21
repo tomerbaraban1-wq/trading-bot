@@ -131,6 +131,46 @@ def _fmt_held(hours: float) -> str:
 _context_cache: tuple[float, dict] = (0.0, {})
 _CONTEXT_CACHE_TTL = 120  # 2 minutes — reduces slow yfinance/broker calls
 
+# Conversation memory — remember last N exchanges for follow-up questions
+# Keyed by chat_id (str). Each entry: list of (role, content) tuples.
+_conversation_history: dict[str, list] = {}
+_MAX_HISTORY_TURNS = 5   # remember last 5 user+bot exchanges (10 messages)
+_HISTORY_LOCK = __import__('threading').Lock()
+
+
+def _remember(chat_id: str, role: str, content: str) -> None:
+    """Save a message to conversation memory (keeps last 10 messages per chat)."""
+    if not chat_id or not content:
+        return
+    with _HISTORY_LOCK:
+        hist = _conversation_history.setdefault(chat_id, [])
+        hist.append({"role": role, "content": content[:500]})  # cap each msg
+        # Keep last 2*MAX_HISTORY_TURNS messages (5 user + 5 bot)
+        if len(hist) > _MAX_HISTORY_TURNS * 2:
+            del hist[: len(hist) - _MAX_HISTORY_TURNS * 2]
+
+
+def _get_history(chat_id: str) -> list:
+    """Return previous conversation messages for context."""
+    with _HISTORY_LOCK:
+        return list(_conversation_history.get(chat_id, []))
+
+
+def _detect_ticker(text: str) -> str | None:
+    """
+    זיהוי אם המשתמש שלח רק טיקר (לדוגמה 'NVDA' או 'aapl').
+    מחזיר את הטיקר באותיות גדולות, או None אם לא טיקר.
+    """
+    t = (text or "").strip().upper()
+    # 1-5 letters, optionally with . or -
+    import re as _re
+    if _re.fullmatch(r"[A-Z]{1,5}([.-][A-Z]{1,3})?", t):
+        # Exclude common words
+        if t in ("OK", "YES", "NO", "HI", "HELP", "YO", "OY"):
+            return None
+        return t
+    return None
+
 
 def _get_client() -> OpenAI | None:
     global _client
@@ -372,8 +412,13 @@ def _generate_reply(user_message: str) -> str:
     # ── Only if LLM unavailable — very simple fallback ──────────────────────
     return _simple_fallback(context)
 
-def _llm_reply(user_message: str, context: dict) -> str:
-    """Full LLM-powered dynamic reply — analyzes ANY question and provides the most relevant answer."""
+def _llm_reply(user_message: str, context: dict, history: list | None = None) -> str:
+    """Full LLM-powered dynamic reply — analyzes ANY question and provides the most relevant answer.
+
+    If `history` is provided, includes previous exchanges so the LLM can answer
+    follow-up questions naturally (e.g. "and what about NVDA?" referring to
+    a previous AAPL discussion).
+    """
     client = _get_client()
     if not client:
         return _simple_fallback(context)
@@ -460,13 +505,19 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
 """
 
     try:
+        # Build message chain with conversation history (if any)
+        messages = [{"role": "system", "content": system_prompt}]
+        if history:
+            # Add previous turns (already capped to last 10 msgs by _remember)
+            for h in history:
+                if h.get("role") in ("user", "assistant"):
+                    messages.append({"role": h["role"], "content": h.get("content", "")[:500]})
+        messages.append({"role": "user", "content": user_message})
+
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_message},
-            ],
-            max_tokens=500,   # enough for detailed analysis answers
+            messages=messages,
+            max_tokens=500,
             temperature=0.4,
         )
         reply = response.choices[0].message.content.strip()
@@ -2009,19 +2060,40 @@ def _handle_command(text: str, context: dict) -> str | None:
             chg2 = _day_chg(t2)
             b1 = "✅ קנה" if r1["should_buy"] else "❌ דלג"
             b2 = "✅ קנה" if r2["should_buy"] else "❌ דלג"
+
+            # Buffett analysis for both
+            try:
+                from buffett_analysis import get_buffett_analysis
+                buf1 = get_buffett_analysis(t1)
+                buf2 = get_buffett_analysis(t2)
+                bs1, bs2 = buf1.get("score", 0), buf2.get("score", 0)
+                bm1, bm2 = buf1.get("moat", "weak"), buf2.get("moat", "weak")
+                moat_icon = {"strong": "💪", "medium": "🛡️", "weak": "⚠️"}
+                bm1_str = f"{moat_icon.get(bm1, '?')} {bm1}"
+                bm2_str = f"{moat_icon.get(bm2, '?')} {bm2}"
+            except Exception:
+                bs1, bs2, bm1_str, bm2_str = 0, 0, "?", "?"
+
+            # Combined winner: 50% composite + 50% Buffett
+            combined1 = (s1 + bs1) / 2
+            combined2 = (s2 + bs2) / 2
+            winner_combined = t1 if combined1 >= combined2 else t2
+            combined_diff = abs(combined1 - combined2)
+
             return (
                 f"⚔️ <b>{t1}  vs  {t2}</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"<b>{t1}</b>\n"
-                f"  ⭐  ציון:  {s1:.0f}/100  <code>{_score_bar(s1, 8)}</code>\n"
-                f"  🔧  טכני:  {tech1:.0f}  |  🌍 שוק: {mkt1:.0f}  |  🧠 {sent1.score}/10\n"
-                f"  📅  יום:   {chg1:+.2f}%  |  {b1}\n\n"
+                f"  ⭐ ציון טכני: {s1:.0f}/100  {_score_bar(s1, 8)}\n"
+                f"  🎩 ציון באפט: {bs1:.0f}/100  |  Moat: {bm1_str}\n"
+                f"  📅 יום: {chg1:+.2f}%  |  {b1}\n\n"
                 f"<b>{t2}</b>\n"
-                f"  ⭐  ציון:  {s2:.0f}/100  <code>{_score_bar(s2, 8)}</code>\n"
-                f"  🔧  טכני:  {tech2:.0f}  |  🌍 שוק: {mkt2:.0f}  |  🧠 {sent2.score}/10\n"
-                f"  📅  יום:   {chg2:+.2f}%  |  {b2}\n\n"
+                f"  ⭐ ציון טכני: {s2:.0f}/100  {_score_bar(s2, 8)}\n"
+                f"  🎩 ציון באפט: {bs2:.0f}/100  |  Moat: {bm2_str}\n"
+                f"  📅 יום: {chg2:+.2f}%  |  {b2}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🏆 <b>עדיף: {winner}</b>  (פער {diff:.0f} נקודות)"
+                f"🏆 <b>עדיף: {winner_combined}</b> (פער משוקלל {combined_diff:.0f}/100)\n"
+                f"💡 השווייה משוקללת: 50% טכני + 50% באפט"
             )
         except Exception as e:
             logger.error(f"[CHAT CMD] Error: {e}")
@@ -3533,15 +3605,36 @@ async def handle_telegram_update(update: dict) -> dict:
     # Send typing indicator immediately so user knows bot is working
     await _send_typing(chat_id)
 
+    # Smart ticker detection: if user typed only a ticker (e.g. "NVDA"),
+    # offer quick analysis options instead of guessing.
+    _detected_ticker = _detect_ticker(text)
+
     # Generate reply — total timeout 25s (Telegram drops webhook at ~30s)
     try:
         async def _generate_reply():
             ctx = await asyncio.to_thread(_build_context)
+
+            # Auto-respond to bare ticker with quick analysis menu
+            if _detected_ticker and len(text.split()) == 1:
+                return (
+                    f"📊 <b>{_detected_ticker}</b> — מה תרצה לדעת?\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💲 /price {_detected_ticker} — מחיר נוכחי\n"
+                    f"🎯 /score {_detected_ticker} — ציון טכני (0-100)\n"
+                    f"🎩 /buffett {_detected_ticker} — ניתוח באפט מלא\n"
+                    f"📰 /news {_detected_ticker} — חדשות + סנטימנט AI\n"
+                    f"📑 /earnings {_detected_ticker} — דוח רווחים\n"
+                    f"📐 /volatility {_detected_ticker} — תנודתיות + Beta\n"
+                    f"💡 או שלח שאלה: <i>\"האם כדאי לקנות {_detected_ticker}?\"</i>"
+                )
+
             rep = await asyncio.to_thread(_handle_command, text, ctx)
             if rep is None:
                 client = _get_client()
                 if client:
-                    rep = await asyncio.to_thread(_llm_reply, text, ctx)
+                    # Pass conversation history for follow-up questions
+                    hist = _get_history(chat_id)
+                    rep = await asyncio.to_thread(_llm_reply, text, ctx, hist)
                 else:
                     # LLM not configured — suggest relevant commands instead of just portfolio
                     rep = (
@@ -3568,6 +3661,10 @@ async def handle_telegram_update(update: dict) -> dict:
     # Send reply
     try:
         ok = await send_message(reply)
+        # Save to conversation history for follow-up questions
+        if ok:
+            _remember(chat_id, "user", text)
+            _remember(chat_id, "assistant", reply)
         return {
             "status": "replied" if ok else "send_failed",
             "incoming": text[:200],
