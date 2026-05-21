@@ -16,7 +16,9 @@
     'use strict';
 
     const BOT_URL = 'http://localhost:8000';
-    const SECRET  = 'tradebot_wh_2026_secure';
+    // SECURITY: load secret from GM_getValue (stored locally, never in code)
+    const SECRET  = GM_getValue('bot_secret', '') || prompt('הזן WEBHOOK_SECRET (יישמר מקומית):');
+    if (SECRET) GM_setValue('bot_secret', SECRET);
     const REFRESH = 8000;
 
     // ── Styles ──────────────────────────────────────────────────────────────

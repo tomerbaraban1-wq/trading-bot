@@ -1246,7 +1246,7 @@ async def scan_for_opportunity():
         return result
     except Exception as e:
         logger.error(f"Scan failed: {e}")
-        return {"error": str(e), "ticker": None}
+        return {"error": "scan_failed", "ticker": None}
 
 
 @router.post("/auto-invest")
@@ -1393,7 +1393,8 @@ async def get_news(ticker: str):
         results = [{"title": h, "publisher": "", "link": "", "published": 0} for h in headlines]
         return {"ticker": ticker.upper(), "news": results}
     except Exception as e:
-        return {"ticker": ticker.upper(), "news": [], "error": str(e)}
+        logger.error(f"[/news] {ticker}: {e}")
+        return {"ticker": ticker.upper(), "news": [], "error": "news_fetch_failed"}
 
 
 @router.get("/shadow")
