@@ -125,124 +125,52 @@ def get_watchlist() -> list[str]:
 
 WATCHLIST = [
     # ══════════════════════════════════════════════════
-    # מניות — כל החברות מעל $100 מיליארד שווי שוק
+    # מניות בלבד — ממוינות לפי עדיפות: טכנולוגיה + מומנטום ראשונות
     # (הפילטר MIN_MARKET_CAP מסנן אוטומטית אם ירדו)
+    # הוסרו: ETFs, כלי שירות, נדל"ן, ADRs זרים, מניות סיניות
     # ══════════════════════════════════════════════════
 
-    # טכנולוגיה ענקים
-    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA",
-    "AVGO", "ORCL", "AMD", "INTC", "CSCO", "TXN", "QCOM", "IBM",
-    "AMAT", "LRCX", "KLAC", "MU", "ADI", "MCHP", "NXPI",
+    # ── 1. טכנולוגיה + AI + שבבים (הכי תנועתיים) ──
+    "NVDA", "MSFT", "AAPL", "META", "GOOGL", "AMZN", "TSLA",
+    "AMD", "AVGO", "ORCL", "QCOM", "ARM", "PLTR", "SMCI",
+    "AMAT", "LRCX", "KLAC", "MU", "TXN", "ADI", "NXPI",
+    "ASML", "TSM",  # שבבים בינלאומיים עם נפח גבוה
 
-    # תוכנה / ענן / SaaS
-    "NOW", "CRM", "ADBE", "INTU", "PANW", "CRWD", "FTNT", "SNPS",
-    "CDNS", "PTC", "PLTR", "SAP", "ASML",  # ANSS נרכשה ע"י SNPS — הוסרה
+    # ── 2. תוכנה / ענן / SaaS ──
+    "NOW", "CRM", "ADBE", "INTU", "PANW", "CRWD", "FTNT",
+    "SNPS", "CDNS", "SHOP", "MELI", "UBER", "NFLX",
 
-    # אינטרנט / מדיה / מסחר
-    "NFLX", "UBER", "BKNG", "ABNB", "EBAY", "PYPL", "SHOP", "MELI",
+    # ── 3. פיננסים — רק הגדולים עם מומנטום ──
+    "JPM", "GS", "MS", "V", "MA", "AXP",
+    "BLK", "SPGI", "CME", "SCHW", "COF",
 
-    # שבבים / חומרה
-    "ARM", "SMCI", "DELL", "HPQ", "HPE", "STX", "WDC",
+    # ── 4. בריאות — רק מניות תנועתיות ──
+    "LLY", "UNH", "ABBV", "ISRG", "TMO", "AMGN",
+    "REGN", "SYK", "DHR", "ABT",
 
-    # קריפטו / פינטק גדולים
-    "COIN", "MSTR",  # SQ (Block) delisted from this index — removed
+    # ── 5. צרכנות חזקה ──
+    "COST", "HD", "MCD", "WMT", "BKNG", "ABNB",
+    "LOW", "CMG", "NKE",
 
-    # ── פיננסים ──
-    "JPM", "WFC", "C", "GS", "MS", "AXP", "V", "MA",  # BAC removed — yfinance timeouts
-    "BLK", "SCHW", "CB", "PGR", "AON", "SPGI", "MCO",  # MMC removed — data issues
-    "ICE", "CME", "COF", "USB", "TFC", "PNC", "BK", "STT",
-    "BRK-B",  # Berkshire Hathaway
+    # ── 6. תעשייה / ביטחון ──
+    "RTX", "LMT", "GE", "CAT", "HON", "DE",
+    "NOC", "GD", "ETN",
 
-    # ── בריאות / תרופות / ביוטק ──
-    "UNH", "LLY", "JNJ", "ABBV", "MRK", "PFE", "TMO", "ABT",
-    "DHR", "AMGN", "ISRG", "VRTX", "REGN", "BSX", "ELV", "CVS",
-    "SYK", "ZTS", "GILD", "MDT", "CI", "HUM", "BIIB", "ILMN",
-    "IDXX", "MTD", "WAT", "A",
+    # ── 7. אנרגיה — רק הגדולים ──
+    "XOM", "CVX", "COP", "EOG",
 
-    # ── צרכנות / קמעונאות ──
-    "WMT", "COST", "HD", "MCD", "SBUX", "NKE", "TGT", "LOW",
-    "TJX", "ROST", "DG", "DLTR", "YUM", "CMG", "DPZ",
-    "BABA", "JD", "PDD",
+    # ── 8. קריפטו / פינטק ──
+    "COIN", "PYPL", "MSTR",
 
-    # ── מוצרי צריכה / מזון ──
-    "PG", "KO", "PEP", "PM", "MO", "MDLZ", "CL", "KMB",
-    "GIS", "SJM", "HRL", "MKC",  # K (Kellogg) נרכשה — הוסר
+    # ── 9. תקשורת ──
+    "TMUS", "DIS", "CMCSA",
 
-    # ── מדיה ובידור ──
-    "DIS", "CMCSA", "WBD",  # PARA removed — data issues
-
-    # ── תקשורת ──
-    "T", "VZ", "TMUS",
-
-    # ── אנרגיה ──
-    "XOM", "CVX", "COP", "EOG", "SLB", "OXY", "PSX", "VLO",
-    "MPC", "DVN",  # HES נרכשה ע"י CVX, FANG מחוזק — הוסרו
-
-    # ── תעשייה / ביטחון ──
-    "BA", "CAT", "HON", "RTX", "LMT", "GE", "MMM", "DE",
-    "UPS", "FDX", "ETN", "EMR", "ROK", "PH", "ITW",
-    "NOC", "GD", "LHX", "HII", "TDG",  # L3H → LHX (L3Harris נכון)
-
-    # ── נדל"ן / תשתיות ──
-    "AMT", "PLD", "CCI", "EQIX", "PSA", "O", "WELL", "DLR",
-
-    # ── חומרים ──
-    "LIN", "APD", "ECL", "SHW", "FCX", "NEM", "NUE",
-
-    # ── רכב ──
-    "TM", "GM", "F",  # TSLA already in tech giants block above
-
-    # ── ניהול נכסים / השקעות אלטרנטיביות ──
-    "BX",   # Blackstone
-    "KKR",  # KKR
-    "APO",  # Apollo Global
-    "CG",   # Carlyle
-    "BAM",  # Brookfield
-
-    # ── ייעוץ / IT שירותים ──
-    # FI (Fiserv) removed — data issues
-    "FIS",  # Fidelity National
-
-    # ── מניות בינלאומיות הנסחרות בארה"ב ──
-    "TSM",   # Taiwan Semiconductor (~$800B)
-    "NVO",   # Novo Nordisk (~$350B) — תרופות סוכרת
-    "AZN",   # AstraZeneca (~$250B)
-    "SHEL",  # Shell (~$200B)
-    "ACN",   # Accenture (~$200B)
-    "SNY",   # Sanofi (~$130B)
-    "UL",    # Unilever (~$120B)
-    "BHP",   # BHP Group (~$130B)
-    "RY",    # Royal Bank of Canada (~$170B)
-    "TD",    # Toronto-Dominion Bank (~$100B)
-    "HSBC",  # HSBC (~$160B)
-    "NVS",   # Novartis (~$200B)
-    "RHHBY", # Roche (~$200B)
-    "TTE",   # TotalEnergies (~$140B)
-    "RIO",   # Rio Tinto (~$100B)
-    "SONY",  # Sony (~$100B)
-    # "MUFG",  # Mitsubishi UFJ Financial — removed: yfinance timeouts on ADR data
-    "HDB",   # HDFC Bank India (~$150B)
-    "SIEGY", # Siemens (~$150B)
-    "LVMUY", # LVMH — יוקרה (~$350B)
-    "LRLCY", # L'Oreal (~$200B)
-    "TCEHY", # Tencent (~$400B)
-    "SAP",   # SAP (~$250B)
-
-    # ── שירותים / תשתיות ──
-    "NEE",   # NextEra Energy (~$120B) — אנרגיה ירוקה
-    "ADP",   # Automatic Data Processing (~$100B)
-    "WM",    # Waste Management (~$80B)
-
-    # ── קרנות סל (ETFs) — שוק רחב ──
-    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO",
+    # ── 10. קרנות סל (ETFs) — שוק רחב בלבד ──
+    "SPY", "QQQ", "IWM", "VTI",
     # ממונפים
-    "TQQQ", "SOXL", "UPRO", "QLD", "SSO",
-    # סקטוריאליים
-    "XLK", "XLF", "XLE", "XLV", "XLI", "XLY", "XLP",
-    # סחורות
-    "GLD", "SLV", "USO", "GDX",
+    "TQQQ", "SOXL",
     # קריפטו ETF
-    "IBIT", "BITO",
+    "IBIT",
 ]
 
 # הסר כפילויות תוך שמירת הסדר המקורי
