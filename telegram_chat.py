@@ -620,7 +620,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/position AAPL — פוזיציה מפורטת\n"
             "/watchadd AAPL — הוסף מניה לרשימה\n"
             "/watchremove AAPL — הסר מניה מהרשימה\n"
-            "/signals — סיגנלים פעילים עכשיו\n\n"
+            "/signals — הזדמנויות קנייה עכשיו\n\n"
             "━━ 📅 <b>היסטוריה וביצועים</b> ━━\n"
             "/today — מה קרה היום\n"
             "/history — עסקאות אחרונות\n"
@@ -857,11 +857,11 @@ def _handle_command(text: str, context: dict) -> str | None:
             signals.sort(key=lambda x: x[1], reverse=True)
             if not signals:
                 return (
-                    f"📡 <b>סיגנלים פעילים</b>\n━━━━━━━━━━━━━━━━\n"
-                    f"😴 אין סיגנלים מעל {MIN_BUY_SCORE}/100 כרגע\n"
+                    f"📡 <b>הזדמנויות קנייה</b>\n━━━━━━━━━━━━━━━━\n"
+                    f"😴 אין הזדמנויות עם ציון מעל {MIN_BUY_SCORE}/100 כרגע\n"
                     f"🔍 נסרקו {len(sample)} מניות"
                 )
-            lines = [f"📡 <b>סיגנלים פעילים ({len(signals)} מתוך {len(sample)})</b>\n━━━━━━━━━━━━━━━━"]
+            lines = [f"📡 <b>הזדמנויות קנייה ({len(signals)} מתוך {len(sample)})</b>\n━━━━━━━━━━━━━━━━"]
             for tk, sc, ss, comp in signals[:5]:
                 tech  = comp["scores"]["technicals"]
                 mkt   = comp["scores"]["market"]
@@ -1724,7 +1724,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             return (
                 f"🧠 <b>למידה היסטורית</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"📊 סיגנלים שנותחו: {total}\n"
+                f"📊 הזדמנויות שנותחו: {total}\n"
                 f"✅ אחוז הצלחה: <b>{wr:.1f}%</b>\n"
                 f"🎯 ציון אופטימלי: <b>{optimal}</b>\n"
                 f"🕐 עודכן: {computed}"

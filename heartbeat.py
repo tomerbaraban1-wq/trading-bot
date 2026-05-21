@@ -2577,7 +2577,7 @@ async def market_closed_training_loop():
                         icon = "✅" if wr >= 55 else ("⚠️" if wr >= 40 else "❌")
                         stats_lines.append(
                             f"{icon} <b>{ts['ticker']}</b>: "
-                            f"WR={wr:.0f}% | avg={ret:+.1f}% | {ts['signals']} סיגנלים"
+                            f"WR={wr:.0f}% | avg={ret:+.1f}% | {ts['signals']} הזדמנויות"
                         )
                     ticker_block = "\n".join(stats_lines)
                 else:
@@ -2629,7 +2629,7 @@ async def backtest_learning_loop():
             await send_message(
                 f"🎓 <b>למידה מהיסטוריה</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"📊 {result.tickers_analyzed} מניות | {result.total_signals} סיגנלים\n"
+                f"📊 {result.tickers_analyzed} מניות | {result.total_signals} הזדמנויות שזוהו\n"
                 f"✅ אחוז הצלחה היסטורי: <b>{result.overall_win_rate:.1f}%</b> | תשואה: {result.avg_return:+.2f}%\n"
                 f"🎯 ציון מומלץ: <b>{result.optimal_min_score}</b>\n"
                 + (f"🔄 עודכן: {update['old_score']} → <b>{update['new_score']}</b>" if update.get('applied') else "✅ ציון נוכחי אופטימלי")

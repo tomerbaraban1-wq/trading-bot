@@ -116,7 +116,7 @@ async def lifespan(app: FastAPI):
                     {"command": "exposure",  "description": "🏢 חשיפת תיק לסקטורים"},
                     {"command": "volatility","description": "📐 תנודתיות ו-Beta מניה"},
                     {"command": "morning",   "description": "☀️ תדרוך בוקר ידני"},
-                    {"command": "signals",   "description": "📡 סיגנלים פעילים עכשיו"},
+                    {"command": "signals",   "description": "📡 הזדמנויות קנייה עכשיו"},
                     {"command": "quick",     "description": "⚡ סקירה מהירה של מניה"},
                     {"command": "position",  "description": "📂 פרטי פוזיציה מלאים"},
                     {"command": "monthly",   "description": "📅 סיכום 30 ימים"},
