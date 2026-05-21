@@ -718,16 +718,17 @@ async def stop_loss_monitor():
                     _s1_guard_key = f"{trade['id']}:s1"
                     _s2_guard_key = f"{trade['id']}:s2"
                     if not _stage1_done and plpc >= _stage1_pct and _s1_guard_key not in _partial_sell_done:
-                        # Stage 1: sell 50% of the full position
+                        # Stage 1: sell 33% (not 50%) — let winners run longer
                         _orig_qty = trade["qty"]
-                        _half_qty = round(_orig_qty * 0.5, 6)
+                        _half_qty = round(_orig_qty * 0.33, 6)
                         if _half_qty > 0:
                             _create_background_task(send_message(
-                                f"⚡ <b>הבוט עומד למכור 50% — {ticker}</b>\n"
+                                f"⚡ <b>רווח חלקי שלב 1 — {ticker}</b>\n"
                                 f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯  שלב 1: רווח חלקי ({plpc:+.1f}%)\n"
+                                f"🎯  רווח: {plpc:+.1f}%\n"
                                 f"💵  מחיר: ${cur_price:.2f}\n"
-                                f"🔢  מוכר: {_half_qty} מניות (50%)"
+                                f"🔢  מוכר: {_half_qty} מניות (33%)\n"
+                                f"📌  67% נשאר לרוץ ליעד מלא"
                             ))
                             try:
                                 _half_order = await asyncio.wait_for(
@@ -986,6 +987,25 @@ async def auto_invest_loop():
                 await asyncio.sleep(5 * 60)
                 continue
 
+            # ── Time-of-day filter: avoid first/last 30 min (wide spreads, volatility) ──
+            try:
+                import datetime as _dt2
+                _utc_now = _dt2.datetime.utcnow()
+                _et_hour  = (_utc_now.hour - 4) % 24   # UTC→ET (rough, EDT)
+                _et_min   = _utc_now.minute
+                _minutes_since_open  = (_et_hour - 9) * 60 + _et_min - 30   # since 9:30 ET
+                _minutes_before_close = (16 * 60) - (_et_hour * 60 + _et_min)  # to 4:00 ET
+                if _minutes_since_open < 30:
+                    logger.info(f"AUTO-INVEST: First 30 min ({_et_hour:02d}:{_et_min:02d} ET) — skipping (wide spreads)")
+                    await asyncio.sleep(5 * 60)
+                    continue
+                if _minutes_before_close < 30:
+                    logger.info(f"AUTO-INVEST: Last 30 min before close — skipping (EOD volatility)")
+                    await asyncio.sleep(5 * 60)
+                    continue
+            except Exception:
+                pass
+
             # SPY trend guard — skip if overall market is in downtrend
             try:
                 from indicators import get_market_conditions
@@ -1217,6 +1237,23 @@ async def auto_invest_loop():
 
                         if not composite["should_buy"]:
                             continue
+
+                        # ── Intraday momentum filter: skip if stock is down on the day ──
+                        # Buying into weakness has poor win rate. Only buy upward momentum.
+                        try:
+                            _intra = await _asyncio.wait_for(
+                                _asyncio.to_thread(broker.get_price, ticker), timeout=10
+                            )
+                            if _intra:
+                                _intra_ind = composite.get("indicators", {})
+                                _prev_close = _intra_ind.get("prev_close") or _intra_ind.get("close")
+                                if _prev_close and _prev_close > 0:
+                                    _day_chg = (_intra - _prev_close) / _prev_close * 100
+                                    if _day_chg < -0.5:
+                                        logger.info(f"AUTO-INVEST: {ticker} down {_day_chg:.1f}% today — skip (no momentum)")
+                                        continue
+                        except Exception:
+                            pass  # fail-open — don't block on price fetch error
 
                         # Learning check — wrap with timeout to prevent yfinance hangs
                         try:

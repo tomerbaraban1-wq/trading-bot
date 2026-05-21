@@ -10,11 +10,11 @@ _THRESHOLD_UPDATE_INTERVAL: float = 3600.0   # 1 hour
 
 # Dynamic thresholds — updated automatically based on trade history
 _dynamic_thresholds = {
-    "min_sentiment": 5,       # raised 4→5: require positive news (not just neutral)
-    "max_rsi": 75,            # allow momentum stocks in uptrend
-    "min_rsi": 30,            # raised 25→30: avoid deeply oversold crashes
-    "max_bb_position": 0.95,  # allow near top in strong uptrend
-    "min_volume_ratio": 0.7,  # raised 0.5→0.7: wins avg 0.87 vs losses avg 0.68
+    "min_sentiment": 5,       # require positive news (not just neutral)
+    "max_rsi": 72,            # avoid overbought — enters at peak are poor quality
+    "min_rsi": 35,            # avoid deeply oversold crashes (knife-catching)
+    "max_bb_position": 0.90,  # avoid very top of Bollinger band
+    "min_volume_ratio": 1.0,  # require average+ volume — weak volume = weak conviction
 }
 
 
