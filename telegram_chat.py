@@ -3445,17 +3445,31 @@ async def handle_telegram_update(update: dict) -> dict:
 
     chat = message.get("chat", {})
     chat_id = str(chat.get("id", ""))
+    from_user = message.get("from", {}) or {}
+    from_user_id = str(from_user.get("id", ""))
+    is_bot      = bool(from_user.get("is_bot", False))
     text = (message.get("text") or "").strip()
 
-    # Security: only respond to the configured chat
+    # Security: only respond to the configured chat AND the user
     if not settings.TELEGRAM_CHAT_ID:
         return {"status": "ignored", "reason": "TELEGRAM_CHAT_ID not configured"}
     if chat_id != str(settings.TELEGRAM_CHAT_ID):
         logger.warning(f"[CHAT] Ignoring message from unauthorized chat {chat_id}")
         return {"status": "ignored", "reason": "unauthorized chat"}
+    # In a private chat, chat.id == from.id. Reject if from.id mismatches (anti-spoof).
+    if from_user_id and from_user_id != str(settings.TELEGRAM_CHAT_ID):
+        logger.warning(f"[CHAT] Ignoring message from unauthorized user {from_user_id} (chat={chat_id})")
+        return {"status": "ignored", "reason": "unauthorized user"}
+    # Reject messages from other bots
+    if is_bot:
+        logger.warning(f"[CHAT] Ignoring message from bot user {from_user_id}")
+        return {"status": "ignored", "reason": "bot user"}
 
     if not text:
         return {"status": "ignored", "reason": "empty message"}
+    # Limit text length to prevent LLM prompt injection / resource exhaustion
+    if len(text) > 1000:
+        text = text[:1000]
 
     # Map Hebrew button labels to commands
     _BUTTON_MAP = {

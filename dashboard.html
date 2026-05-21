@@ -476,7 +476,7 @@
             <input class="ctrl-input" id="emergencyTicker" placeholder="AAPL" maxlength="5">
             <button class="btn btn-exit" onclick="emergencyExit()">Emergency Exit</button>
         </div>
-        <div class="info-line">Secret: <code id="webhookSecret">tradebot_wh_2026_secure</code></div>
+        <div class="info-line">Secret: <code id="webhookSecret">••••••••• (saved locally)</code></div>
         <div class="info-line">Webhook: <code id="webhookUrl">Loading...</code></div>
     </div>
 
@@ -549,7 +549,17 @@
 <script>
 const API = '';
 const REFRESH = 15000;
-const SECRET = 'tradebot_wh_2026_secure';
+// SECURITY: secret is no longer hardcoded. Loaded from localStorage on first use.
+// Use _getSecret() everywhere instead of the const SECRET.
+function _getSecret() {
+    let s = localStorage.getItem('webhook_secret');
+    if (!s) {
+        s = prompt('הזן WEBHOOK_SECRET (יישמר מקומית):');
+        if (s) localStorage.setItem('webhook_secret', s);
+    }
+    return s || '';
+}
+const SECRET = _getSecret();
 
 async function fetchData() {
     try {

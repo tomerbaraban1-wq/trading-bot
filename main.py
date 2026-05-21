@@ -91,11 +91,18 @@ async def lifespan(app: FastAPI):
         if _render_url and _tg_token:
             import aiohttp as _aiohttp
             _webhook_url = f"{_render_url}/telegram/webhook"
+            _secret      = settings.WEBHOOK_SECRET
             async with _aiohttp.ClientSession() as _sess:
-                # Register webhook
+                # Register webhook WITH secret_token — Telegram will send it in
+                # X-Telegram-Bot-Api-Secret-Token header. Otherwise any client
+                # can POST forged updates to our webhook.
                 async with _sess.post(
                     f"https://api.telegram.org/bot{_tg_token}/setWebhook",
-                    json={"url": _webhook_url},
+                    json={
+                        "url": _webhook_url,
+                        "secret_token": _secret,
+                        "drop_pending_updates": False,
+                    },
                     timeout=_aiohttp.ClientTimeout(total=10),
                 ) as _resp:
                     _data = await _resp.json()

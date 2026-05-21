@@ -64,9 +64,10 @@ def _verify_secret(
       2. ?secret= query param     (fallback — warn if used)
     Raises 403 if missing/wrong.
     """
+    import hmac as _hmac
     header_secret = request.headers.get("X-Webhook-Secret", "")
-    token = header_secret or secret
-    if not settings.WEBHOOK_SECRET or token != settings.WEBHOOK_SECRET:
+    token = header_secret or secret or ""
+    if not settings.WEBHOOK_SECRET or not _hmac.compare_digest(token, settings.WEBHOOK_SECRET):
         raise HTTPException(status_code=403, detail="Forbidden")
     if secret and not header_secret:
         # Secret arrived via query param — still accepted but log a warning
@@ -1741,10 +1742,13 @@ async def telegram_webhook(request: Request, update: dict):
     Protected by X-Telegram-Bot-Api-Secret-Token header validation.
     """
     # Validate Telegram secret token (set during setWebhook)
+    # BUG FIX: previously `if expected and tg_secret and tg_secret != expected`
+    # short-circuited when header was missing → unauthenticated POST passed.
+    import hmac as _hmac
     tg_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
     expected   = settings.WEBHOOK_SECRET
-    if expected and tg_secret and tg_secret != expected:
-        logger.warning(f"[SECURITY] Telegram webhook: invalid secret token from {_get_client_ip(request)}")
+    if expected and not _hmac.compare_digest(tg_secret, expected):
+        logger.warning(f"[SECURITY] Telegram webhook: invalid/missing secret token from {_get_client_ip(request)}")
         raise HTTPException(status_code=403, detail="Forbidden")
 
     from telegram_chat import handle_telegram_update
