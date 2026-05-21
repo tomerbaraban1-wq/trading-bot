@@ -164,6 +164,35 @@ async def heartbeat_cleanup_loop():
             await asyncio.to_thread(database.cleanup_old_heartbeats, days=7)
             await asyncio.to_thread(database.cleanup_old_data, days=30)
             logger.debug("Cleaned up old records (heartbeats, shadow, slippage, learning)")
+
+            # ── In-memory cache cleanup — prevent unbounded growth ────────
+            # _price_alerts_fired: cap at 500 entries (old alerts don't matter)
+            if len(_price_alerts_fired) > 500:
+                old_count = len(_price_alerts_fired)
+                _price_alerts_fired.clear()
+                logger.debug(f"Cleared _price_alerts_fired ({old_count} entries)")
+
+            # _position_alert_sent: remove near_tp_* keys for closed trades
+            closed_ids = set()
+            try:
+                closed = await asyncio.to_thread(database.get_closed_trades_ids) if hasattr(database, 'get_closed_trades_ids') else []
+                closed_ids = {str(t) for t in (closed or [])}
+            except Exception:
+                pass
+            stale_keys = [k for k in list(_position_alert_sent.keys())
+                          if k.startswith("near_tp_") and k.split("_")[-1] in closed_ids]
+            for k in stale_keys:
+                _position_alert_sent.pop(k, None)
+            if len(_position_alert_sent) > 200:
+                # safety valve — clear all if too many accumulate
+                _position_alert_sent.clear()
+                logger.debug("Cleared _position_alert_sent (overflow)")
+
+            # _partial_sell_done: cap at 1000 entries
+            if len(_partial_sell_done) > 1000:
+                _partial_sell_done.clear()
+                logger.debug("Cleared _partial_sell_done (overflow)")
+
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -553,9 +582,16 @@ async def stop_loss_monitor():
                             logger.debug(f"[TIME EXIT] {ticker}: parse error: {te}")
 
                     # ── 1b. ATR Trailing Stop (flash-crash confirmed) ─────────
-                    flash_exit, flash_reason = await asyncio.to_thread(
-                        should_exit_confirmed, ticker, cur_price, atr_stop
-                    )
+                    try:
+                        flash_exit, flash_reason = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                should_exit_confirmed, ticker, cur_price, atr_stop
+                            ),
+                            timeout=15,
+                        )
+                    except asyncio.TimeoutError:
+                        flash_exit, flash_reason = False, "timeout — holding position"
+                        logger.warning(f"[FLASH] {ticker}: should_exit_confirmed timed out")
                     if flash_exit:
                         logger.warning(
                             f"[ATR STOP] {ticker}: CONFIRMED EXIT "
@@ -577,7 +613,10 @@ async def stop_loss_monitor():
                     # ── 1c. Near-TP Alert — warn when within 2% of take profit ─
                     try:
                         from atr_stop import _fetch_atr as _atr_near
-                        _atr_near_val = await asyncio.to_thread(_atr_near, ticker, trade["entry_price"])
+                        _atr_near_val = await asyncio.wait_for(
+                            asyncio.to_thread(_atr_near, ticker, trade["entry_price"]),
+                            timeout=15,
+                        )
                         _near_tp_pct  = min(
                             settings.TAKE_PROFIT_PCT,
                             max(4.0, (_atr_near_val / trade["entry_price"]) * 100 * 6)
@@ -606,7 +645,10 @@ async def stop_loss_monitor():
                     # Fixed TP is the safety cap for high-vol stocks
                     try:
                         from atr_stop import _fetch_atr
-                        _atr_val = await asyncio.to_thread(_fetch_atr, ticker, trade["entry_price"])
+                        _atr_val = await asyncio.wait_for(
+                            asyncio.to_thread(_fetch_atr, ticker, trade["entry_price"]),
+                            timeout=15,
+                        )
                         _atr_tp_pct = min(
                             settings.TAKE_PROFIT_PCT,                    # cap at fixed TP
                             max(4.0, (_atr_val / trade["entry_price"]) * 100 * 6)  # 6×ATR — let winners run
@@ -622,7 +664,10 @@ async def stop_loss_monitor():
                             from atr_stop import _fetch_atr as _atr_fn
                             import os as _os2  # used for ATR_TIGHT_MULTIPLIER env var
                             _tight_mult = float(_os2.getenv("ATR_TIGHT_MULTIPLIER", "1.2"))
-                            _atr2 = await asyncio.to_thread(_atr_fn, ticker, trade["entry_price"])
+                            _atr2 = await asyncio.wait_for(
+                                asyncio.to_thread(_atr_fn, ticker, trade["entry_price"]),
+                                timeout=15,
+                            )
                             _tight_stop = round(cur_price - _atr2 * _tight_mult, 4)
                             if _tight_stop > atr_stop:
                                 atr_stop = _tight_stop
