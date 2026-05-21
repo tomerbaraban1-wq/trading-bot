@@ -408,7 +408,18 @@ def _llm_reply(user_message: str, context: dict) -> str:
 
     system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) נשארים באנגלית. הצג מחירים גם בדולר וגם בשקל.
 
-אתה מנהל ההשקעות האישי של המשתמש — בוט מסחר חכם שמסחר במניות אמריקאיות.
+אתה מנהל ההשקעות האישי של המשתמש — אנליסט ברמת וורן באפט.
+אתה חושב לטווח ארוך, מחפש איכות, מבין את ה-moat (יתרון תחרותי), ולא ממליץ על דברים מבלי לנתח.
+
+🎯 העקרונות שלך (כמו של וורן באפט):
+1. <b>איכות לפני מחיר</b> — קונה רק חברות עם ROE>15%, שולי רווח טובים, חוב נמוך
+2. <b>Moat קודם</b> — מה היתרון התחרותי? איך החברה מגנה על השוק שלה?
+3. <b>טווח ארוך</b> — "התקופה האידיאלית להחזיק מניה היא לנצח"
+4. <b>הימנע מהיפ</b> — P/E מעל 40 הוא דגל אדום
+5. <b>חברות שאתה מבין</b> — לא קונה משהו שלא מבין מה הם עושים
+6. <b>שולי בטחון</b> — קונה כשהמחיר נמוך מהשווי האמיתי
+7. <b>תזרים מזומנים</b> — חשוב יותר מרווח חשבונאי
+
 אתה יודע לענות על כל שאלה: על התיק, על מניות ספציפיות, על השוק, על אסטרטגיה, וגם שאלות כלליות על השקעות.
 
 שער דולר/שקל עכשיו: 1$ = ₪{ils_rate:.2f}
@@ -436,14 +447,16 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
 {closed_text}
 
 ══ הנחיות מענה ══
-• שאלות על תיק (כמה הרווחתי? מה שווי התיק?): ענה עם מחירים בדולר + שקל
-• שאלות על מניה (מה קורה עם AAPL? האם כדאי לקנות NVDA?): נתח לפי מה שאתה יודע
-• שאלות על השוק (מה מצב השוק?): הסתמך על VIX ומצב השוק למעלה
-• שאלות על אסטרטגיה: הסבר — סורק כל 5 דקות, ציון ≥{context.get('min_buy_score',60)}, ATR trailing stop
-• שאלות כלליות על השקעות: ענה כמנהל השקעות מקצועי
+• שאלות על תיק: ענה עם מחירים בדולר + שקל
+• שאלות "האם כדאי לקנות X?" — תמיד תחשוב כמו באפט: ROE? Moat? חוב? תמחור? תן המלצה מנומקת
+• שאלות "מה קורה עם X?" — נתח: מחיר, מגמה, fundamentals, סיכונים, הזדמנויות
+• שאלות על השוק: הסתמך על VIX ומצב השוק למעלה
+• שאלות על אסטרטגיה: סורק כל 5 דקות, ציון ≥{context.get('min_buy_score',60)}, ATR stop
+• שאלות כלליות: ענה כמנהל השקעות מקצועי שלמד מספריו של באפט
 • אם שאלה לא ברורה: בקש הבהרה קצרה
-• ענה ממוקד — עד 6 שורות, אלא אם נדרש פירוט מורחב
+• ענה ממוקד — 4-8 שורות בדרך כלל
 • אל תאמר "אני לא יכול" — תמיד נסה לעזור
+• המלץ למשתמש להריץ /buffett TICKER לניתוח עמוק של מניה ספציפית
 """
 
     try:
@@ -606,6 +619,7 @@ def _handle_command(text: str, context: dict) -> str | None:
             "/score AAPL — ניתוח עם גרפי ציון\n"
             "/chart AAPL — גרף ASCII 30 ימים\n"
             "/fundamental AAPL — P/E, הכנסות, מרווחים\n"
+            "/buffett AAPL — ניתוח מלא ברמת וורן באפט 🎯\n"
             "/dividend AAPL — דיבידנד ותשואה\n"
             "/52week AAPL — מיקום ב-52 שבועות\n"
             "/price AAPL — מחיר מיידי\n"
@@ -2601,6 +2615,19 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception as e:
             logger.error(f"[/dividend] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
+
+    # /buffett TICKER — Warren Buffett style deep analysis
+    if cmd in ("/buffett", "buffett", "באפט") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /buffett AAPL"
+        try:
+            from buffett_analysis import get_buffett_analysis, format_buffett_report
+            analysis = get_buffett_analysis(_ticker)
+            return format_buffett_report(analysis)
+        except Exception as e:
+            logger.error(f"[/buffett] Error: {e}")
+            return f"❌ לא הצלחתי לנתח את {_ticker} — נסה שוב מאוחר יותר"
 
     # /fundamental TICKER — P/E, revenue, margins
     if cmd in ("/fundamental", "fundamental", "פונדמנטלס", "יסודות") and len(t.split()) > 1:

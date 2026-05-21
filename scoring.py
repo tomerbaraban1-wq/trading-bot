@@ -155,14 +155,19 @@ _FUNDAMENTAL_CACHE_TTL = 24 * 3600  # seconds
 
 def get_fundamental_score(ticker: str) -> float:
     """
-    Return a fundamental quality score 0-10 for *ticker*.
+    Return a fundamental quality score 0-10 for *ticker* — Buffett-style analysis.
 
-    Scoring rubric:
-      P/E 10-30     → +3  (reasonable valuation)
-      P/E > 50      → -2  (overvalued)
-      Positive EPS growth YoY → +3
-      Profit margin > 10%     → +2
-      Debt/Equity < 1.0       → +2
+    הקריטריונים של וורן באפט:
+      ROE > 15%            → +2.5  (חברה מייצרת ערך מבעלי המניות)
+      ROE > 20%            → +1    (איכות מצוינת — נוסף)
+      Profit margin > 15%  → +2    (יתרון תחרותי)
+      Profit margin > 25%  → +1    (moat — נוסף)
+      Debt/Equity < 0.5    → +2    (אין סיכון פיננסי)
+      Debt/Equity 0.5-1.0  → +1    (סביר)
+      EPS growth > 10%     → +1.5  (צמיחה יציבה)
+      P/E 10-25            → +1    (תמחור הוגן)
+      P/E > 40             → -2    (overvalued — בורח מ-bubble)
+      Free Cash Flow > 0   → +1    (מייצר מזומן אמיתי)
 
     Result is cached for 24 hours per ticker.
     Returns 5.0 (neutral) if data is unavailable (fail-open).
@@ -180,48 +185,76 @@ def get_fundamental_score(ticker: str) -> float:
 
         score = 0.0
 
-        # ── P/E Ratio ──────────────────────────────────────────────────────
+        # ── Return on Equity (ROE) — מטריקה מס' 1 של באפט ──────────────────
+        roe = info.get("returnOnEquity")
+        if roe is not None:
+            try:
+                roe = float(roe)
+                if not np.isnan(roe):
+                    if roe > 0.20:    score += 3.5   # excellent ROE
+                    elif roe > 0.15:  score += 2.5   # good ROE
+                    elif roe > 0.10:  score += 1     # acceptable
+                    elif roe < 0:     score -= 2     # destroying value
+            except (TypeError, ValueError):
+                pass
+
+        # ── Profit Margin — היתרון התחרותי (moat) ─────────────────────────
+        profit_margin = info.get("profitMargins")
+        if profit_margin is not None:
+            try:
+                profit_margin = float(profit_margin)
+                if not np.isnan(profit_margin):
+                    if profit_margin > 0.25:    score += 3     # exceptional margin
+                    elif profit_margin > 0.15:  score += 2     # strong margin
+                    elif profit_margin > 0.05:  score += 0.5
+                    elif profit_margin < 0:     score -= 2     # losing money
+            except (TypeError, ValueError):
+                pass
+
+        # ── Debt / Equity — יציבות פיננסית ─────────────────────────────────
+        debt_equity = info.get("debtToEquity")
+        if debt_equity is not None:
+            try:
+                de_ratio = float(debt_equity) / 100.0
+                if not np.isnan(de_ratio):
+                    if de_ratio < 0.5:     score += 2      # very safe
+                    elif de_ratio < 1.0:   score += 1      # acceptable
+                    elif de_ratio > 2.0:   score -= 2      # too much debt
+            except (TypeError, ValueError):
+                pass
+
+        # ── EPS Growth — צמיחה ───────────────────────────────────────────
+        eps_growth = info.get("earningsGrowth")
+        if eps_growth is not None:
+            try:
+                eps_growth = float(eps_growth)
+                if not np.isnan(eps_growth):
+                    if eps_growth > 0.10:     score += 1.5
+                    elif eps_growth > 0:      score += 0.5
+                    elif eps_growth < -0.10:  score -= 1
+            except (TypeError, ValueError):
+                pass
+
+        # ── P/E — תמחור הוגן ─────────────────────────────────────────────
         pe = info.get("trailingPE") or info.get("forwardPE")
         if pe is not None:
             try:
                 pe = float(pe)
                 if not np.isnan(pe):
-                    if 10 <= pe <= 30:
-                        score += 3   # reasonable valuation
-                    elif pe > 50:
-                        score -= 2   # overvalued
+                    if 10 <= pe <= 25:    score += 1.5     # value zone
+                    elif 25 < pe <= 35:   score += 0.5
+                    elif pe > 40:         score -= 2       # bubble zone
+                    elif pe < 5:          score -= 1       # too cheap = problem
             except (TypeError, ValueError):
                 pass
 
-        # ── EPS Growth YoY ────────────────────────────────────────────────
-        # yfinance provides earningsGrowth (YoY) — positive = growing EPS
-        eps_growth = info.get("earningsGrowth")
-        if eps_growth is not None:
+        # ── Free Cash Flow — מייצר מזומן אמיתי ────────────────────────────
+        fcf = info.get("freeCashflow")
+        if fcf is not None:
             try:
-                eps_growth = float(eps_growth)
-                if not np.isnan(eps_growth) and eps_growth > 0:
-                    score += 3
-            except (TypeError, ValueError):
-                pass
-
-        # ── Profit Margin ─────────────────────────────────────────────────
-        profit_margin = info.get("profitMargins")
-        if profit_margin is not None:
-            try:
-                profit_margin = float(profit_margin)
-                if not np.isnan(profit_margin) and profit_margin > 0.10:
-                    score += 2
-            except (TypeError, ValueError):
-                pass
-
-        # ── Debt / Equity ─────────────────────────────────────────────────
-        debt_equity = info.get("debtToEquity")
-        if debt_equity is not None:
-            try:
-                # yfinance returns debtToEquity as a percentage (e.g. 45 = 0.45)
-                de_ratio = float(debt_equity) / 100.0
-                if not np.isnan(de_ratio) and de_ratio < 1.0:
-                    score += 2
+                fcf = float(fcf)
+                if not np.isnan(fcf) and fcf > 0:
+                    score += 1
             except (TypeError, ValueError):
                 pass
 
@@ -229,8 +262,8 @@ def get_fundamental_score(ticker: str) -> float:
         final = round(max(0.0, min(10.0, score)), 2)
         _fundamental_cache[ticker] = (now_ts, final)
         logger.info(
-            f"[FUND] {ticker}: pe={pe} eps_growth={eps_growth} "
-            f"margin={profit_margin} d/e={debt_equity} → score={final}"
+            f"[FUND] {ticker}: roe={roe} margin={profit_margin} d/e={debt_equity} "
+            f"eps_growth={eps_growth} pe={pe} → score={final}"
         )
         return final
 
