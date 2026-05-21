@@ -371,6 +371,40 @@ def get_win_trades(limit: int = 20) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_total_trades_count() -> dict:
+    """
+    סופר את כל העסקאות שהבוט עשה אי פעם.
+    מחזיר:
+      {
+        "total":   סה"כ עסקאות (פתוחות + סגורות)
+        "open":    עסקאות פתוחות
+        "closed":  עסקאות סגורות
+        "wins":    מהסגורות — כמה ברווח
+        "losses":  מהסגורות — כמה בהפסד
+        "today":   נפתחו היום
+      }
+    """
+    conn = get_connection()
+    total  = conn.execute("SELECT COUNT(*) FROM trade_log").fetchone()[0] or 0
+    open_  = conn.execute("SELECT COUNT(*) FROM trade_log WHERE status = 'open'").fetchone()[0] or 0
+    closed = conn.execute(
+        f"SELECT COUNT(*) FROM trade_log WHERE status IN {_CLOSED_STATUSES}"
+    ).fetchone()[0] or 0
+    wins   = conn.execute(
+        f"SELECT COUNT(*) FROM trade_log WHERE status IN {_CLOSED_STATUSES} AND pnl_gross > 0"
+    ).fetchone()[0] or 0
+    losses = conn.execute(
+        f"SELECT COUNT(*) FROM trade_log WHERE status IN {_CLOSED_STATUSES} AND pnl_gross < 0"
+    ).fetchone()[0] or 0
+    today  = conn.execute(
+        "SELECT COUNT(*) FROM trade_log WHERE DATE(entry_time) = DATE('now')"
+    ).fetchone()[0] or 0
+    return {
+        "total": total, "open": open_, "closed": closed,
+        "wins": wins, "losses": losses, "today": today,
+    }
+
+
 # ===== Tax Events =====
 
 def save_tax_event(trade_id: int, event_type: str, amount: float):

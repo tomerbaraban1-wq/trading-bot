@@ -1903,6 +1903,12 @@ async def market_pulse_loop():
             open_trades = await asyncio.to_thread(database.get_open_trades)
             n_pos = len(open_trades)
 
+            # Read trade counts (total/today)
+            try:
+                trade_counts = await asyncio.to_thread(database.get_total_trades_count)
+            except Exception:
+                trade_counts = {"total": 0, "closed": 0, "wins": 0, "losses": 0, "today": 0}
+
             # Build market mood line
             if vix and vix > 0:
                 if vix < 18:    mood = f"🟢 שוק רגוע (VIX={vix:.1f})"
@@ -1924,6 +1930,16 @@ async def market_pulse_loop():
             else:
                 activity = "🧠 השוק סגור — מתאמן על נתוני עבר + קורא חדשות"
 
+            # Trades summary line
+            wr_pct = (trade_counts["wins"] / trade_counts["closed"] * 100) if trade_counts["closed"] else 0
+            trades_line = (
+                f"📊 סך העסקאות שעשיתי: <b>{trade_counts['total']}</b>"
+                + (f" (היום: {trade_counts['today']})" if trade_counts['today'] else "")
+                + "\n"
+                f"   ✅ ברווח: {trade_counts['wins']} | ❌ בהפסד: {trade_counts['losses']}"
+                + (f" | אחוז הצלחה: {wr_pct:.0f}%" if trade_counts['closed'] else "")
+            )
+
             # Send update
             _create_background_task(send_message(
                 f"💓 <b>פעימת שוק</b>\n"
@@ -1932,7 +1948,8 @@ async def market_pulse_loop():
                 f"{trend}\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"⚙️ מה אני עושה עכשיו:\n"
-                f"   {activity}\n"
+                f"   {activity}\n\n"
+                f"{trades_line}"
                 + (f"\n📂 פוזיציות פתוחות: {n_pos}" if n_pos > 0 else "")
             ))
 

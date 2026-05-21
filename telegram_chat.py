@@ -379,6 +379,8 @@ def _build_context() -> dict:
         "closed_trades":        closed,
         "total_closed":         len(closed),
         "win_rate":             win_rate,
+        # Trade counts (full lifetime stats)
+        "trade_counts":         (lambda: __import__('database').get_total_trades_count())(),
         # Market
         "market_open":          market_open,
         "vix":                  vix,
@@ -767,6 +769,16 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"⏸️ הבוט:       מושהה")
         else:
             lines.append(f"✅ הבוט:       פעיל וסורק")
+        # Trade counts (lifetime stats)
+        tc = context.get("trade_counts", {}) or {}
+        if tc.get("total"):
+            wr = (tc.get("wins", 0) / tc.get("closed", 1) * 100) if tc.get("closed") else 0
+            lines.append(f"━━━━━━━━━━━━━━━━")
+            lines.append(f"📊 סה\"כ עסקאות שעשיתי: <b>{tc.get('total', 0)}</b>"
+                         + (f"  (היום: {tc.get('today', 0)})" if tc.get('today') else ""))
+            lines.append(f"   ✅ ברווח: {tc.get('wins', 0)}  |  ❌ בהפסד: {tc.get('losses', 0)}"
+                         + (f"  |  הצלחה: {wr:.0f}%" if tc.get('closed') else ""))
+
         if positions:
             total_pnl_open = sum(p["pnl"] for p in positions)
             total_invested = sum(p.get("invested") or round(p["entry"] * p["qty"], 2) for p in positions)
