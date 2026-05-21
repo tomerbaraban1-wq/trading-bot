@@ -190,7 +190,9 @@ async def lifespan(app: FastAPI):
         import broker as _broker
         open_trades = get_open_trades()
 
-        acct = await asyncio.to_thread(_broker.get_account)
+        acct = await asyncio.wait_for(
+            asyncio.to_thread(_broker.get_account), timeout=20
+        )
         cash = float(acct.get("cash", 0))
         equity = float(acct.get("equity", 0))
         logger.info(f"BROKER: cash=${cash:,.2f} | equity=${equity:,.2f}")
@@ -203,7 +205,7 @@ async def lifespan(app: FastAPI):
             # (prevents stop-loss monitor from trying to sell non-existent positions)
             try:
                 from database import close_trade as _close_trade
-                broker_positions = await asyncio.to_thread(_broker.get_positions)
+                broker_positions = await asyncio.wait_for(asyncio.to_thread(_broker.get_positions), timeout=20)
                 # Guard: if broker returns empty list (API error / transient failure),
                 # skip cross-check entirely to avoid closing ALL valid positions
                 if not broker_positions:
@@ -252,7 +254,7 @@ async def lifespan(app: FastAPI):
                         # Set ATR stop immediately
                         from atr_stop import compute_initial_stop
                         from database import update_trade_stop
-                        stop_price, stop_meta = await asyncio.to_thread(compute_initial_stop, ticker, entry)
+                        stop_price, stop_meta = await asyncio.wait_for(asyncio.to_thread(compute_initial_stop, ticker, entry), timeout=20)
                         update_trade_stop(trade_id, stop_price, entry)
                         logger.info(
                             f"RECONCILE: restored {ticker} x{qty} @ ${entry:.2f} "

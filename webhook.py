@@ -36,6 +36,18 @@ async def _get_buy_lock(ticker: str) -> asyncio.Lock:
     async with _buy_locks_mutex:
         if ticker not in _buy_locks:
             _buy_locks[ticker] = asyncio.Lock()
+        # Prune locks for tickers with no open position (memory leak prevention)
+        # Keep only tickers currently locked or recently used — cap at 100 entries
+        if len(_buy_locks) > 100:
+            try:
+                from database import get_open_trades as _got
+                open_tickers = {t["ticker"] for t in (_got() or [])}
+                stale = [k for k, lk in _buy_locks.items()
+                         if k not in open_tickers and not lk.locked()]
+                for k in stale[:50]:   # remove up to 50 at a time
+                    _buy_locks.pop(k, None)
+            except Exception:
+                pass
         return _buy_locks[ticker]
 
 

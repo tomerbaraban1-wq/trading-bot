@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Smart sell throttle: ticker -> last_check_timestamp (check max every 5 minutes)
 _smart_sell_last_check: dict = {}
-_smart_sell_lock: asyncio.Lock | None = None  # lazy-init inside async context (Python 3.12 safe)
+_smart_sell_lock: asyncio.Lock | None = None  # initialized in start_loops() after event loop starts
 
 # Track background tasks to prevent fire-and-forget errors
 _background_tasks = set()
@@ -161,11 +161,30 @@ async def heartbeat_cleanup_loop():
     while True:
         try:
             await asyncio.sleep(6 * 60 * 60)  # Run every 6 hours
-            await asyncio.to_thread(database.cleanup_old_heartbeats, days=7)
-            await asyncio.to_thread(database.cleanup_old_data, days=30)
+            await asyncio.wait_for(asyncio.to_thread(database.cleanup_old_heartbeats, days=7), timeout=30)
+            await asyncio.wait_for(asyncio.to_thread(database.cleanup_old_data, days=30), timeout=30)
             logger.debug("Cleaned up old records (heartbeats, shadow, slippage, learning)")
 
             # ── In-memory cache cleanup — prevent unbounded growth ────────
+            # Keep only tickers with open positions
+            try:
+                _open_now = await asyncio.to_thread(database.get_open_trades)
+                _open_tickers = {t["ticker"] for t in (_open_now or [])}
+                # _price_history: remove closed tickers
+                for _tk in list(_price_history.keys()):
+                    if _tk not in _open_tickers:
+                        _price_history.pop(_tk, None)
+                # _smart_sell_low_count: remove closed tickers
+                for _tk in list(_smart_sell_low_count.keys()):
+                    if _tk not in _open_tickers:
+                        _smart_sell_low_count.pop(_tk, None)
+                # _smart_sell_last_check: remove closed tickers
+                for _tk in list(_smart_sell_last_check.keys()):
+                    if _tk not in _open_tickers:
+                        _smart_sell_last_check.pop(_tk, None)
+            except Exception:
+                pass
+
             # _price_alerts_fired: cap at 500 entries (old alerts don't matter)
             if len(_price_alerts_fired) > 500:
                 old_count = len(_price_alerts_fired)
@@ -862,7 +881,7 @@ async def stop_loss_monitor():
                     # ── 3. Smart Sell (score collapse, max once per 5 min) ────
                     import time as _time
                     global _smart_sell_lock
-                    if _smart_sell_lock is None:
+                    if _smart_sell_lock is None:  # ensure lock exists (first cycle)
                         _smart_sell_lock = asyncio.Lock()
                     # Hold lock ONLY to read/update timestamp — release before expensive I/O
                     async with _smart_sell_lock:
@@ -1579,12 +1598,15 @@ async def morning_briefing_loop():
                         "שמור על שמות מניות באנגלית (AAPL, SAP וכו').\n"
                         "החזר רק את הכותרות המתורגמות, ממוספרות:\n" + _raw
                     )
-                    _resp = await asyncio.to_thread(
-                        lambda: _cli.chat.completions.create(
-                            model=settings.LLM_MODEL,
-                            messages=[{"role": "user", "content": _prompt}],
-                            max_tokens=400, temperature=0.3,
-                        )
+                    _resp = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            lambda: _cli.chat.completions.create(
+                                model=settings.LLM_MODEL,
+                                messages=[{"role": "user", "content": _prompt}],
+                                max_tokens=400, temperature=0.3,
+                            )
+                        ),
+                        timeout=25,
                     )
                     _lines = _resp.choices[0].message.content.strip().split("\n")
                     _translated = [l.split(". ", 1)[-1].strip() for l in _lines if l.strip()]
@@ -1836,8 +1858,13 @@ async def news_refresh_loop():
         try:
             from scanner import get_watchlist as _gwl
             from news_service import get_headlines, get_general_headlines
-            # Refresh general market headlines
-            await asyncio.to_thread(get_general_headlines, 10)
+            # Refresh general market headlines (timeout 30s)
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(get_general_headlines, 10), timeout=30
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[NEWS] get_general_headlines timed out — skipping")
             # Refresh for open positions (highest priority — monitored for sell signals)
             open_trades = await asyncio.to_thread(database.get_open_trades)
             open_tickers = list({t["ticker"] for t in open_trades})
@@ -1846,8 +1873,11 @@ async def news_refresh_loop():
             tickers_to_refresh = list(dict.fromkeys(open_tickers + wl_sample))[:15]
             for ticker in tickers_to_refresh:
                 try:
-                    await asyncio.to_thread(get_headlines, ticker, 8, True)  # bypass_cache=True
-                except Exception:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(get_headlines, ticker, 8, True),  # bypass_cache=True
+                        timeout=15,
+                    )
+                except (asyncio.TimeoutError, Exception):
                     pass
             logger.debug(f"News refreshed: {len(open_tickers)} positions + {len(wl_sample)} watchlist candidates")
         except asyncio.CancelledError:
@@ -1918,8 +1948,10 @@ async def news_monitor_loop():
                     headlines = sent.headlines[:3]
                     reasoning = sent.reasoning
 
-                    # Get current price for P&L context
-                    pos = await asyncio.to_thread(broker.get_position, ticker)
+                    # Get current price for P&L context (timeout 10s)
+                    pos = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_position, ticker), timeout=10
+                    )
                     if not pos:
                         continue
                     cur_price = float(pos.get("current_price", trade["entry_price"]))
@@ -1943,11 +1975,14 @@ async def news_monitor_loop():
                                 f"ניתוח: [תרגום קצר של הניתוח]\n\n"
                                 f"כותרות:\n{raw}\n\nניתוח מקורי: {reason}"
                             )
-                            resp = await asyncio.to_thread(lambda: _cli.chat.completions.create(
-                                model=settings.LLM_MODEL,
-                                messages=[{"role": "user", "content": prompt}],
-                                max_tokens=300, temperature=0.2,
-                            ))
+                            resp = await asyncio.wait_for(
+                                asyncio.to_thread(lambda: _cli.chat.completions.create(
+                                    model=settings.LLM_MODEL,
+                                    messages=[{"role": "user", "content": prompt}],
+                                    max_tokens=300, temperature=0.2,
+                                )),
+                                timeout=25,
+                            )
                             lines = resp.choices[0].message.content.strip().split("\n")
                             translated_hl = []
                             translated_reason = reason

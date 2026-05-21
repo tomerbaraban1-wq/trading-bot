@@ -179,9 +179,10 @@ async def iceberg_buy(
     # Notify Telegram that iceberg has started
     try:
         from telegram_bot import notify_iceberg_start
-        asyncio.ensure_future(
+        _t = asyncio.create_task(
             notify_iceberg_start(ticker, total_qty, n, INTERVAL_SEC)
         )
+        _t.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     except Exception:
         pass
 
@@ -298,14 +299,16 @@ async def iceberg_buy(
     # Notify Telegram completion
     try:
         from telegram_bot import notify_iceberg_done
-        asyncio.ensure_future(
+        _t2 = asyncio.create_task(
             notify_iceberg_done(ticker, total_filled, avg_price, n, is_partial, slice_results)
         )
+        _t2.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     except Exception:
         pass
 
     # Cleanup tracker after 5 minutes
-    asyncio.ensure_future(_cleanup_tracker(ticker, delay=300))
+    _t3 = asyncio.create_task(_cleanup_tracker(ticker, delay=300))
+    _t3.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     return {
         "price":      round(avg_price, 4),
