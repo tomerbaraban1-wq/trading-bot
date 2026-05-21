@@ -15,20 +15,34 @@ logger = logging.getLogger(__name__)
 
 
 def _is_already_hebrew(text: str) -> bool:
-    """Heuristic: text is already Hebrew if >40% of characters are Hebrew."""
+    """Heuristic: text contains enough Hebrew to be considered translated.
+    Threshold 20% — permissive enough to allow stock names mixed in
+    (e.g. "אפל AAPL עלתה 5%" = ~25% Hebrew chars).
+    """
     if not text:
         return True
     heb_chars = sum(1 for c in text if "֐" <= c <= "׿")
-    return heb_chars >= len(text) * 0.4
+    # Count only letters, not digits/punctuation, in denominator
+    letter_count = sum(1 for c in text if c.isalpha() or "֐" <= c <= "׿")
+    if letter_count == 0:
+        return True   # nothing to translate
+    return heb_chars >= letter_count * 0.20
 
 
 def _google_translate(text: str, source: str = "en", target: str = "he") -> str | None:
     """
     Free Google Translate endpoint (used by Chrome extension).
     No API key needed. Returns translated text or None on failure.
+
+    Note: Google's free endpoint rejects very long queries (~5000 chars).
+    For longer text, the caller should split into chunks.
     """
     if not text or not text.strip():
         return text
+    # Hard cap to prevent URL-length rejection (5000 chars is Google's limit)
+    MAX_LEN = 4500
+    if len(text) > MAX_LEN:
+        text = text[:MAX_LEN]
     try:
         url = (
             "https://translate.googleapis.com/translate_a/single"
@@ -113,7 +127,14 @@ def translate_to_hebrew(text: str) -> str:
 
 
 def translate_headlines(headlines: list[str]) -> list[str]:
-    """Translate a list of headlines to Hebrew. Always returns same length."""
+    """Translate a list of headlines to Hebrew. Always returns same length.
+
+    Strategy:
+    1. Skip if all already Hebrew.
+    2. Try Google batch translation (one HTTP call — fast).
+    3. Fallback: translate each individually with Google ONLY (no Groq —
+       too slow for N headlines, would exceed asyncio timeout).
+    """
     if not headlines:
         return []
     # Skip if all already Hebrew
@@ -130,5 +151,15 @@ def translate_headlines(headlines: list[str]) -> list[str]:
                         for i, p in enumerate(parts)]
     except Exception:
         pass
-    # Fallback: translate individually
-    return [translate_to_hebrew(h) for h in headlines]
+    # Fallback: translate each individually with Google ONLY (skip Groq — too slow)
+    result = []
+    for h in headlines:
+        if _is_already_hebrew(h):
+            result.append(h)
+            continue
+        try:
+            tr = _google_translate(h)
+            result.append(tr if tr and _is_already_hebrew(tr) else h)
+        except Exception:
+            result.append(h)
+    return result
