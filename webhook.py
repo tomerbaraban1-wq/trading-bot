@@ -615,14 +615,20 @@ async def health_check():
     from main import get_uptime
     hb = database.get_last_heartbeat()
     open_trades = database.get_open_trades()
-    budget_status = await asyncio.to_thread(budget.get_budget_status)
+    try:
+        budget_status = await asyncio.wait_for(
+            asyncio.to_thread(budget.get_budget_status), timeout=10
+        )
+        bud_pct = round(budget_status.get("budget_used_pct", 0), 1)
+    except Exception:
+        bud_pct = 0.0   # fallback — never crash /health
 
     return HealthResponse(
         status="running",
         uptime_seconds=round(get_uptime(), 1),
         last_heartbeat=hb["timestamp"] if hb else "never",
         open_positions=len(open_trades),
-        budget_utilization_pct=round(budget_status.get("budget_used_pct", 0), 1),
+        budget_utilization_pct=bud_pct,
     )
 
 
