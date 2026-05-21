@@ -217,30 +217,29 @@ async def notify_trade_open(
         _notional_str = f"${notional:,.2f}"
         _stop_str     = f"${stop_price:.2f}"
         _tp_str       = f"${tp_price:.2f}"
-    # Score quality label
+    # תווית איכות
     if score >= 75:   q = "🔥 מצוין"
     elif score >= 65: q = "✅ טוב"
-    elif score >= 58: q = "⚠️ גבולי"
+    elif score >= 58: q = "⚠️ בסדר"
     else:             q = "📊 רגיל"
 
-    sent_label = "😨 פחד — הזדמנות" if sentiment_score <= 4 else ("🟢 חיובי" if sentiment_score >= 7 else "😐 ניטרלי")
-
-
-    # Score bar visual
+    # פס ציון ויזואלי
     _bar_filled = round(score / 10)
     _score_bar  = "🟩" * _bar_filled + "⬜" * (10 - _bar_filled)
 
     await send_message(
-        f"╔══════════════════╗\n"
-        f"║  🛒  <b>קנייה חדשה!</b>      ║\n"
-        f"╚══════════════════╝\n\n"
-        f"🏷️  <b>{ticker}</b>  ·  {qty_str} מניות\n\n"
-        f"💵  מחיר כניסה:   <b>{_price_str}</b>\n"
-        f"✅  יצא ברווח:    {_tp_str}  <i>(+{tp_pct:.1f}%)</i>\n"
-        f"🛑  סטופ לוס:     {_stop_str}  <i>(-{stop_pct:.1f}%)</i>\n\n"
-        f"📊  ציון:  {_score_bar}\n"
-        f"        <b>{score:.0f}/100</b>  —  {q}\n\n"
-        f"💰  הושקע:  <b>{_notional_str}</b>"
+        f"🛒 <b>קניתי מניה חדשה!</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🏷️ מניה: <b>{ticker}</b>\n"
+        f"🔢 כמות: {qty_str} מניות\n"
+        f"💵 קניתי במחיר: <b>{_price_str}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"✅ אמכור ברווח אם יגיע ל: {_tp_str} (+{tp_pct:.1f}%)\n"
+        f"🛑 אמכור בהפסד אם ירד ל: {_stop_str} (-{stop_pct:.1f}%)\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💰 כמה השקעתי: <b>{_notional_str}</b>\n"
+        f"📊 איכות המניה: {_score_bar}\n"
+        f"   <b>{score:.0f} מתוך 100</b> — {q}"
         f"{id_line}"
     )
 
@@ -285,21 +284,24 @@ async def notify_trade_close(
     _arrow = "📈" if win else "📉"
     _pct_color = "🟢" if win else "🔴"
 
+    title = "💰 מכרתי ברווח! 🎉" if win else "📉 מכרתי בהפסד"
+    pnl_label = "רווח נטו" if win else "הפסד נטו"
+    pnl_icon  = "💚" if win else "❤️"
+
     await send_message(
-        f"{'💰' if win else '📉'} <b>{'מכרנו ברווח! 🎉' if win else 'מכרנו בהפסד'}</b>\n"
+        f"<b>{title}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🏷️ מניה:         <b>{ticker}</b>\n"
-        f"🔢 כמות:         {qty} מניות\n"
-        f"📌 קנינו ב:      {_entry_str}\n"
-        f"💵 מכרנו ב:      <b>{_exit_str}</b>\n"
-        f"{_pct_color} שינוי:         <b>{pct:+.2f}%</b>\n"
-        f"⏱️ החזקתי:      {dur_str}\n"
-        f"{'סיבה' if reason else ''}"
-        f"{'📌 ' + reason if reason else ''}\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"{'💚' if win else '❤️'} {_pnl_str}\n"
-        f"💳 נטו:           {_net_str}\n"
-        f"🧾 מס הופרש:    {_tax_str}"
+        f"🏷️ מניה: <b>{ticker}</b>\n"
+        f"🔢 כמות: {qty} מניות\n"
+        f"📌 קניתי במחיר: {_entry_str}\n"
+        f"💵 מכרתי במחיר: <b>{_exit_str}</b>\n"
+        f"{_pct_color} שינוי: <b>{pct:+.2f}%</b>\n"
+        f"⏱️ החזקתי: {dur_str}\n"
+        + (f"📝 למה מכרתי: {reason}\n" if reason else "")
+        + f"━━━━━━━━━━━━━━━━\n"
+        f"{pnl_icon} סה״כ הרווחתי/הפסדתי: {_pnl_str}\n"
+        f"💳 {pnl_label} (אחרי מס): {_net_str}\n"
+        f"🧾 מס שהפרשתי: {_tax_str}"
         f"{id_line}"
     )
 
@@ -421,14 +423,14 @@ async def notify_iceberg_start(
     slice_qty = f"{round(total_qty / n_slices, 4):.4f}".rstrip('0').rstrip('.') if n_slices else qty_str
     duration_min = (n_slices - 1) * interval_sec / 60
     await send_message(
-        f"🧊 <b>פיצול הזמנה</b>\n"
+        f"🛒 <b>קונה בכמה פעימות</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🏷️ מניה:         <b>{ticker}</b>\n"
-        f"📦 סה״כ:          {qty_str} מניות\n"
-        f"✂️ חלקים:         {n_slices} חלקים\n"
-        f"🔢 כל חלק:        ~{slice_qty} מניות\n"
-        f"⏱️ מרווח:         {interval_sec:.0f} שניות\n"
-        f"🕐 משך משוער:    ~{duration_min:.0f} דקות"
+        f"🏷️ מניה: <b>{ticker}</b>\n"
+        f"📦 כמות כוללת: {qty_str} מניות\n"
+        f"✂️ קונה ב-{n_slices} פעימות (כדי לקבל מחיר טוב יותר)\n"
+        f"🔢 כל פעימה: ~{slice_qty} מניות\n"
+        f"⏱️ מרווח בין פעימות: {interval_sec:.0f} שניות\n"
+        f"🕐 סיום משוער: בעוד ~{duration_min:.0f} דקות"
     )
 
 
@@ -441,7 +443,7 @@ async def notify_iceberg_done(
     slice_results: list = None,
 ) -> None:
     qty_str = f"{filled_qty:.4f}".rstrip('0').rstrip('.')
-    status  = "⚠️ בוצע חלקית" if is_partial else "✅ הושלם"
+    status  = "⚠️ הצלחתי לקנות רק חלק" if is_partial else "✅ סיימתי לקנות"
     try:
         from telegram_chat import _fmt_price as _fp
         price_str = _fp(avg_price)
@@ -449,14 +451,14 @@ async def notify_iceberg_done(
         price_str = f"${avg_price:.2f}"
 
     lines = [
-        f"🧊 <b>פיצול הזמנה {status}</b>",
+        f"🛒 <b>{status}</b>",
         f"━━━━━━━━━━━━━━━━",
-        f"🏷️ מניה:           <b>{ticker}</b>",
-        f"📦 סה״כ בוצע:     {qty_str} מניות",
-        f"✂️ חלקים:           {n_slices} חלקים",
+        f"🏷️ מניה: <b>{ticker}</b>",
+        f"📦 קניתי בסה״כ: {qty_str} מניות",
+        f"✂️ ב-{n_slices} פעימות",
     ]
 
-    # Show each slice with TP and SL prices
+    # פירוט כל פעימה — מחיר קנייה, יעד רווח, ועצירת הפסד
     if slice_results:
         from config import settings as _cfg
         lines.append(f"━━━━━━━━━━━━━━━━")
@@ -474,13 +476,13 @@ async def notify_iceberg_done(
                 sp_str = f"${sp:.2f}"
                 tp_str = f"${tp:.2f}"
                 sl_str = f"${sl:.2f}"
-            lines.append(f"חלק {s['slice']}: {sq} מניות")
-            lines.append(f"   💵 קנייה:    {sp_str}")
-            lines.append(f"   ✅ TP:        {tp_str} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)")
-            lines.append(f"   ❌ SL:        {sl_str} (-{_cfg.STOP_LOSS_PCT:.0f}%)")
+            lines.append(f"פעימה {s['slice']}: {sq} מניות")
+            lines.append(f"   💵 קניתי ב: {sp_str}")
+            lines.append(f"   ✅ אמכור ברווח ב: {tp_str} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)")
+            lines.append(f"   ❌ אמכור בהפסד ב: {sl_str} (-{_cfg.STOP_LOSS_PCT:.0f}%)")
 
     lines.append(f"━━━━━━━━━━━━━━━━")
-    lines.append(f"💵 מחיר ממוצע:    {price_str}")
+    lines.append(f"💵 מחיר קנייה ממוצע: {price_str}")
     await send_message("\n".join(lines))
 
 

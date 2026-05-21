@@ -648,11 +648,11 @@ async def stop_loss_monitor():
                                 from telegram_chat import _fmt_price as _fpp
                                 _tp_price = round(trade["entry_price"] * (1 + _near_tp_pct/100), 2)
                                 _create_background_task(send_message(
-                                    f"🎯 <b>קרוב ליעד! — {ticker}</b>\n"
+                                    f"🎯 <b>קרוב ליעד הרווח — {ticker}</b>\n"
                                     f"━━━━━━━━━━━━━━━━\n"
-                                    f"📍  מחיר עכשיו:  {_fpp(cur_price)}  (<b>{plpc:+.1f}%</b>)\n"
-                                    f"🎯  יעד רווח:      {_fpp(_tp_price)}  ({_near_tp_pct:.1f}%)\n"
-                                    f"⏳  נותרו: <b>{_gap_to_tp:.1f}%</b> ליעד!"
+                                    f"📍 מחיר עכשיו: {_fpp(cur_price)} (רווח {plpc:+.1f}%)\n"
+                                    f"🎯 יעד למכירה: {_fpp(_tp_price)} ({_near_tp_pct:.1f}%)\n"
+                                    f"⏳ עוד {_gap_to_tp:.1f}% וזה ימכר ברווח!"
                                 ))
                             except Exception:
                                 pass
@@ -723,12 +723,12 @@ async def stop_loss_monitor():
                         _half_qty = round(_orig_qty * 0.33, 6)
                         if _half_qty > 0:
                             _create_background_task(send_message(
-                                f"⚡ <b>רווח חלקי שלב 1 — {ticker}</b>\n"
+                                f"💰 <b>נועל רווח קטן — {ticker}</b>\n"
                                 f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯  רווח: {plpc:+.1f}%\n"
-                                f"💵  מחיר: ${cur_price:.2f}\n"
-                                f"🔢  מוכר: {_half_qty} מניות (33%)\n"
-                                f"📌  67% נשאר לרוץ ליעד מלא"
+                                f"🎯 רווח נוכחי: {plpc:+.1f}%\n"
+                                f"💵 מחיר עכשיו: ${cur_price:.2f}\n"
+                                f"🔢 מוכר עכשיו: {_half_qty} מניות (שליש מהפוזיציה)\n"
+                                f"📌 שני שלישים נשארים לרווח גדול יותר"
                             ))
                             try:
                                 _half_order = await asyncio.wait_for(
@@ -830,11 +830,13 @@ async def stop_loss_monitor():
                                 logger.info(f"[PARTIAL TP S2] {ticker}: sold 25% ({_quarter_qty} shares) "
                                             f"@ ${cur_price:.2f} (+{plpc:.1f}%) | PnL=${_s2_pnl:+.2f} | remaining={_new_qty}")
                                 _create_background_task(send_message(
-                                    f"💰 <b>רווח חלקי שלב 2 — {ticker}</b>\n"
-                                    f"מכרתי עוד חצי מהנותר\n"
-                                    f"📊 {_quarter_qty} מניות @ ${cur_price:.2f} (+{plpc:.1f}%)\n"
-                                    f"💵 רווח ממומש: <b>${_s2_pnl:+.2f}</b>\n"
-                                    f"הנותר ממשיך לרוץ עד יעד מלא ✅"
+                                    f"💰 <b>נועל עוד רווח — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"🎯 רווח נוכחי: {plpc:+.1f}%\n"
+                                    f"💵 מחיר עכשיו: ${cur_price:.2f}\n"
+                                    f"🔢 מוכר עכשיו: {_quarter_qty} מניות (חצי ממה שנשאר)\n"
+                                    f"💚 רווח על המכירה הזאת: <b>${_s2_pnl:+.2f}</b>\n"
+                                    f"📌 הנותר ממשיך לעלות ליעד מלא"
                                 ))
                             except Exception as _pe:
                                 logger.warning(f"[PARTIAL TP S2] {ticker}: quarter-sell failed: {_pe}")
