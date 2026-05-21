@@ -44,9 +44,9 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 LOOKBACK_DAYS:    int   = int(os.getenv("BACKTEST_LOOKBACK_DAYS",  "252"))  # 1 year
-HOLD_PERIOD:      int   = int(os.getenv("BACKTEST_HOLD_DAYS",      "10"))   # 10-day forward return
-WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "3.0"))  # 3% = win
-LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-2.0"))  # -2% = loss
+HOLD_PERIOD:      int   = int(os.getenv("BACKTEST_HOLD_DAYS",      "5"))    # 5-day forward return (shorter = more signals)
+WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "1.5"))  # 1.5% = win (realistic)
+LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-1.5"))  # -1.5% = loss (symmetric)
 MIN_SAMPLES:      int   = int(os.getenv("BACKTEST_MIN_SAMPLES",    "20"))   # min entries for insight
 CACHE_TTL:        int   = int(os.getenv("BACKTEST_CACHE_TTL",      "1800"))   # 30min — re-trains every 30min while market closed
 
@@ -299,6 +299,11 @@ def _analyze_ticker(ticker: str, lookback_days: int) -> list[dict]:
         # Compute a simple composite score for threshold optimization
         simple_score = _quick_score(row)
 
+        # Only include days where the bot would actually consider buying
+        # (score > 45 = above random, filters out clearly bad days)
+        if simple_score < 45:
+            continue
+
         signals.append({
             "ticker":         ticker,
             "date":           str(hist.index[i])[:10],
@@ -311,28 +316,33 @@ def _analyze_ticker(ticker: str, lookback_days: int) -> list[dict]:
 
 
 def _quick_score(row) -> int:
-    """Fast composite score (0-100) for backtesting threshold optimization."""
+    """Fast composite score (0-100) — mimics the bot's real buy criteria.
+    Only days with score>=45 are included in backtest signals.
+    """
     score = 50
     try:
         rsi = float(row.get("rsi_14") or 50)
-        if 35 <= rsi <= 65:  score += 10
-        elif rsi < 30:        score += 5
-        elif rsi > 70:        score -= 15
+        if 38 <= rsi <= 65:  score += 12   # sweet spot — not oversold or overbought
+        elif rsi < 30:        score -= 5    # knife-catching
+        elif rsi > 72:        score -= 20   # overbought — skip
 
         macd = float(row.get("macd") or 0)
         sig  = float(row.get("macd_signal") or 0)
-        if macd > sig:   score += 10
-        else:            score -= 5
+        if macd > sig:   score += 12    # bullish momentum
+        else:            score -= 8     # bearish momentum
 
         vol  = float(row.get("volume_ratio") or 1)
-        if vol >= 1.5:   score += 8
-        elif vol < 0.8:  score -= 8
+        if vol >= 1.5:   score += 10    # strong volume = conviction
+        elif vol >= 1.0: score += 5     # average volume
+        elif vol < 0.7:  score -= 12    # weak volume = no interest
 
-        close = float(row.get("close") or 0)
-        sma50 = float(row.get("sma_50") or 0)
+        close  = float(row.get("close") or 0)
+        sma20  = float(row.get("sma_20") or 0)
+        sma50  = float(row.get("sma_50") or 0)
         sma200 = float(row.get("sma_200") or 0)
-        if sma50 > 0 and close > sma50: score += 8
-        if sma50 > 0 and sma200 > 0 and sma50 > sma200: score += 5
+        if sma50  > 0 and close > sma50:             score += 8   # above medium trend
+        if sma200 > 0 and close > sma200:            score += 5   # above long trend
+        if sma50  > 0 and sma200 > 0 and sma50 > sma200: score += 5  # golden cross
 
     except Exception:
         pass
