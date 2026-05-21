@@ -1470,7 +1470,7 @@ async def activity_feed(limit: int = 30):
         # Training — log lines now use Hebrew "הצלחה=" "תשואה=" after rename
         (r"TRAINING.*Own-trade chart analysis.*הצלחה=(\d+)%.*תשואה=([+-]?[\d.]+)%",
          lambda m: {"type":"train","icon":"🎓","text":f"סיים אימון על גרפים עבר — אחוז הצלחה={m.group(1)}% | ממוצע תשואה {m.group(2)}%"}),
-        (r"TRAINING.*Done.*?(\d+) tickers.*?WR=([\d.]+)%.*?optimal_score=(\d+)",
+        (r"TRAINING.*Done.*?(\d+) tickers.*?הצלחה=([\d.]+)%.*?optimal_score=(\d+)",
          lambda m: {"type":"train","icon":"📊","text":f"אימון הושלם — {m.group(1)} מניות | אחוז הצלחה={m.group(2)}% | ציון מומלץ: {m.group(3)}"}),
         (r"TRAINING.*Market closed.*starting chart backtest",
          lambda m: {"type":"train","icon":"📈","text":"מתחיל backtest על ווטצ'ליסט..."}),

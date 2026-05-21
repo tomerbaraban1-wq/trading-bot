@@ -257,13 +257,14 @@ def _check_rolling_alert(ticker: str) -> None:
         avg = _db.get_rolling_slippage(ROLLING_N)
         if avg > ALERT_PCT:
             msg = (
-                f"⚠️ *High Slippage Alert*\n"
-                f"Rolling {ROLLING_N}-trade average: *{avg:.3f}%* "
-                f"(threshold: {ALERT_PCT}%)\n"
-                f"Last trade: `{ticker}`\n"
-                f"Review fill quality — consider adjusting limit price offsets."
+                f"⚠️ <b>התראה: סטייה גבוהה בקנייה/מכירה</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 ממוצע {ROLLING_N} עסקאות אחרונות: <b>{avg:.3f}%</b>\n"
+                f"⚠️ סף התראה: {ALERT_PCT}%\n"
+                f"📌 עסקה אחרונה: {ticker}\n"
+                f"💡 הבוט יחפש מחירי כניסה טובים יותר."
             )
-            logger.warning(f"[SLIPPAGE ALERT] rolling avg={avg:.3f}% > {ALERT_PCT}% — notifying")
+            logger.warning(f"[SLIPPAGE ALERT] סטייה ממוצעת={avg:.3f}% > {ALERT_PCT}% — שולח התראה")
             try:
                 from telegram_bot import notify_slippage_alert
                 import asyncio as _asyncio

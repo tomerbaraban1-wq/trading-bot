@@ -200,7 +200,7 @@ def run_backtest(tickers: list[str], lookback_days: int = LOOKBACK_DAYS) -> Back
 
     logger.info(
         f"[BACKTEST] Done: {result.tickers_analyzed} tickers | "
-        f"{result.total_signals} signals | WR={result.overall_win_rate}% | "
+        f"{result.total_signals} signals | הצלחה={result.overall_win_rate}% | "
         f"optimal_score={result.optimal_min_score}"
     )
     return result
@@ -613,7 +613,7 @@ def simulate_own_trade_history() -> dict:
     }
     logger.info(
         f"[OWN-TRADES] Done: {simulated} trades simulated | "
-        f"WR={wr:.1f}% | avg={avg_ret:+.2f}%"
+        f"הצלחה={wr:.1f}% | תשואה={avg_ret:+.2f}%"
     )
     return summary
 

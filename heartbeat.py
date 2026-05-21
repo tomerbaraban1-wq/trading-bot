@@ -2630,7 +2630,7 @@ async def market_closed_training_loop():
 
             logger.info(
                 f"[TRAINING] Done: {result.tickers_analyzed} tickers | "
-                f"{result.total_signals} signals | WR={result.overall_win_rate:.1f}% | "
+                f"{result.total_signals} signals | הצלחה={result.overall_win_rate:.1f}% | "
                 f"optimal_score={result.optimal_min_score}"
             )
 
