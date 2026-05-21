@@ -2507,28 +2507,24 @@ async def market_closed_training_loop():
                         f"avg={own_summary['avg_return']:+.2f}%"
                     )
 
-            # ── Full backtest only when market is closed ──────────────────
+            # ── אימון רץ תמיד — גם בשוק פתוח (קל יותר) וגם בסגור (מלא) ──
             is_open = await asyncio.wait_for(
                 asyncio.to_thread(broker.is_market_open), timeout=10
             )
-            if is_open:
-                await asyncio.sleep(5 * 60)  # market open — check again in 5 min
-                continue
-
-            logger.info("[TRAINING] Market closed — starting chart backtest on watchlist...")
 
             from backtest_learner import run_backtest, apply_insights
             from scanner import get_watchlist as _gwl
-            tickers = _gwl()[:20]
+            # שוק פתוח = ניתוח קצר על 10 מניות; שוק סגור = ניתוח עמוק על 20
+            tickers = _gwl()[:10] if is_open else _gwl()[:20]
+            mode_label = "קל (שוק פתוח)" if is_open else "מלא (שוק סגור)"
+            logger.info(f"[TRAINING] Running backtest — mode={mode_label}, {len(tickers)} tickers")
 
             # ── הודעת "מתחיל אימון" כל 30 דקות ──────────────────────────
             import time as _t
             now_ts = _t.time()
             if now_ts - _last_tg_notify_ts >= 30 * 60:
-                tickers_preview = ", ".join(tickers[:10])
-                extra = f" ועוד {len(tickers)-10}" if len(tickers) > 10 else ""
                 _create_background_task(send_message(
-                    f"🧠 <b>מתחיל אימון</b>\n"
+                    f"🧠 <b>מתחיל אימון — {mode_label}</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"
                     f"📋 מניות לניתוח:\n"
                     + "\n".join(f"   • {t}" for t in tickers)
@@ -2603,8 +2599,8 @@ async def market_closed_training_loop():
         except Exception as e:
             logger.error(f"[TRAINING] Training error: {e}")
 
-        # Loop every 60s — trains continuously while market is closed
-        await asyncio.sleep(60)
+        # Loop: 5 min during market hours, 1 min when closed (cache prevents heavy load)
+        await asyncio.sleep(300 if is_open else 60)
 
 
 async def backtest_learning_loop():
