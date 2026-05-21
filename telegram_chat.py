@@ -408,38 +408,42 @@ def _llm_reply(user_message: str, context: dict) -> str:
 
     system_prompt = f"""⚠️ כלל ברזל: ענה אך ורק בעברית. שמות מניות (AAPL, TSLA) נשארים באנגלית. הצג מחירים גם בדולר וגם בשקל.
 
-אתה מנהל ההשקעות האישי של המשתמש — בוט מסחר חכם שמסחר במניות אמריקאיות. ענה בדיוק על מה שנשאל, בצורה ברורה ומקצועית.
+אתה מנהל ההשקעות האישי של המשתמש — בוט מסחר חכם שמסחר במניות אמריקאיות.
+אתה יודע לענות על כל שאלה: על התיק, על מניות ספציפיות, על השוק, על אסטרטגיה, וגם שאלות כלליות על השקעות.
 
 שער דולר/שקל עכשיו: 1$ = ₪{ils_rate:.2f}
 
 ══ מצב התיק עכשיו ══
-💰 מזומן פנוי:        {_ils(context.get('cash', 0))}
-💼 מושקע במניות:    {_ils(context.get('total_invested', 0))}
-📊 תיק כולל:           {_ils(context.get('equity', 0))}
-📈 רווח/הפסד פתוח: {_ils(context.get('open_pnl', 0))} ({'+' if context.get('open_pnl',0)>=0 else ''}{context.get('open_pnl',0):+.2f}$)
-💳 רווח ממומש:       {_ils(context.get('realized_pnl_net', 0))}
-🔢 פוזיציות:            {context.get('open_positions_count', 0)}/{context.get('max_positions', 4)}
-🎯 אחוז הצלחה:            {context.get('win_rate', 0)}%  ({context.get('total_closed', 0)} עסקאות)
-🌡️ VIX:                   {context.get('vix') or '—'}
-🕐 שוק:                  {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
+💰 מזומן פנוי:       {_ils(context.get('cash', 0))}
+💼 מושקע במניות:   {_ils(context.get('total_invested', 0))}
+📊 תיק כולל:          {_ils(context.get('equity', 0))}
+📈 רווח/הפסד פתוח: {_ils(context.get('open_pnl', 0))}
+💳 רווח ממומש:      {_ils(context.get('realized_pnl_net', 0))}
+🔢 פוזיציות:           {context.get('open_positions_count', 0)} פתוחות
+🎯 אחוז הצלחה:       {context.get('win_rate', 0)}% ({context.get('total_closed', 0)} עסקאות)
+🌡️ VIX:                {context.get('vix') or '—'}
+🕐 שוק:               {'🟢 פתוח' if context.get('market_open') else '🔴 סגור'}
 
 ══ פוזיציות פתוחות ══
 {pos_text}
 
-══ הגדרות ══
+══ הגדרות הבוט ══
 ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
-Stop Loss: {context.get('stop_loss_pct', 5)}%  |  יעד רווח: {context.get('take_profit_pct', 15)}%
+Stop Loss: {context.get('stop_loss_pct', 5)}% | יעד רווח: {context.get('take_profit_pct', 15)}%
 Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ תקין'}
 
 ══ עסקאות אחרונות ══
 {closed_text}
 
-══ כיצד לענות ══
-• על שאלות תיק: ענה עם מחירים בדולר + שקל
-• על מניה ספציפית: תן פרטים רק על אותה מניה
-• על אסטרטגיה: הסבר — סורק כל 5 דקות, ציון ≥{context.get('min_buy_score',60)}, ATR trailing stop, מוכר ב-Stop Loss/יעד/חדשות שליליות
-• על הברוקר: Paper Trading עם מחירים אמיתיים (yfinance), כסף וירטואלי
-• ענה קצר וממוקד — לא יותר מ-5 שורות אלא אם נדרש פירוט
+══ הנחיות מענה ══
+• שאלות על תיק (כמה הרווחתי? מה שווי התיק?): ענה עם מחירים בדולר + שקל
+• שאלות על מניה (מה קורה עם AAPL? האם כדאי לקנות NVDA?): נתח לפי מה שאתה יודע
+• שאלות על השוק (מה מצב השוק?): הסתמך על VIX ומצב השוק למעלה
+• שאלות על אסטרטגיה: הסבר — סורק כל 5 דקות, ציון ≥{context.get('min_buy_score',60)}, ATR trailing stop
+• שאלות כלליות על השקעות: ענה כמנהל השקעות מקצועי
+• אם שאלה לא ברורה: בקש הבהרה קצרה
+• ענה ממוקד — עד 6 שורות, אלא אם נדרש פירוט מורחב
+• אל תאמר "אני לא יכול" — תמיד נסה לעזור
 """
 
     try:
@@ -449,8 +453,8 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": user_message},
             ],
-            max_tokens=300,   # reduced 600→300 for faster responses
-            temperature=0.3,
+            max_tokens=500,   # enough for detailed analysis answers
+            temperature=0.4,
         )
         reply = response.choices[0].message.content.strip()
 
@@ -568,14 +572,23 @@ def _handle_command(text: str, context: dict) -> str | None:
         except Exception:
             pass
         return (
-            "👋 <b>שלום! אני מנהל ההשקעות שלך</b>\n\n"
-            "📱 כפתורי תפריט מהיר הופיעו למטה ↓\n\n"
-            "שלח /help לרשימת כל הפקודות."
+            "👋 <b>שלום! אני מנהל ההשקעות שלך</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "📱 כפתורי תפריט הופיעו למטה ↓\n\n"
+            "💬 <b>אפשר לשאול אותי כל שאלה חופשית!</b>\n"
+            "לדוגמה:\n"
+            "  • <i>מה קורה עם AAPL?</i>\n"
+            "  • <i>האם השוק עולה או יורד?</i>\n"
+            "  • <i>כמה הרווחתי החודש?</i>\n"
+            "  • <i>מה דעתך על התיק שלי?</i>\n\n"
+            "📋 /help — כל הפקודות"
         )
 
     if cmd in ("/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (
-            "👋 <b>מנהל ההשקעות שלך — כל הפקודות</b>\n\n"
+            "👋 <b>מנהל ההשקעות שלך</b>\n\n"
+            "💬 <b>אפשר לשאול כל שאלה חופשית!</b>\n"
+            "לדוגמה: <i>\"מה קורה עם AAPL?\"</i> או <i>\"מה דעתך על התיק שלי?\"</i>\n\n"
             "━━ 📊 <b>תיק ופוזיציות</b> ━━\n"
             "/status — מצב מלא של התיק\n"
             "/manioth — איזה מניות פתוחות\n"
