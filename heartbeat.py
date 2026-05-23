@@ -478,7 +478,7 @@ async def stop_loss_monitor():
                     # ── Break-even lock: once price > entry + 1.5%, floor stop at entry ──
                     # This guarantees the trade can't turn into a loss after a decent move.
                     _entry_price = trade["entry_price"]
-                    _breakeven_trigger = 1.5  # % above entry to activate BE lock
+                    _breakeven_trigger = 1.0  # % above entry to activate BE lock — קונסרבטיבי יותר
                     if (atr_stop is not None
                             and atr_stop < _entry_price
                             and plpc >= _breakeven_trigger):
@@ -754,9 +754,9 @@ async def stop_loss_monitor():
                     #   Stage 1 — sell 50% at 50% of ATR TP
                     #   Stage 2 — sell 25% (of original) at 80% of ATR TP
                     #   Stage 3 — sell remaining 25% at full ATR TP
-                    # OPTIMIZED FOR PROFIT: lock in early gains before reversal
-                    _stage1_pct = max(2.0, _atr_tp_pct * 0.25)  # 25% of full TP (≈3.75%)
-                    _stage2_pct = max(4.0, _atr_tp_pct * 0.6)   # 60% of full TP (≈9%)
+                    # PROFIT-FIRST MODE: lock in gains very early
+                    _stage1_pct = max(1.5, _atr_tp_pct * 0.20)  # 20% of full TP (≈2%-3%)
+                    _stage2_pct = max(3.5, _atr_tp_pct * 0.50)  # 50% of full TP (≈6%)
                     # Stage 1 is considered done when the high_watermark already reached
                     # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
@@ -1457,29 +1457,38 @@ async def auto_invest_loop():
                                 "XLU",   # תשתיות
                                 "XLP",   # צרכנות בסיסית (MCD)
                             }
-                            # Block ALL ETFs — data shows ETFs consistently underperform vs individual stocks
+                            # ETFs now ALLOWED (user requested both stocks + ETFs to be tradeable)
+                            # Only volatile/inverse ETFs blocked (too risky for paper trading)
                             _BLOCKED_ETFS = {
-                                # Commodity/Defensive ETFs (biggest losers)
-                                "GLD","GDX","SLV","USO","UNG","GDX","GDXJ",
-                                # Sector ETFs — buy the individual stock instead
-                                "XLV","XLP","XLU","XLE","XLF","XLI","XLK","XLY","XLB","XLRE",
-                                # Broad market ETFs
-                                "SPY","QQQ","IWM","DIA","VTI","VXX",
+                                "VXX","UVXY","SVXY",   # volatility ETFs — extreme decay
+                                "SQQQ","SPXS","SDOW",  # inverse ETFs — bet against market
+                                "TZA","FAZ",           # 3x inverse — too risky
                             }
                             if ticker.upper() in _BLOCKED_ETFS:
-                                logger.info(f"AUTO-INVEST: {ticker} skipped — ETF (buy individual stocks instead)")
+                                logger.info(f"AUTO-INVEST: {ticker} skipped — volatility/inverse ETF (too risky)")
                                 continue
                         except Exception:
                             pass  # fail-open: proceed if sector check fails
 
-                        # Risk-based position sizing (replaces naive "available/price")
-                        # Pass COMBINED score (technical + Buffett) so quality stocks get larger positions
-                        # Buffett>70 = +5 boost, Buffett>80 = +10 boost (effective conviction)
+                        # Risk-based position sizing — adjusted by Buffett quality AND market volatility
                         _conviction = score
                         if _buffett_score >= 80:
-                            _conviction += 10
+                            _conviction += 10   # premium quality → bigger position
                         elif _buffett_score >= 70:
                             _conviction += 5
+                        # VIX defense — shrink position size in high-fear market
+                        try:
+                            from indicators import get_market_conditions as _gmc
+                            _vix_now = (await _asyncio.wait_for(
+                                _asyncio.to_thread(_gmc), timeout=8
+                            )).get("vix", 0)
+                            if _vix_now and _vix_now > 25:
+                                _conviction -= 8   # high fear → smaller position (acts like low conviction)
+                                logger.info(f"AUTO-INVEST: {ticker} VIX={_vix_now:.1f} — shrinking position")
+                            elif _vix_now and _vix_now < 15:
+                                _conviction += 3   # very calm → slightly larger (more confidence)
+                        except Exception:
+                            pass
                         from budget import compute_position_size
                         qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price, _conviction)
                         if qty <= 0:
