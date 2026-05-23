@@ -887,6 +887,105 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"   {r}")
         return "\n".join(lines)
 
+    # /diversity — quick portfolio diversity check
+    if cmd in ("/diversity", "diversity", "פיזור", "ריכוז"):
+        positions = context.get("open_positions", [])
+        if not positions:
+            return "📊 אין פוזיציות — אין מה לנתח 🟢"
+        try:
+            from sector_rotation import get_sector_for_ticker
+            sectors = {}
+            for p in positions:
+                s = get_sector_for_ticker(p["ticker"]) or "אחר"
+                sectors[s] = sectors.get(s, 0) + 1
+            total = len(positions)
+            lines = ["🎯 <b>פיזור התיק שלך</b>", "━━━━━━━━━━━━━━━━"]
+            max_sec = max(sectors.values()) if sectors else 0
+            for sec, count in sorted(sectors.items(), key=lambda x: -x[1]):
+                pct = count / total * 100
+                icon = "🔴" if pct > 50 else ("🟡" if pct > 30 else "🟢")
+                lines.append(f"{icon} <b>{sec}</b>: {count}/{total} ({pct:.0f}%)")
+            lines.append("━━━━━━━━━━━━━━━━")
+            if max_sec / total > 0.5:
+                lines.append("⚠️ <b>ריכוז גבוה</b> — שקול לפזר יותר")
+                lines.append("💡 רוב הסיכון בסקטור אחד")
+            elif max_sec / total > 0.3:
+                lines.append("🟡 ריכוז בינוני — סביר")
+            else:
+                lines.append("🟢 פיזור טוב — סיכון מוגבל")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/diversity] Error: {e}")
+            return "❌ שגיאה בניתוח"
+
+    # /alpha — bot performance vs S&P 500 (alpha = outperformance)
+    if cmd in ("/alpha", "alpha", "אלפא", "מול שוק", "מול sp500"):
+        try:
+            equity = context.get("equity", 10000)
+            initial = float(__import__("os").getenv("MAX_BUDGET", "10000"))
+            bot_return_pct = (equity - initial) / initial * 100 if initial else 0
+            # Get SPY return since bot inception
+            try:
+                history = database.get_trade_history(limit=200)
+                first_trade = next(
+                    (t for t in reversed(history) if t.get("entry_time")), None
+                )
+                start_date = first_trade.get("entry_time", "")[:10] if first_trade else None
+            except Exception:
+                start_date = None
+
+            spy_return_pct = None
+            if start_date:
+                try:
+                    import yfinance as _yf_a
+                    from datetime import datetime as _dt_a, timedelta as _td_a
+                    start_dt = _dt_a.strptime(start_date, "%Y-%m-%d")
+                    end_dt   = _dt_a.now()
+                    spy_data = _yf_a.Ticker("SPY").history(
+                        start=start_dt - _td_a(days=1),
+                        end=end_dt + _td_a(days=1),
+                        auto_adjust=True,
+                    )
+                    if not spy_data.empty:
+                        spy_start = float(spy_data["Close"].iloc[0])
+                        spy_end   = float(spy_data["Close"].iloc[-1])
+                        spy_return_pct = (spy_end - spy_start) / spy_start * 100
+                except Exception:
+                    pass
+
+            alpha = bot_return_pct - (spy_return_pct or 0)
+            bot_icon = "📈" if bot_return_pct >= 0 else "📉"
+            spy_icon = "📈" if (spy_return_pct or 0) >= 0 else "📉"
+
+            if alpha > 5:
+                verdict = "🏆 <b>הבוט מנצח את השוק בגדול!</b>"
+            elif alpha > 0:
+                verdict = "✅ <b>הבוט מנצח את השוק</b>"
+            elif alpha > -5:
+                verdict = "⚪ קרוב לשוק — לא רחוק"
+            else:
+                verdict = "📉 השוק מנצח — צריך לשפר"
+
+            lines = [
+                f"📊 <b>ביצוע מול S&P 500</b>",
+                f"━━━━━━━━━━━━━━━━",
+                f"{bot_icon} <b>הבוט שלך</b>: {bot_return_pct:+.2f}%",
+            ]
+            if spy_return_pct is not None:
+                lines.append(f"{spy_icon} <b>SPY</b>:        {spy_return_pct:+.2f}%")
+                lines.append(f"━━━━━━━━━━━━━━━━")
+                lines.append(f"🎯 <b>אלפא (יתרון על השוק)</b>: <b>{alpha:+.2f}%</b>")
+                lines.append(verdict)
+            else:
+                lines.append("⚠️ אין מספיק היסטוריה לחישוב אלפא")
+            if start_date:
+                lines.append(f"━━━━━━━━━━━━━━━━")
+                lines.append(f"📅 מתאריך: {start_date}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/alpha] Error: {e}")
+            return "❌ שגיאה בחישוב אלפא"
+
     # /new — show new commands added recently
     if cmd in ("/new", "new", "חדש", "פקודות חדשות"):
         return (

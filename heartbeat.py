@@ -1994,6 +1994,64 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def idle_cash_alert_loop():
+    """
+    התראת מזומן חופשי — אם יש $1000+ מזומן יותר מ-3 ימים, התראה.
+    מציע פעולה: לחפש הזדמנויות / להעלות סף סיכון.
+    רץ פעם ביום.
+    """
+    await asyncio.sleep(60 * 60)   # 1 hour after startup
+    _last_alert_date: str | None = None
+
+    while True:
+        try:
+            import datetime as _dt_idle
+            today_str = _dt_idle.date.today().isoformat()
+            if _last_alert_date == today_str:
+                await asyncio.sleep(6 * 60 * 60)
+                continue
+
+            # Check if market opens today (skip weekends)
+            if _dt_idle.datetime.now().weekday() >= 5:
+                await asyncio.sleep(6 * 60 * 60)
+                continue
+
+            # Get current cash
+            try:
+                from budget import get_budget_status
+                status = await asyncio.wait_for(
+                    asyncio.to_thread(get_budget_status), timeout=15
+                )
+                cash = float(status.get("cash_available", 0) or 0)
+                equity = float(status.get("equity", 1) or 1)
+                pos_value = float(status.get("positions_value", 0) or 0)
+            except Exception:
+                await asyncio.sleep(60 * 60)
+                continue
+
+            # Alert if cash > 50% of equity AND > $1000 (significant idle cash)
+            cash_pct = (cash / equity * 100) if equity else 0
+            if cash > 1000 and cash_pct > 50:
+                _last_alert_date = today_str
+                _create_background_task(send_message(
+                    f"💵 <b>מזומן חופשי לא מנוצל</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💰 מזומן זמין: <b>${cash:,.2f}</b> ({cash_pct:.0f}% מהתיק)\n"
+                    f"💼 מושקע: ${pos_value:,.2f}\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💡 הבוט סלקטיבי — לא מצא הרבה הזדמנויות איכותיות\n"
+                    f"📋 השתמש ב-/best לראות מה הכי קרוב לסף\n"
+                    f"📋 או /why TICKER לבדוק מניה ספציפית"
+                ))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"idle_cash_alert error: {e}")
+
+        await asyncio.sleep(6 * 60 * 60)   # check every 6 hours
+
+
 async def drawdown_protection_loop():
     """
     הגנת drawdown — מנטר ירידת תיק מהמקסימום ההיסטורי.

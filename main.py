@@ -295,7 +295,7 @@ async def lifespan(app: FastAPI):
                            golden_opportunity_loop, smart_reentry_loop,
                            weekend_research_loop, daily_ai_insights_loop,
                            self_improvement_loop, rapid_move_alert_loop,
-                           drawdown_protection_loop)
+                           drawdown_protection_loop, idle_cash_alert_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -322,6 +322,7 @@ async def lifespan(app: FastAPI):
     self_improve_task      = asyncio.create_task(self_improvement_loop())  # תיקון עצמי
     rapid_move_task        = asyncio.create_task(rapid_move_alert_loop())  # התראות תזוזה חזקה
     drawdown_task          = asyncio.create_task(drawdown_protection_loop())# הגנת drawdown 10%
+    idle_cash_task         = asyncio.create_task(idle_cash_alert_loop())   # התראת מזומן חופשי
 
     # ── Optional tasks (disabled on free tier to save memory) ────────
     import os as _os
@@ -346,7 +347,7 @@ async def lifespan(app: FastAPI):
         earnings_monitor_task, market_pulse_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
-        drawdown_task,
+        drawdown_task, idle_cash_task,
     ] if t is not None]
 
     # Cancel all background tasks
