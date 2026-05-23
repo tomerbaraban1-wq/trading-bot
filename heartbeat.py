@@ -653,11 +653,11 @@ async def stop_loss_monitor():
                         pass
 
                     # ── 1b2. Profit Milestone Alerts — celebrate winning positions! ──
-                    # שולח התראה ב-+3%, +5%, +10%, +15% רווח (פעם אחת לכל יעד)
+                    # שולח התראה ב-+2%, +5%, +10%, +15% רווח (פעם אחת לכל יעד)
                     try:
                         for _milestone, _emoji, _msg in [
-                            (3.0,  "📈", "רווח קטן וכבר נחמד!"),
-                            (5.0,  "🚀", "רווח יפה — לוקח בקרוב חלק ראשון"),
+                            (2.0,  "🎯", "רווח נעול! Stage 1 מתקרב"),
+                            (5.0,  "🚀", "רווח יפה — לוקח בקרוב חלק שני"),
                             (10.0, "💎", "רווח דו-ספרתי!"),
                             (15.0, "🏆", "רווח מצוין — מתקרבים ליעד מלא!"),
                         ]:
@@ -1313,8 +1313,17 @@ async def auto_invest_loop():
                             _buffett_score = 50   # neutral if Buffett analysis fails
 
                         # ── Technical Score Floor — MAX-WIN MODE: require very strong score ──
-                        if score < 60:
-                            logger.info(f"AUTO-INVEST: {ticker} score={score:.0f} below max-win threshold (60) — skip")
+                        # EXCEPTION: very positive news (sentiment 8+) → score boost of 5 allowed
+                        _news_boost = 0
+                        if hasattr(sentiment, 'score') and sentiment.score >= 8:
+                            _news_boost = 5
+                            logger.info(f"AUTO-INVEST: {ticker} positive news ({sentiment.score}/10) → +5 boost")
+                        elif hasattr(sentiment, 'score') and sentiment.score >= 9:
+                            _news_boost = 8
+                            logger.info(f"AUTO-INVEST: {ticker} extremely positive news ({sentiment.score}/10) → +8 boost")
+                        _effective_score = score + _news_boost
+                        if _effective_score < 60:
+                            logger.info(f"AUTO-INVEST: {ticker} score={score:.0f}+news{_news_boost} below max-win threshold (60) — skip")
                             continue
 
                         # ── Intraday momentum filter — relaxed (allow flat/mild dip) ──
@@ -1911,6 +1920,75 @@ async def earnings_monitor_loop():
             logger.error(f"earnings_monitor_loop error: {e}")
 
         await asyncio.sleep(30 * 60)  # check every 30 min
+
+
+async def weekend_research_loop():
+    """
+    לולאת מחקר לסופי שבוע — הבוט לומד עומק כשהשוק סגור.
+    כל שעתיים בסופי שבוע:
+    - מנתח Buffett על 5 מניות מהווטצ'ליסט
+    - מאתר 'הזדמנויות שבת' (מניות איכותיות שיכולות לפתוח חזק ביום שני)
+    - שולח דוח שבועי על אילו מניות שווה לבדוק
+    """
+    await asyncio.sleep(20 * 60)   # 20 min after startup
+    _last_research_date = None
+
+    while True:
+        try:
+            import datetime as _dt_we
+            now = _dt_we.datetime.now(_dt_we.timezone.utc)
+            weekday = now.weekday()
+            today_str = now.date().isoformat()
+
+            # Only run on Saturday/Sunday
+            if weekday < 5:
+                await asyncio.sleep(2 * 3600)
+                continue
+
+            # Run at most once per 2 hours
+            if _last_research_date == today_str and now.hour % 4 != 0:
+                await asyncio.sleep(60 * 60)
+                continue
+
+            from scanner import get_watchlist as _gwl
+            from buffett_analysis import get_buffett_analysis
+            tickers = _gwl()[:10]
+
+            results = []
+            for t in tickers:
+                try:
+                    a = await asyncio.wait_for(
+                        asyncio.to_thread(get_buffett_analysis, t),
+                        timeout=15,
+                    )
+                    if a.get("score", 0) >= 70:
+                        results.append((t, a.get("score", 0), a.get("moat", "?")))
+                except Exception:
+                    continue
+
+            if results:
+                results.sort(key=lambda x: x[1], reverse=True)
+                top3 = results[:3]
+                _last_research_date = today_str
+                lines = [
+                    "📚 <b>מחקר סוף שבוע</b>",
+                    "━━━━━━━━━━━━━━━━",
+                    "🏆 <b>איכותיות לבדיקה ביום שני:</b>",
+                ]
+                for t, s, m in top3:
+                    moat_icon = {"strong": "💪", "medium": "🛡️", "weak": "⚠️"}.get(m, "?")
+                    lines.append(f"   {moat_icon} <b>{t}</b>: ציון באפט <b>{s:.0f}/100</b>")
+                lines.append("━━━━━━━━━━━━━━━━")
+                lines.append("💡 הבוט יסרוק אותן ראשונות בפתיחת השוק")
+                _create_background_task(send_message("\n".join(lines)))
+                logger.info(f"[WEEKEND] research sent: top3={[t for t,_,_ in top3]}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"weekend_research_loop error: {e}")
+
+        await asyncio.sleep(4 * 60 * 60)   # every 4 hours during weekend
 
 
 async def smart_reentry_loop():

@@ -425,7 +425,7 @@ def _llm_reply(user_message: str, context: dict, history: list | None = None) ->
     if not client:
         return _simple_fallback(context)
 
-    # Build detailed position summary
+    # Build detailed position summary — include Buffett quality score
     positions = context.get("open_positions", [])
     pos_lines = []
     for p in positions:
@@ -434,9 +434,20 @@ def _llm_reply(user_message: str, context: dict, history: list | None = None) ->
         held = p.get("held_hours", 0)
         held_str = _fmt_held(held)
         invested = p.get("invested") or round(p["entry"] * p["qty"], 2)
+        # Add Buffett quality (cached - fast)
+        _buf_info = ""
+        try:
+            from buffett_analysis import get_buffett_analysis
+            _ba = get_buffett_analysis(p['ticker'])
+            _bs = _ba.get("score", 0)
+            _moat = _ba.get("moat", "?")
+            _buf_info = f"  |  🎩 איכות={_bs:.0f}/100 (moat:{_moat})"
+        except Exception:
+            pass
+
         pos_lines.append(
             f"{emoji} <b>{p['ticker']}</b>\n"
-            f"   📦 {p['qty']} מניות  |  💵 הושקע {_fmt_price(invested)}\n"
+            f"   📦 {p['qty']} מניות  |  💵 הושקע {_fmt_price(invested)}{_buf_info}\n"
             f"   📈 כניסה {_fmt_price(p['entry'])} → עכשיו {_fmt_price(p['current'])} ({p['pct']:+.1f}%)\n"
             f"   💰 {_fmt_pnl(p['pnl'])}  |  🛑 Stop: {_fmt_price(stop)}\n"
             f"   ⏱ הוחזק: {held_str}"
@@ -795,6 +806,34 @@ def _handle_command(text: str, context: dict) -> str | None:
         ]
         if today:
             lines.append(f"📅 נפתחו היום: <b>{today}</b>")
+        return "\n".join(lines)
+
+    # /activity_now — מה הבוט עושה ברגע זה
+    if cmd in ("/activity_now", "/now", "מה אתה עושה", "מה הבוט עושה", "מה אתה עושה עכשיו"):
+        try:
+            import requests as _req
+            import os as _os
+            base = _os.getenv("RENDER_EXTERNAL_URL", "https://trading-bot-e66l.onrender.com").rstrip("/")
+            r = _req.get(f"{base}/activity", timeout=8)
+            recent = r.json()[:5] if r.ok else []
+        except Exception:
+            recent = []
+
+        if not recent:
+            return "🤖 הבוט פעיל אבל אין פעילות אחרונה לדווח עליה"
+
+        lines = ["🤖 <b>מה אני עושה עכשיו</b>", "━━━━━━━━━━━━━━━━"]
+        for item in recent:
+            icon = item.get("icon", "•")
+            text = item.get("text", "")
+            ts   = item.get("ts", "")[-8:]   # show HH:MM:SS only
+            lines.append(f"{icon} {text}  <i>({ts})</i>")
+        lines.append("━━━━━━━━━━━━━━━━")
+        # Also show market status
+        if context.get("market_open"):
+            lines.append("🟢 השוק פתוח — סורק ומחפש הזדמנויות")
+        else:
+            lines.append("💤 השוק סגור — מתאמן וקורא חדשות")
         return "\n".join(lines)
 
     if cmd == "/status":
@@ -3660,13 +3699,13 @@ async def handle_telegram_update(update: dict) -> dict:
         "📊 מצב התיק":       "/status",
         "📈 מניות שלי":      "/manioth",
         "🔢 כמה עסקאות":     "/count",
+        "🤖 מה אתה עושה":    "/activity_now",
         "🌍 מצב השוק":       "/market",
         "🏆 מובילים היום":   "/gainers",
         "📰 חדשות":          "/newscheck",
         "💡 ייעוץ AI":       "/advice",
         "⚠️ ניתוח סיכון":    "/risk",
         "📅 מה היה היום":    "/today",
-        "🤖 AI ריוויו":      "/review",
         "📋 כל הפקודות":     "/help",
     }
     if text in _BUTTON_MAP:
