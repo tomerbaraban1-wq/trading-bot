@@ -632,6 +632,26 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
+                    # ── 1b1. Stagnant Position Exit — sell if flat for 24h ──
+                    # מניה שלא זזה (-1% ל-+1%) 24 שעות = הון מבוזבז
+                    try:
+                        from datetime import datetime as _dt_sg, timezone as _tz_sg
+                        _entry_ts = trade.get("entry_time")
+                        if _entry_ts and -1.0 <= plpc <= 1.0:
+                            _entry_dt = _dt_sg.strptime(str(_entry_ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz_sg.utc)
+                            _hours_held = (_dt_sg.now(_tz_sg.utc) - _entry_dt).total_seconds() / 3600
+                            if _hours_held >= 24:
+                                logger.info(
+                                    f"[STAGNANT] {ticker}: {_hours_held:.0f}h held, plpc={plpc:+.1f}% — selling stale position"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "time_exit",
+                                    f"מניה תקועה {_hours_held:.0f}ש' ({plpc:+.1f}%) — משחרר הון"
+                                )
+                                continue
+                    except Exception:
+                        pass
+
                     # ── 1b2. Profit Milestone Alerts — celebrate winning positions! ──
                     # שולח התראה ב-+3%, +5%, +10%, +15% רווח (פעם אחת לכל יעד)
                     try:
@@ -1274,6 +1294,21 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             continue
 
+                        # ── Buffett Quality Filter — avoid junk + boost quality ──
+                        # מסנן מניות באיכות נמוכה ושומר score לתיעדוף אחר כך
+                        _buffett_score = None
+                        try:
+                            from buffett_analysis import get_buffett_analysis as _bff
+                            _buf = await _asyncio.wait_for(
+                                _asyncio.to_thread(_bff, ticker), timeout=15
+                            )
+                            _buffett_score = _buf.get("score", 50)
+                            if _buffett_score < 30:
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} too low — skip (junk quality)")
+                                continue
+                        except Exception:
+                            _buffett_score = 50   # neutral if Buffett analysis fails
+
                         # ── Intraday momentum filter — relaxed (allow flat/mild dip) ──
                         # Buying into FALLING knife has poor WR, but flat/mild dip is OK
                         try:
@@ -1307,19 +1342,21 @@ async def auto_invest_loop():
                         except Exception as _le:
                             logger.debug(f"AUTO-INVEST: {ticker} learning error — {type(_le).__name__}")
 
-                        _scored_candidates.append((ticker, score, composite, sentiment))
+                        # Combined score: 60% technical + 40% Buffett quality
+                        _combined_score = score * 0.6 + (_buffett_score or 50) * 0.4
+                        _scored_candidates.append((ticker, _combined_score, composite, sentiment, _buffett_score or 50))
                     except _asyncio.TimeoutError:
                         logger.warning(f"AUTO-INVEST: {ticker} scoring timed out — skipping")
                     except Exception as _se:
                         logger.debug(f"AUTO-INVEST: {ticker} scoring error — {type(_se).__name__}")
 
-                # ממיינים לפי ציון יורד — הטוב ביותר ראשון
+                # ממיינים לפי ציון משוקלל יורד — הטוב ביותר ראשון
                 _scored_candidates.sort(key=lambda x: x[1], reverse=True)
                 logger.info(f"AUTO-INVEST: {len(_scored_candidates)} candidates above threshold, best-first: "
-                            + ", ".join(f"{t}={s:.0f}" for t, s, _, _ in _scored_candidates[:3]))
+                            + ", ".join(f"{t}=ציון{s:.0f}(באפט{b:.0f})" for t, s, _, _, b in _scored_candidates[:3]))
 
                 # ── שלב 2: בדיקות מלאות וקנייה — לפי סדר ציון יורד ────────────
-                for ticker, score, composite, sentiment in _scored_candidates:
+                for ticker, score, composite, sentiment, _buffett_score in _scored_candidates:
                     if remaining < 10:
                         break
                     try:
@@ -1436,9 +1473,15 @@ async def auto_invest_loop():
                             pass  # fail-open: proceed if sector check fails
 
                         # Risk-based position sizing (replaces naive "available/price")
-                        # Pass composite score so high-conviction signals get larger positions
+                        # Pass COMBINED score (technical + Buffett) so quality stocks get larger positions
+                        # Buffett>70 = +5 boost, Buffett>80 = +10 boost (effective conviction)
+                        _conviction = score
+                        if _buffett_score >= 80:
+                            _conviction += 10
+                        elif _buffett_score >= 70:
+                            _conviction += 5
                         from budget import compute_position_size
-                        qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price, score)
+                        qty, sizing_meta = await _asyncio.to_thread(compute_position_size, price, _conviction)
                         if qty <= 0:
                             logger.info(f"AUTO-INVEST: {ticker} sizing=0 → skip ({sizing_meta})")
                             _create_background_task(_asyncio.to_thread(
@@ -1853,6 +1896,92 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def smart_reentry_loop():
+    """
+    זיהוי re-entry: אם הבוט מכר מניה ב-stop_loss / smart_sell ב-2 ימים אחרונים,
+    והיא עלתה 3%+ מאז המכירה — בודק שוב.
+    אם הציון מעל 65 — שולח התראה למשתמש.
+    רץ כל שעה.
+    """
+    await asyncio.sleep(15 * 60)
+    _notified: dict[str, str] = {}   # ticker → date (avoid spam)
+
+    while True:
+        try:
+            mkt_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if not mkt_open:
+                await asyncio.sleep(60 * 60)
+                continue
+
+            import datetime as _dt_re
+            today_str = _dt_re.date.today().isoformat()
+            _notified = {k: v for k, v in _notified.items() if v == today_str}
+
+            # Get recent sells (last 2 days)
+            two_days_ago = (_dt_re.datetime.utcnow() - _dt_re.timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+            conn = database.get_connection()
+            rows = conn.execute(f"""
+                SELECT ticker, exit_price, exit_time, pnl_gross
+                FROM trade_log
+                WHERE status IN ('stop_loss','smart_sell','time_exit','momentum_exit')
+                  AND exit_time > ?
+                ORDER BY exit_time DESC
+                LIMIT 10
+            """, (two_days_ago,)).fetchall()
+
+            for row in rows:
+                ticker = row["ticker"]
+                exit_p = row["exit_price"] or 0
+                if _notified.get(ticker) == today_str:
+                    continue
+                # Skip if already re-bought
+                if database.get_open_trade_by_ticker(ticker):
+                    continue
+                try:
+                    cur_p = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_price, ticker), timeout=10
+                    )
+                    if not cur_p or not exit_p:
+                        continue
+                    # Did it bounce 3%+ since we sold?
+                    bounce = (cur_p - exit_p) / exit_p * 100
+                    if bounce < 3.0:
+                        continue
+                    # Get fresh score
+                    from sentiment import score_sentiment
+                    from scoring import get_composite_score
+                    sent = await asyncio.wait_for(
+                        asyncio.to_thread(score_sentiment, ticker), timeout=15
+                    )
+                    score_r = await asyncio.wait_for(
+                        asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=15
+                    )
+                    score = score_r.get("composite_score", 0)
+                    if score >= 65:
+                        _notified[ticker] = today_str
+                        _create_background_task(send_message(
+                            f"🔄 <b>חזרה ל-{ticker}?</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"📉 מכרתי ב: ${exit_p:.2f}\n"
+                            f"📈 עכשיו: ${cur_p:.2f} ({bounce:+.1f}%)\n"
+                            f"⭐ ציון חדש: <b>{score:.0f}/100</b>\n"
+                            f"💡 המניה התאוששה — שקול חזרה לפוזיציה\n"
+                            f"📋 /buffett {ticker} | /score {ticker}"
+                        ))
+                        logger.info(f"[REENTRY] {ticker}: bounce={bounce:.1f}% score={score:.0f} — alerted")
+                except Exception:
+                    continue
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"smart_reentry_loop error: {e}")
+
+        await asyncio.sleep(60 * 60)
+
+
 async def golden_opportunity_loop():
     """
     מאתר "הזדמנויות זהב" — מניות עם ציון מעל 75 + ציון באפט מעל 70.
@@ -1924,13 +2053,22 @@ async def golden_opportunity_loop():
 
                 # Only notify if both technical AND fundamentals strong
                 if buf_score >= 60:
+                    _inline_kb = {
+                        "inline_keyboard": [[
+                            {"text": "🎩 ניתוח באפט", "url": f"https://t.me/share/url?url=/buffett%20{ticker}"},
+                            {"text": "📊 ציון מפורט", "url": f"https://t.me/share/url?url=/score%20{ticker}"},
+                        ], [
+                            {"text": "📰 חדשות", "url": f"https://t.me/share/url?url=/news%20{ticker}"},
+                            {"text": "💲 מחיר", "url": f"https://t.me/share/url?url=/price%20{ticker}"},
+                        ]]
+                    }
                     _create_background_task(send_message(
                         f"🌟 <b>הזדמנות זהב — {ticker}!</b>\n"
                         f"━━━━━━━━━━━━━━━━\n"
                         f"⭐ ציון טכני: <b>{score:.0f}/100</b> (מעולה!)\n"
                         f"🎩 ציון באפט: <b>{buf_score:.0f}/100</b>\n"
                         f"💡 הבוט מזהה הזדמנות איכותית — סורק לעומק\n"
-                        f"📋 לפרטים: /buffett {ticker} | /score {ticker}"
+                        f"📋 לפרטים: /buffett {ticker} | /score {ticker} | /news {ticker}"
                     ))
                     logger.info(f"[GOLDEN] {ticker} score={score:.0f} buf={buf_score:.0f} — alerted")
 

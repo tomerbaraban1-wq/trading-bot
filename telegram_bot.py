@@ -113,10 +113,15 @@ async def send_menu() -> bool:
         return False
 
 
-async def send_message(text: str) -> bool:
+async def send_message(text: str, reply_markup: dict | None = None) -> bool:
     """
     Send a message to Telegram AND Discord (if configured).
     Returns True if at least one channel succeeded.
+
+    Args:
+        text: HTML-formatted message body.
+        reply_markup: Optional inline keyboard. Example:
+            {"inline_keyboard": [[{"text": "💲 מחיר", "callback_data": "price:AAPL"}]]}
     """
     # Send to Discord in parallel — only if a running event loop exists
     try:
@@ -142,6 +147,8 @@ async def send_message(text: str) -> bool:
         "text":       text[:4096],   # Telegram max message length
         "parse_mode": "HTML",
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
 
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
