@@ -632,6 +632,42 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
+                    # ── 1b0. Pre-Earnings Protection — close profitable positions before earnings ──
+                    # מגן רווחים — אם יש דוח רווחים בעוד 1-2 ימים ויש רווח 1.5%+
+                    # מוכר את החצי הראשון לפני התנודתיות הצפויה
+                    try:
+                        from earnings import check_earnings_risk as _cer
+                        _ern_risky, _ern_reason, _ern_days = await asyncio.wait_for(
+                            asyncio.to_thread(_cer, ticker), timeout=10
+                        )
+                        if _ern_risky and _ern_days is not None and _ern_days <= 2 and plpc >= 1.5:
+                            # We have profit + earnings imminent → lock 50% of profit
+                            _pre_e_key = f"pre_earn_{trade['id']}"
+                            if not _position_alert_sent.get(_pre_e_key):
+                                _position_alert_sent[_pre_e_key] = True
+                                _half_qty = round(trade["qty"] * 0.5, 6)
+                                try:
+                                    await asyncio.wait_for(
+                                        asyncio.to_thread(broker.submit_sell, ticker, _half_qty, cur_price),
+                                        timeout=30,
+                                    )
+                                    _new_qty = round(trade["qty"] - _half_qty, 6)
+                                    await asyncio.to_thread(database.update_trade_qty, trade["id"], _new_qty)
+                                    trade = dict(trade); trade["qty"] = _new_qty
+                                    _create_background_task(send_message(
+                                        f"📑 <b>מגן לפני דוח — {ticker}</b>\n"
+                                        f"━━━━━━━━━━━━━━━━\n"
+                                        f"⚠️ דוח רווחים בעוד {_ern_days} ימים\n"
+                                        f"💰 רווח נוכחי: {plpc:+.1f}%\n"
+                                        f"🔢 מוכר 50% ({_half_qty} מניות) לנעילת רווח\n"
+                                        f"📌 חצי שני נשאר עם stop בטוח"
+                                    ))
+                                    logger.info(f"[PRE-EARN] {ticker}: sold 50% before earnings in {_ern_days}d")
+                                except Exception as _ee:
+                                    logger.warning(f"[PRE-EARN] {ticker}: protection sale failed: {_ee}")
+                    except Exception:
+                        pass
+
                     # ── 1b1. Stagnant Position Exit — sell if flat for 24h ──
                     # מניה שלא זזה (-1% ל-+1%) 24 שעות = הון מבוזבז
                     try:
@@ -725,14 +761,21 @@ async def stop_loss_monitor():
                     except Exception:
                         _atr_tp_pct = settings.TAKE_PROFIT_PCT
 
-                    # ── 2a. Profit-zone tightening: once +5%, shrink ATR multiplier ──
-                    # Standard: 2.0× ATR distance.  Deep-profit zone: 1.2× ATR distance.
-                    # This locks in more gains when the trade is already well in profit.
+                    # ── 2a. Progressive profit-zone tightening — multi-tier stop tightening ──
+                    # +5%  → 1.2× ATR (lock most gains)
+                    # +10% → 0.8× ATR (very tight)
+                    # +15% → 0.5× ATR (extremely tight — almost guaranteed exit on next dip)
                     if plpc >= 5.0:
                         try:
                             from atr_stop import _fetch_atr as _atr_fn
-                            import os as _os2  # used for ATR_TIGHT_MULTIPLIER env var
-                            _tight_mult = float(_os2.getenv("ATR_TIGHT_MULTIPLIER", "1.2"))
+                            import os as _os2
+                            # Progressive multiplier — tighter as profits grow
+                            if plpc >= 15.0:
+                                _tight_mult = 0.5
+                            elif plpc >= 10.0:
+                                _tight_mult = 0.8
+                            else:
+                                _tight_mult = float(_os2.getenv("ATR_TIGHT_MULTIPLIER", "1.2"))
                             _atr2 = await asyncio.wait_for(
                                 asyncio.to_thread(_atr_fn, ticker, trade["entry_price"]),
                                 timeout=15,
@@ -744,8 +787,8 @@ async def stop_loss_monitor():
                                     database.update_trade_stop, trade["id"], atr_stop, high_wm
                                 )
                                 logger.info(
-                                    f"[TIGHT TRAIL] {ticker}: profit-zone tightened stop to "
-                                    f"${atr_stop:.2f} (1.2×ATR @ +{plpc:.1f}%)"
+                                    f"[TIGHT TRAIL] {ticker}: progressive lock — stop=${atr_stop:.2f} "
+                                    f"({_tight_mult}×ATR @ +{plpc:.1f}%)"
                                 )
                         except Exception:
                             pass  # fail-open

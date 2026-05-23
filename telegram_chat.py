@@ -808,6 +808,154 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"📅 נפתחו היום: <b>{today}</b>")
         return "\n".join(lines)
 
+    # /risk_score — overall portfolio risk metric
+    if cmd in ("/risk_score", "סיכון", "ניקוד סיכון", "סיכון תיק"):
+        positions = context.get("open_positions", [])
+        if not positions:
+            return "📊 אין פוזיציות פתוחות — אין סיכון כרגע 🟢"
+        cash = context.get("cash", 0)
+        equity = context.get("equity", 1)
+        budget_used = context.get("budget_used_pct", 0)
+        n_pos = len(positions)
+
+        # Compute risk score 0-100
+        risk = 0
+        risk_factors = []
+
+        # Concentration risk (how exposed are we)
+        if budget_used > 80:
+            risk += 30; risk_factors.append(f"🔴 חשיפה גבוהה: {budget_used:.0f}% מהתקציב")
+        elif budget_used > 60:
+            risk += 15; risk_factors.append(f"🟡 חשיפה בינונית: {budget_used:.0f}%")
+        else:
+            risk += 5; risk_factors.append(f"🟢 חשיפה נמוכה: {budget_used:.0f}%")
+
+        # Losing positions risk
+        losing = [p for p in positions if p.get("pct", 0) < 0]
+        if len(losing) >= n_pos * 0.5:
+            risk += 25; risk_factors.append(f"🔴 {len(losing)}/{n_pos} פוזיציות בהפסד")
+        elif losing:
+            risk += 10; risk_factors.append(f"🟡 {len(losing)}/{n_pos} פוזיציות בהפסד")
+        else:
+            risk_factors.append(f"🟢 כל הפוזיציות ברווח")
+
+        # Deep losers risk
+        deep_losers = [p for p in positions if p.get("pct", 0) < -3]
+        if deep_losers:
+            risk += 20; risk_factors.append(f"🔴 {len(deep_losers)} פוזיציות בהפסד עמוק (>3%)")
+
+        # Concentration: largest position
+        if positions:
+            largest = max(positions, key=lambda p: (p.get("entry", 0) * p.get("qty", 0)))
+            largest_val = largest.get("entry", 0) * largest.get("qty", 0)
+            concentration_pct = (largest_val / equity * 100) if equity else 0
+            if concentration_pct > 30:
+                risk += 20; risk_factors.append(f"🔴 ריכוז גבוה: {largest['ticker']} = {concentration_pct:.0f}% מהתיק")
+            elif concentration_pct > 20:
+                risk += 10; risk_factors.append(f"🟡 ריכוז בינוני: {largest['ticker']} = {concentration_pct:.0f}%")
+
+        # VIX risk
+        vix = context.get("vix", 0)
+        if vix and vix > 25:
+            risk += 15; risk_factors.append(f"🔴 VIX גבוה ({vix:.0f}) — שוק תנודתי")
+        elif vix and vix > 18:
+            risk += 5; risk_factors.append(f"🟡 VIX בינוני ({vix:.0f})")
+
+        risk = min(100, risk)
+
+        # Verdict
+        if risk < 25:
+            verdict = "🟢 <b>נמוך</b> — התיק יציב"
+        elif risk < 50:
+            verdict = "🟡 <b>בינוני</b> — לעקוב"
+        elif risk < 75:
+            verdict = "🟠 <b>גבוה</b> — שקול הקטנת חשיפה"
+        else:
+            verdict = "🔴 <b>גבוה מאוד</b> — מומלץ למכור חלק"
+
+        bar = "🟥" * (risk // 10) + "⬜" * (10 - risk // 10)
+        lines = [
+            f"⚠️ <b>ניקוד סיכון תיק</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"📊 ציון: <b>{risk}/100</b>",
+            f"{bar}",
+            f"{verdict}",
+            f"━━━━━━━━━━━━━━━━",
+            f"<b>גורמי סיכון:</b>",
+        ]
+        for r in risk_factors:
+            lines.append(f"   {r}")
+        return "\n".join(lines)
+
+    # /why TICKER — explain why bot bought/didn't buy this stock
+    if cmd in ("/why", "why", "למה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /why AAPL"
+        try:
+            from scoring import get_composite_score as _gcs_w
+            from sentiment import score_sentiment as _ss_w
+            from buffett_analysis import get_buffett_analysis as _ba_w
+
+            sent = _ss_w(_ticker)
+            sc = _gcs_w(_ticker, sent.score)
+            tech = sc.get("composite_score", 0)
+            should_buy = sc.get("should_buy", False)
+            min_score = sc.get("min_score", 60)
+
+            ba = _ba_w(_ticker)
+            buf = ba.get("score", 0)
+            verdict = ba.get("verdict_he", "")
+
+            # Reasons
+            reasons_buy = []
+            reasons_skip = []
+            if tech >= min_score:
+                reasons_buy.append(f"✅ ציון טכני גבוה ({tech:.0f}/{min_score})")
+            else:
+                reasons_skip.append(f"❌ ציון טכני נמוך ({tech:.0f}<{min_score})")
+            if buf >= 50:
+                reasons_buy.append(f"✅ איכות באפט טובה ({buf:.0f}/100)")
+            else:
+                reasons_skip.append(f"❌ איכות באפט נמוכה ({buf:.0f}<50)")
+            if sent.score >= 5:
+                reasons_buy.append(f"✅ סנטימנט חיובי ({sent.score}/10)")
+            else:
+                reasons_skip.append(f"❌ סנטימנט שלילי ({sent.score}<5)")
+
+            # Earnings check
+            try:
+                from earnings import check_earnings_risk
+                risky, _, days = check_earnings_risk(_ticker)
+                if risky and days is not None:
+                    reasons_skip.append(f"⚠️ דוח רווחים בעוד {days} ימים")
+            except Exception:
+                pass
+
+            decision = "✅ <b>הבוט היה קונה</b>" if (should_buy and buf >= 50) else "❌ <b>הבוט לא היה קונה</b>"
+            lines = [
+                f"🤔 <b>למה {_ticker}?</b>",
+                f"━━━━━━━━━━━━━━━━",
+                f"{verdict}",
+                f"",
+                decision,
+                f"━━━━━━━━━━━━━━━━",
+            ]
+            if reasons_buy:
+                lines.append("<b>סיבות חיוביות:</b>")
+                for r in reasons_buy:
+                    lines.append(f"   {r}")
+            if reasons_skip:
+                lines.append("<b>סיבות שליליות:</b>")
+                for r in reasons_skip:
+                    lines.append(f"   {r}")
+            lines.append("━━━━━━━━━━━━━━━━")
+            lines.append(f"📋 פרטים נוספים: /buffett {_ticker}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/why] Error: {e}")
+            return f"❌ שגיאה בניתוח {_ticker}"
+
     # /cheap TICKER — is this stock cheap vs 52-week range?
     if cmd in ("/cheap", "cheap", "זול", "זולה") and len(t.split()) > 1:
         _ticker = _safe_ticker(t.split()[1])
