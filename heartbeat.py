@@ -707,8 +707,9 @@ async def stop_loss_monitor():
                     #   Stage 1 — sell 50% at 50% of ATR TP
                     #   Stage 2 — sell 25% (of original) at 80% of ATR TP
                     #   Stage 3 — sell remaining 25% at full ATR TP
-                    _stage1_pct = max(2.0, _atr_tp_pct * 0.5)   # 50% of full TP
-                    _stage2_pct = max(2.5, _atr_tp_pct * 0.8)   # 80% of full TP
+                    # OPTIMIZED FOR PROFIT: lock in early gains before reversal
+                    _stage1_pct = max(2.0, _atr_tp_pct * 0.25)  # 25% of full TP (≈3.75%)
+                    _stage2_pct = max(4.0, _atr_tp_pct * 0.6)   # 60% of full TP (≈9%)
                     # Stage 1 is considered done when the high_watermark already reached
                     # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
@@ -1002,12 +1003,13 @@ async def auto_invest_loop():
                 _et_min   = _et_now.minute
                 _minutes_since_open  = (_et_hour - 9) * 60 + _et_min - 30   # since 9:30 ET
                 _minutes_before_close = (16 * 60) - (_et_hour * 60 + _et_min)  # to 4:00 ET
-                if _minutes_since_open < 30:
-                    logger.info(f"AUTO-INVEST: First 30 min ({_et_hour:02d}:{_et_min:02d} ET) — skipping (wide spreads)")
+                # OPTIMIZED: block only first 15 min (volatile spread) + last 15 min (EOD)
+                if _minutes_since_open < 15:
+                    logger.info(f"AUTO-INVEST: First 15 min ({_et_hour:02d}:{_et_min:02d} ET) — skipping (wide spreads)")
                     await asyncio.sleep(5 * 60)
                     continue
-                if _minutes_before_close < 30:
-                    logger.info(f"AUTO-INVEST: Last 30 min before close — skipping (EOD volatility)")
+                if _minutes_before_close < 15:
+                    logger.info(f"AUTO-INVEST: Last 15 min before close — skipping (EOD volatility)")
                     await asyncio.sleep(5 * 60)
                     continue
             except Exception:
@@ -1245,8 +1247,8 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             continue
 
-                        # ── Intraday momentum filter: skip if stock is down on the day ──
-                        # Buying into weakness has poor win rate. Only buy upward momentum.
+                        # ── Intraday momentum filter — relaxed (allow flat/mild dip) ──
+                        # Buying into FALLING knife has poor WR, but flat/mild dip is OK
                         try:
                             _intra = await _asyncio.wait_for(
                                 _asyncio.to_thread(broker.get_price, ticker), timeout=10
@@ -1256,8 +1258,8 @@ async def auto_invest_loop():
                                 _prev_close = _intra_ind.get("prev_close") or _intra_ind.get("close")
                                 if _prev_close and _prev_close > 0:
                                     _day_chg = (_intra - _prev_close) / _prev_close * 100
-                                    if _day_chg < -0.5:
-                                        logger.info(f"AUTO-INVEST: {ticker} down {_day_chg:.1f}% today — skip (no momentum)")
+                                    if _day_chg < -1.5:    # was -0.5, now -1.5 (more permissive)
+                                        logger.info(f"AUTO-INVEST: {ticker} down {_day_chg:.1f}% today — skip (knife falling)")
                                         continue
                         except Exception:
                             pass  # fail-open — don't block on price fetch error

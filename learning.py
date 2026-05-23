@@ -14,7 +14,7 @@ _dynamic_thresholds = {
     "max_rsi": 72,            # avoid overbought — enters at peak are poor quality
     "min_rsi": 35,            # avoid deeply oversold crashes (knife-catching)
     "max_bb_position": 0.90,  # avoid very top of Bollinger band
-    "min_volume_ratio": 1.0,  # require average+ volume — weak volume = weak conviction
+    "min_volume_ratio": 0.8,  # OPTIMIZED: 1.0 was too strict (blocking quality trades)
 }
 
 
