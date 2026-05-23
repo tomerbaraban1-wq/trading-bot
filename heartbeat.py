@@ -754,9 +754,9 @@ async def stop_loss_monitor():
                     #   Stage 1 — sell 50% at 50% of ATR TP
                     #   Stage 2 — sell 25% (of original) at 80% of ATR TP
                     #   Stage 3 — sell remaining 25% at full ATR TP
-                    # PROFIT-FIRST MODE: lock in gains very early
-                    _stage1_pct = max(1.5, _atr_tp_pct * 0.20)  # 20% of full TP (≈2%-3%)
-                    _stage2_pct = max(3.5, _atr_tp_pct * 0.50)  # 50% of full TP (≈6%)
+                    # MAX WIN-RATE MODE: lock in at +1.5%, second lock at +4%
+                    _stage1_pct = max(1.5, _atr_tp_pct * 0.15)  # 15% of full TP (≈1.5-2%)
+                    _stage2_pct = max(3.0, _atr_tp_pct * 0.35)  # 35% of full TP (≈4-5%)
                     # Stage 1 is considered done when the high_watermark already reached
                     # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
@@ -769,17 +769,17 @@ async def stop_loss_monitor():
                     _s1_guard_key = f"{trade['id']}:s1"
                     _s2_guard_key = f"{trade['id']}:s2"
                     if not _stage1_done and plpc >= _stage1_pct and _s1_guard_key not in _partial_sell_done:
-                        # Stage 1: sell 33% (not 50%) — let winners run longer
+                        # MAX-WIN MODE: Stage 1 sells 50% — lock in profit aggressively
                         _orig_qty = trade["qty"]
-                        _half_qty = round(_orig_qty * 0.33, 6)
+                        _half_qty = round(_orig_qty * 0.5, 6)
                         if _half_qty > 0:
                             _create_background_task(send_message(
-                                f"💰 <b>נועל רווח קטן — {ticker}</b>\n"
+                                f"💰 <b>נעלתי רווח — {ticker}</b>\n"
                                 f"━━━━━━━━━━━━━━━━\n"
-                                f"🎯 רווח נוכחי: {plpc:+.1f}%\n"
-                                f"💵 מחיר עכשיו: ${cur_price:.2f}\n"
-                                f"🔢 מוכר עכשיו: {_half_qty} מניות (שליש מהפוזיציה)\n"
-                                f"📌 שני שלישים נשארים לרווח גדול יותר"
+                                f"🎯 רווח: {plpc:+.1f}%\n"
+                                f"💵 מחיר: ${cur_price:.2f}\n"
+                                f"🔢 מכרתי: {_half_qty} מניות (50% מהפוזיציה)\n"
+                                f"📌 חצי שני נשאר — הסטופ עולה לכניסה (אפס סיכון)"
                             ))
                             try:
                                 _half_order = await asyncio.wait_for(
@@ -801,10 +801,11 @@ async def stop_loss_monitor():
                                 except Exception:
                                     pass
                                 record_trade_result(_half_pnl)   # update circuit breaker
-                                # Mark Stage 1 done — watermark set high enough to survive ATR changes on restart
-                                # Use max(stage1_pct+margin, 10%) so even if ATR rises after restart,
-                                # the watermark still clears the new stage1_done threshold
-                                _s1_wm_pct   = max(_stage1_pct + 3.0, 10.0)   # at least 10% above entry
+                                # MAX-WIN MODE: After Stage 1, move stop AGGRESSIVELY to LOCK IN PROFIT
+                                # Stop goes to entry+0.5% — second half can ONLY win (not lose)
+                                _stop_at_winning = round(trade["entry_price"] * 1.005, 4)  # +0.5% above entry
+                                atr_stop = max(atr_stop, _stop_at_winning)   # always raise, never lower
+                                _s1_wm_pct   = max(_stage1_pct + 3.0, 10.0)
                                 _s1_wm_mark  = round(trade["entry_price"] * (1 + _s1_wm_pct / 100), 4)
                                 _s1_wm_final = max(cur_price, _s1_wm_mark)
                                 try:
@@ -1073,8 +1074,9 @@ async def auto_invest_loop():
                     await asyncio.sleep(5 * 60)
                     continue
                 _vix = _mkt.get("vix")
-                if _vix and _vix > 30:
-                    logger.info(f"AUTO-INVEST: VIX={_vix:.1f} extreme fear — skipping buys")
+                # MAX-WIN MODE: was 30 (extreme fear), now 22 (mild fear) — only calm markets
+                if _vix and _vix > 22:
+                    logger.info(f"AUTO-INVEST: VIX={_vix:.1f} too high for max-win mode (max 22) — skipping buys")
                     await asyncio.sleep(5 * 60)
                     continue
             except asyncio.TimeoutError:
@@ -1294,8 +1296,8 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             continue
 
-                        # ── Buffett Quality Filter — avoid junk + boost quality ──
-                        # מסנן מניות באיכות נמוכה ושומר score לתיעדוף אחר כך
+                        # ── Buffett Quality Filter — MAX-WIN MODE: only quality companies ──
+                        # קונה רק חברות עם Buffett >= 50 (איכות בינונית+)
                         _buffett_score = None
                         try:
                             from buffett_analysis import get_buffett_analysis as _bff
@@ -1303,11 +1305,17 @@ async def auto_invest_loop():
                                 _asyncio.to_thread(_bff, ticker), timeout=15
                             )
                             _buffett_score = _buf.get("score", 50)
-                            if _buffett_score < 30:
-                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} too low — skip (junk quality)")
+                            # STRICTER: was 30, now 50 — require above-average quality
+                            if _buffett_score < 50:
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar (50) — skip")
                                 continue
                         except Exception:
                             _buffett_score = 50   # neutral if Buffett analysis fails
+
+                        # ── Technical Score Floor — MAX-WIN MODE: require very strong score ──
+                        if score < 60:
+                            logger.info(f"AUTO-INVEST: {ticker} score={score:.0f} below max-win threshold (60) — skip")
+                            continue
 
                         # ── Intraday momentum filter — relaxed (allow flat/mild dip) ──
                         # Buying into FALLING knife has poor WR, but flat/mild dip is OK
