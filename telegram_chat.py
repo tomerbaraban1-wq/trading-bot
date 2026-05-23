@@ -748,6 +748,38 @@ def _handle_command(text: str, context: dict) -> str | None:
             "<i>💬 אפשר גם לשאול בעברית חופשית!</i>"
         )
 
+    # /count — quick trade statistics summary
+    if cmd in ("/count", "count", "כמה עסקאות", "ספור", "ספירה"):
+        tc = context.get("trade_counts", {}) or {}
+        total   = tc.get("total", 0)
+        open_   = tc.get("open", 0)
+        closed  = tc.get("closed", 0)
+        wins    = tc.get("wins", 0)
+        losses  = tc.get("losses", 0)
+        today   = tc.get("today", 0)
+        wr      = (wins / closed * 100) if closed else 0
+        # Get realized PnL
+        realized = context.get("realized_pnl_net", 0)
+        realized_str = _fmt_pnl(realized) if realized else "—"
+        wr_icon = "🟢" if wr >= 55 else ("🟡" if wr >= 45 else "🔴") if closed else "⚪"
+
+        lines = [
+            f"🔢 <b>סיכום עסקאות</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"📊 סה\"כ עסקאות שעשיתי: <b>{total}</b>",
+            f"📂 פתוחות עכשיו:        {open_}",
+            f"✔️ סגורות:                {closed}",
+            f"━━━━━━━━━━━━━━━━",
+            f"✅ ברווח:                <b>{wins}</b>",
+            f"❌ בהפסד:                 <b>{losses}</b>",
+            f"{wr_icon} אחוז הצלחה:       <b>{wr:.0f}%</b>" + (" — " + ("מעולה" if wr >= 55 else "בסדר" if wr >= 45 else "צריך לשפר") if closed else " (אין נתונים עדיין)"),
+            f"━━━━━━━━━━━━━━━━",
+            f"💰 רווח ממומש כולל:    {realized_str}",
+        ]
+        if today:
+            lines.append(f"📅 נפתחו היום: <b>{today}</b>")
+        return "\n".join(lines)
+
     if cmd == "/status":
         positions = context.get("open_positions", [])
         cash      = context.get("cash", 0)
@@ -3610,6 +3642,7 @@ async def handle_telegram_update(update: dict) -> dict:
         "💰 רווח/הפסד":      "/pnl",
         "📊 מצב התיק":       "/status",
         "📈 מניות שלי":      "/manioth",
+        "🔢 כמה עסקאות":     "/count",
         "🌍 מצב השוק":       "/market",
         "🏆 מובילים היום":   "/gainers",
         "📰 חדשות":          "/newscheck",

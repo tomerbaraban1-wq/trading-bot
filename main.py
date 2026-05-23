@@ -117,6 +117,7 @@ async def lifespan(app: FastAPI):
                     {"command": "shovi",     "description": "💼 מה שווי התיק"},
                     {"command": "mazon",     "description": "💵 כמה מזומן יש לי"},
                     {"command": "biztsuim",  "description": "🏆 ביצועים ואחוז הצלחה"},
+                    {"command": "count",     "description": "🔢 כמה עסקאות (סך כל הזמן)"},
                     {"command": "market",    "description": "🌍 מצב השוק (SPY/QQQ/DIA)"},
                     {"command": "trending",   "description": "🔥 מניות בתנופה חזקה"},
                     {"command": "gainers",   "description": "🚀 מניות מובילות היום"},
