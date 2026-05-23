@@ -1777,13 +1777,42 @@ async def morning_briefing_loop():
             _open_time  = "16:30" if _is_edt else "15:30"
             _close_time = "23:00" if _is_edt else "22:00"
 
+            # ── Top 5 Buffett picks for the day ──────────────────────────
+            picks_text = ""
+            try:
+                from scanner import get_watchlist as _gwl_p
+                from buffett_analysis import get_buffett_analysis as _ba_p
+                _tickers_p = _gwl_p()[:15]
+                _picks = []
+                for _tk in _tickers_p:
+                    try:
+                        _r = await asyncio.wait_for(
+                            asyncio.to_thread(_ba_p, _tk),
+                            timeout=12,
+                        )
+                        if _r.get("score", 0) >= 65:
+                            _picks.append((_tk, _r.get("score", 0), _r.get("moat", "?")))
+                    except Exception:
+                        continue
+                if _picks:
+                    _picks.sort(key=lambda x: x[1], reverse=True)
+                    _top5 = _picks[:5]
+                    _picks_lines = []
+                    for _tk, _s, _m in _top5:
+                        _icon = {"strong": "💪", "medium": "🛡️", "weak": "⚠️"}.get(_m, "?")
+                        _picks_lines.append(f"   {_icon} <b>{_tk}</b> — איכות {_s:.0f}/100")
+                    picks_text = "\n🎯 <b>Top 5 איכותיות להיום (Buffett):</b>\n" + "\n".join(_picks_lines)
+            except Exception:
+                pass
+
             await send_message(
                 f"☀️ <b>בוקר טוב! שוק נפתח בעוד 30 דקות</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🕐  שעה: {_il_time} ישראל  |  פתיחה: {_open_time}  סגירה: {_close_time}\n"
                 + (f"{market_line}\n" if market_line else "")
                 + (f"\n📂 <b>פוזיציות פתוחות:</b>{open_pos_text}\n" if open_pos_text else "")
-                + f"\n📰 <b>חדשות בולטות:</b>\n{news_text}"
+                + picks_text
+                + f"\n\n📰 <b>חדשות בולטות:</b>\n{news_text}"
             )
             _briefing_sent_date = today_str
             logger.info("Morning briefing sent")
@@ -1920,6 +1949,200 @@ async def earnings_monitor_loop():
             logger.error(f"earnings_monitor_loop error: {e}")
 
         await asyncio.sleep(30 * 60)  # check every 30 min
+
+
+async def self_improvement_loop():
+    """
+    תיקון עצמי — הבוט מזהה דפוסים של כישלון ומתאים את ההגדרות.
+
+    אם 5 הפסדים רצופים → מעלה MIN_BUY_SCORE זמנית ב-5 נקודות (זהיר יותר)
+    אם 5 ניצחונות רצופים → מוריד MIN_BUY_SCORE ב-2 נקודות (יותר אגרסיבי)
+    אם הפסד יומי >3% → מקפיא קניות ל-24 שעות
+
+    רץ כל שעה.
+    """
+    await asyncio.sleep(30 * 60)
+    import os as _os_si
+
+    while True:
+        try:
+            # Get recent closed trades
+            history = await asyncio.to_thread(database.get_trade_history, limit=10)
+            closed = [t for t in history if t.get("status") in (
+                "closed","stop_loss","take_profit","smart_sell","momentum_exit",
+                "news_exit","earnings_miss","time_exit"
+            )]
+            if len(closed) < 5:
+                await asyncio.sleep(60 * 60)
+                continue
+
+            # Last 5 trades win/loss
+            last_5 = closed[:5]
+            last_5_wins = sum(1 for t in last_5 if (t.get("pnl_gross") or 0) > 0)
+            last_5_losses = sum(1 for t in last_5 if (t.get("pnl_gross") or 0) <= 0)
+
+            current_min = int(_os_si.getenv("MIN_BUY_SCORE", "60"))
+
+            # ── Pattern 1: 5 losses in a row → tighten ─────────────────────
+            if last_5_losses == 5 and current_min < 70:
+                new_min = min(70, current_min + 5)
+                _os_si.environ["MIN_BUY_SCORE"] = str(new_min)
+                logger.warning(f"[SELF-IMPROVE] 5 losses in a row → tightening MIN_BUY_SCORE: {current_min} → {new_min}")
+                _create_background_task(send_message(
+                    f"🛡️ <b>מצב הגנה אוטומטי</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💡 הבוט זיהה 5 הפסדים רצופים\n"
+                    f"⬆️ סף ציון: {current_min} → <b>{new_min}</b>\n"
+                    f"📌 קונה רק מניות איכותיות יותר עד שהוא חוזר לטופ"
+                ))
+
+            # ── Pattern 2: 5 wins in a row → loosen ────────────────────────
+            elif last_5_wins == 5 and current_min > 55:
+                new_min = max(55, current_min - 2)
+                _os_si.environ["MIN_BUY_SCORE"] = str(new_min)
+                logger.info(f"[SELF-IMPROVE] 5 wins in a row → loosening MIN_BUY_SCORE: {current_min} → {new_min}")
+                _create_background_task(send_message(
+                    f"📈 <b>הבוט בכושר טוב</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"🔥 5 ניצחונות רצופים!\n"
+                    f"⬇️ סף ציון: {current_min} → <b>{new_min}</b>\n"
+                    f"💡 הבוט יקנה גם הזדמנויות סולידיות, לא רק מצוינות"
+                ))
+
+            # ── Pattern 3: daily loss > 3% → pause ─────────────────────────
+            today_pnl = sum(
+                (t.get("pnl_gross") or 0)
+                for t in closed[:10]
+                if t.get("exit_time", "")[:10] == __import__('datetime').date.today().isoformat()
+            )
+            budget = float(_os_si.getenv("MAX_BUDGET", "10000"))
+            daily_loss_pct = abs(today_pnl) / budget * 100 if today_pnl < 0 else 0
+            if daily_loss_pct > 3 and not _os_si.getenv("BOT_PAUSED"):
+                _os_si.environ["BOT_PAUSED"] = "true"
+                logger.warning(f"[SELF-IMPROVE] Daily loss {daily_loss_pct:.1f}% > 3% → PAUSING bot for 24h")
+                _create_background_task(send_message(
+                    f"⏸️ <b>הפסקה אוטומטית</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"⚠️ הפסד יומי: {daily_loss_pct:.1f}% (יותר מ-3%)\n"
+                    f"💤 הבוט עוצר קניות ל-24 שעות להתאוששות\n"
+                    f"📌 שלח /resume כדי להפעיל מחדש מוקדם"
+                ))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"self_improvement_loop error: {e}")
+
+        await asyncio.sleep(60 * 60)   # check every hour
+
+
+async def daily_ai_insights_loop():
+    """
+    סיכום AI יומי — שולח כל יום ב-23:30 (סגירת שוק) ניתוח של:
+    - מה קרה היום בעסקאות
+    - מה למד הבוט (אילו דפוסים עבדו / נכשלו)
+    - הצעות לשיפור למחר
+
+    מצריך Groq API key — אם לא קיים, שולח גרסה פשוטה.
+    """
+    import datetime as _dt_ai
+    _utc = _dt_ai.timezone.utc
+    _last_sent_date = None
+
+    while True:
+        try:
+            now = _dt_ai.datetime.now(_utc)
+            # Target: 21:00 UTC ≈ 24:00 שעון ישראל (5pm ET, after market close)
+            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += _dt_ai.timedelta(days=1)
+
+            # Wait until target time
+            while _dt_ai.datetime.now(_utc) < target:
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    raise
+
+            today_str = _dt_ai.datetime.now(_utc).date().isoformat()
+            if _last_sent_date == today_str:
+                await asyncio.sleep(3600)
+                continue
+
+            # Skip weekends
+            if _dt_ai.datetime.now(_utc).weekday() >= 5:
+                await asyncio.sleep(3600)
+                continue
+
+            # ── Gather today's stats ──────────────────────────────────────
+            tc = await asyncio.to_thread(database.get_total_trades_count)
+            today_trades = tc.get("today", 0)
+            wins = tc.get("wins", 0)
+            losses = tc.get("losses", 0)
+            wr = (wins / (wins + losses) * 100) if (wins + losses) else 0
+
+            # Get today's closed trades for analysis
+            history = await asyncio.to_thread(database.get_trade_history, limit=20)
+            today_closed = [
+                t for t in history
+                if t.get("exit_time") and str(t.get("exit_time", ""))[:10] == today_str
+            ]
+            today_pnl = sum(t.get("pnl_gross", 0) or 0 for t in today_closed)
+
+            # ── Build AI insights using Groq ───────────────────────────────
+            insights = ""
+            try:
+                from openai import OpenAI as _OAI_AI
+                _cli = _OAI_AI(api_key=settings.GROQ_API_KEY,
+                               base_url="https://api.groq.com/openai/v1")
+                _prompt = (
+                    f"אתה אנליסט מסחר ברמת באפט. סקור את היום:\n"
+                    f"- עסקאות שנפתחו היום: {today_trades}\n"
+                    f"- סה\"כ עסקאות בהיסטוריה: {tc.get('total', 0)}\n"
+                    f"- ניצחונות: {wins} | הפסדים: {losses} (WR={wr:.0f}%)\n"
+                    f"- רווח היום: ${today_pnl:+.2f}\n\n"
+                    f"כתוב בעברית 3 שורות:\n"
+                    f"1. מה היה היום (תמצית קצרה)\n"
+                    f"2. מה הבוט למד (דפוס שעבד/נכשל)\n"
+                    f"3. הצעה לשיפור למחר\n"
+                    f"קצר וממוקד. ללא כותרות."
+                )
+                resp = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: _cli.chat.completions.create(
+                        model=settings.LLM_MODEL,
+                        messages=[{"role": "user", "content": _prompt}],
+                        max_tokens=300, temperature=0.5,
+                    )),
+                    timeout=25,
+                )
+                insights = resp.choices[0].message.content.strip()
+            except Exception as _e:
+                logger.debug(f"[AI INSIGHTS] LLM failed: {_e}")
+                insights = (
+                    f"היום נסחרו {today_trades} עסקאות. "
+                    + (f"רווח: ${today_pnl:+.2f}." if today_pnl else "תוצאה ניטרלית.")
+                    + " הבוט ממשיך ללמוד ולהשתפר."
+                )
+
+            await send_message(
+                f"🤖 <b>סיכום AI יומי</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 עסקאות היום: {today_trades}\n"
+                f"💰 רווח/הפסד יומי: ${today_pnl:+.2f}\n"
+                f"🎯 אחוז הצלחה כולל: {wr:.0f}% ({wins} נצח / {losses} הפסד)\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"<b>תובנות AI:</b>\n{insights}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"😴 מחר תהיה יום חדש — לילה טוב!"
+            )
+            _last_sent_date = today_str
+            logger.info(f"Daily AI insights sent: trades={today_trades} pnl=${today_pnl:.2f}")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"daily_ai_insights error: {e}")
+            await asyncio.sleep(3600)
 
 
 async def weekend_research_loop():
