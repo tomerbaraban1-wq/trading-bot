@@ -808,6 +808,96 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"📅 נפתחו היום: <b>{today}</b>")
         return "\n".join(lines)
 
+    # /cheap TICKER — is this stock cheap vs 52-week range?
+    if cmd in ("/cheap", "cheap", "זול", "זולה") and len(t.split()) > 1:
+        _ticker = _safe_ticker(t.split()[1])
+        if not _ticker:
+            return "❌ טיקר לא חוקי — דוגמה: /cheap AAPL"
+        try:
+            import yfinance as _yf_c
+            info = _yf_c.Ticker(_ticker).info
+            cur = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+            low_52 = float(info.get("fiftyTwoWeekLow") or 0)
+            high_52 = float(info.get("fiftyTwoWeekHigh") or 0)
+            if not (cur and low_52 and high_52 and high_52 > low_52):
+                return f"❌ אין נתוני 52w עבור {_ticker}"
+            # Position in 52w range (0 = at low, 100 = at high)
+            position = (cur - low_52) / (high_52 - low_52) * 100
+            from_high = (cur - high_52) / high_52 * 100
+            from_low  = (cur - low_52) / low_52 * 100
+
+            if position < 20:
+                verdict = "🟢 מאוד זולה! קרוב לנקודה הנמוכה של השנה"
+            elif position < 35:
+                verdict = "🟡 זולה יחסית"
+            elif position < 65:
+                verdict = "⚪ בטווח אמצעי"
+            elif position < 85:
+                verdict = "🟠 קרוב לשיא — יקרה"
+            else:
+                verdict = "🔴 בשיא או קרוב מאוד — יקרה מאוד"
+
+            bar_filled = int(position / 10)
+            bar = "🟩" * bar_filled + "⬜" * (10 - bar_filled)
+            return (
+                f"📏 <b>ניתוח 52 שבועות — {_ticker}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💵 מחיר נוכחי: <b>${cur:.2f}</b>\n"
+                f"📉 שפל שנתי: ${low_52:.2f} ({from_low:+.1f}%)\n"
+                f"📈 שיא שנתי: ${high_52:.2f} ({from_high:+.1f}%)\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📊 מיקום: <b>{position:.0f}%</b> בטווח\n"
+                f"{bar}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💡 {verdict}"
+            )
+        except Exception as e:
+            logger.error(f"[/cheap] Error: {e}")
+            return f"❌ שגיאה בניתוח {_ticker}"
+
+    # /best — Top 3 best opportunities right now (combines technical + Buffett)
+    if cmd in ("/best", "best", "הכי טוב", "הזדמנויות", "מה הכי טוב", "הטובים"):
+        try:
+            from scanner import get_watchlist as _gwl_b
+            from buffett_analysis import get_buffett_analysis as _ba_b
+            from scoring import get_composite_score as _gcs_b
+            from sentiment import score_sentiment as _ss_b
+            tickers = _gwl_b()[:12]   # check top 12 from watchlist
+            scored = []
+            for tk in tickers:
+                try:
+                    sent = _ss_b(tk)
+                    sc = _gcs_b(tk, sent.score)
+                    tech = sc.get("composite_score", 0)
+                    ba = _ba_b(tk)
+                    buf = ba.get("score", 0)
+                    combined = tech * 0.6 + buf * 0.4
+                    scored.append((tk, tech, buf, combined, ba.get("moat", "?")))
+                except Exception:
+                    continue
+            if not scored:
+                return "😴 לא הצלחתי לחשב הזדמנויות כרגע — נסה שוב מאוחר יותר"
+            scored.sort(key=lambda x: x[3], reverse=True)
+            top3 = scored[:3]
+            lines = [
+                "🏆 <b>3 הזדמנויות הטובות עכשיו</b>",
+                "━━━━━━━━━━━━━━━━",
+            ]
+            for i, (tk, tech, buf, comb, moat) in enumerate(top3, 1):
+                moat_icon = {"strong": "💪", "medium": "🛡️", "weak": "⚠️"}.get(moat, "?")
+                lines.append(
+                    f"{i}. {moat_icon} <b>{tk}</b>\n"
+                    f"   ⭐ ציון משולב: <b>{comb:.0f}/100</b>\n"
+                    f"   🔧 טכני: {tech:.0f}  |  🎩 באפט: {buf:.0f}\n"
+                    f"   📋 לפרטים: /buffett {tk}"
+                )
+            lines.append("━━━━━━━━━━━━━━━━")
+            lines.append("💡 משוקלל: 60% טכני + 40% איכות")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/best] Error: {e}")
+            return "❌ שגיאה בחישוב — נסה שוב"
+
     # /activity_now — מה הבוט עושה ברגע זה
     if cmd in ("/activity_now", "/now", "מה אתה עושה", "מה הבוט עושה", "מה אתה עושה עכשיו"):
         try:

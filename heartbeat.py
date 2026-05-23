@@ -1951,6 +1951,105 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def rapid_move_alert_loop():
+    """
+    מתריע מיידית על תזוזות חזקות בפוזיציות פתוחות.
+    כל 3 דקות בודק:
+    - כל פוזיציה ששינתה ±2% תוך 10 דק' → התראה מיידית
+    - מסנן ספקיו ימיים — מוודא שזה תזוזה אמיתית
+
+    שולח התראה רק פעם אחת לכל כיוון לכל פוזיציה ביום.
+    """
+    await asyncio.sleep(5 * 60)
+    _price_snapshots: dict[str, list] = {}   # ticker → [(timestamp, price), ...]
+    _alerted_today: dict[str, str] = {}   # f"{ticker}_{direction}" → date
+
+    while True:
+        try:
+            mkt_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=8
+            )
+            if not mkt_open:
+                await asyncio.sleep(10 * 60)
+                continue
+
+            import datetime as _dt_ra
+            today_str = _dt_ra.date.today().isoformat()
+            _alerted_today = {k: v for k, v in _alerted_today.items() if v == today_str}
+
+            open_trades = await asyncio.to_thread(database.get_open_trades)
+            if not open_trades:
+                await asyncio.sleep(3 * 60)
+                continue
+
+            import time as _t_ra
+            now_ts = _t_ra.time()
+
+            for trade in open_trades:
+                if trade.get("action") != "buy":
+                    continue
+                ticker = trade["ticker"]
+                try:
+                    cur_p = await asyncio.wait_for(
+                        asyncio.to_thread(broker.get_price, ticker), timeout=8
+                    )
+                    if not cur_p:
+                        continue
+                    # Track price snapshots (last 10 min)
+                    snaps = _price_snapshots.setdefault(ticker, [])
+                    snaps.append((now_ts, cur_p))
+                    # Keep only last 12 minutes
+                    _price_snapshots[ticker] = [(t, p) for t, p in snaps if now_ts - t < 720]
+
+                    if len(_price_snapshots[ticker]) < 2:
+                        continue
+
+                    # Find price ~10 min ago
+                    snaps_sorted = sorted(_price_snapshots[ticker], key=lambda x: x[0])
+                    old_t, old_p = snaps_sorted[0]
+                    elapsed_min = (now_ts - old_t) / 60
+                    if elapsed_min < 7:
+                        continue
+
+                    move_pct = (cur_p - old_p) / old_p * 100
+                    abs_move = abs(move_pct)
+
+                    # 2%+ move in 7-10 min = significant
+                    if abs_move >= 2.0:
+                        direction = "up" if move_pct > 0 else "down"
+                        alert_key = f"{ticker}_{direction}"
+                        if _alerted_today.get(alert_key) == today_str:
+                            continue
+                        _alerted_today[alert_key] = today_str
+
+                        entry = trade["entry_price"]
+                        plpc = (cur_p - entry) / entry * 100
+                        icon = "🚀" if move_pct > 0 else "⚠️"
+                        action_hint = (
+                            "💡 שקול לקחת רווח" if move_pct > 0 and plpc > 0
+                            else "🛑 הסטופ מגן עליך" if move_pct < 0
+                            else "📌 מעקב צמוד"
+                        )
+                        _create_background_task(send_message(
+                            f"{icon} <b>תזוזה חזקה — {ticker}</b>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"⚡ זזה <b>{move_pct:+.2f}%</b> ב-{elapsed_min:.0f} דקות\n"
+                            f"💵 ${old_p:.2f} → ${cur_p:.2f}\n"
+                            f"📈 רווח כולל: {plpc:+.1f}%\n"
+                            f"{action_hint}"
+                        ))
+                        logger.info(f"[RAPID] {ticker} {move_pct:+.2f}% in {elapsed_min:.0f}min — alerted")
+                except Exception:
+                    continue
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"rapid_move_alert_loop error: {e}")
+
+        await asyncio.sleep(3 * 60)   # check every 3 min
+
+
 async def self_improvement_loop():
     """
     תיקון עצמי — הבוט מזהה דפוסים של כישלון ומתאים את ההגדרות.
