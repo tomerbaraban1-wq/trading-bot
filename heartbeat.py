@@ -1994,6 +1994,88 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def drawdown_protection_loop():
+    """
+    הגנת drawdown — מנטר ירידת תיק מהמקסימום ההיסטורי.
+    אם התיק יורד 10%+ מהשיא ההיסטורי → עוצר קניות חדשות עד שיש התאוששות 3%.
+
+    שונה מ-circuit_breaker היומי: זה drawdown מצטבר (יכול להיות לאורך ימים).
+    """
+    await asyncio.sleep(20 * 60)
+    _peak_equity: float | None = None
+    _paused_for_drawdown = False
+
+    while True:
+        try:
+            # Get current equity
+            try:
+                from budget import get_budget_status as _gbs
+                status = await asyncio.wait_for(
+                    asyncio.to_thread(_gbs), timeout=15
+                )
+                current_equity = float(status.get("equity", 0) or 0)
+            except Exception:
+                await asyncio.sleep(30 * 60)
+                continue
+
+            if current_equity <= 0:
+                await asyncio.sleep(30 * 60)
+                continue
+
+            # Track peak
+            if _peak_equity is None or current_equity > _peak_equity:
+                _peak_equity = current_equity
+                # Reset drawdown pause if we recovered
+                if _paused_for_drawdown and current_equity >= _peak_equity * 0.97:
+                    import os as _os_dd
+                    _os_dd.environ.pop("BOT_PAUSED", None)
+                    _paused_for_drawdown = False
+                    _create_background_task(send_message(
+                        f"📈 <b>התאוששות!</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"💼 התיק חזר לקרבת השיא — ${current_equity:,.2f}\n"
+                        f"▶️ הבוט חוזר לסחור"
+                    ))
+
+            # Compute drawdown
+            drawdown_pct = ((_peak_equity - current_equity) / _peak_equity * 100) if _peak_equity else 0
+
+            # Trigger pause at 10% drawdown
+            if drawdown_pct >= 10 and not _paused_for_drawdown:
+                import os as _os_dd
+                _os_dd.environ["BOT_PAUSED"] = "true"
+                _paused_for_drawdown = True
+                logger.warning(f"[DRAWDOWN] {drawdown_pct:.1f}% drawdown — pausing bot")
+                _create_background_task(send_message(
+                    f"🛡️ <b>הגנת Drawdown הופעלה</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"📉 התיק ירד {drawdown_pct:.1f}% מהשיא\n"
+                    f"💼 שיא: ${_peak_equity:,.2f} → עכשיו: ${current_equity:,.2f}\n"
+                    f"⏸️ הבוט מפסיק לקנות עד שיהיה recovery"
+                ))
+            # Warning at 5% drawdown
+            elif drawdown_pct >= 5 and not _paused_for_drawdown:
+                _warn_key = f"dd_warn_{int(drawdown_pct)}"
+                if not hasattr(drawdown_protection_loop, "_warned"):
+                    drawdown_protection_loop._warned = set()
+                if _warn_key not in drawdown_protection_loop._warned:
+                    drawdown_protection_loop._warned.add(_warn_key)
+                    _create_background_task(send_message(
+                        f"⚠️ <b>ירידה בתיק</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📉 התיק ירד {drawdown_pct:.1f}% מהשיא\n"
+                        f"💼 שיא: ${_peak_equity:,.2f} → עכשיו: ${current_equity:,.2f}\n"
+                        f"📌 מעקב — ב-10% הבוט יעצור"
+                    ))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"drawdown_protection error: {e}")
+
+        await asyncio.sleep(30 * 60)   # every 30 min
+
+
 async def rapid_move_alert_loop():
     """
     מתריע מיידית על תזוזות חזקות בפוזיציות פתוחות.

@@ -887,6 +887,95 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"   {r}")
         return "\n".join(lines)
 
+    # /new — show new commands added recently
+    if cmd in ("/new", "new", "חדש", "פקודות חדשות"):
+        return (
+            "🆕 <b>פקודות חדשות חכמות</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "🤖 <b>אנליטיקה חכמה:</b>\n"
+            "/best — Top 3 הזדמנויות עכשיו\n"
+            "/buffett AAPL — ניתוח באפט מלא\n"
+            "/why AAPL — למה הבוט קונה/לא?\n"
+            "/cheap AAPL — האם המניה זולה (52w)?\n"
+            "/risk_score — סיכון תיק\n"
+            "/journal — יומן עסקאות\n"
+            "/count — סיכום עסקאות\n"
+            "/activity_now — מה הבוט עושה עכשיו\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "🛡️ <b>הגנות אוטומטיות:</b>\n"
+            "• הגנת Drawdown 10%\n"
+            "• Pre-Earnings (סגירה 2 ימים לפני)\n"
+            "• Progressive Stop (0.5×ATR ב-+15%)\n"
+            "• Break-Even ב-+1%\n"
+            "• Self-improvement (5 הפסדים → זהיר)\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "📱 <b>התראות אקטיביות:</b>\n"
+            "• Profit milestones (+2/5/10/15%)\n"
+            "• Rapid moves (±2% ב-10 דק')\n"
+            "• Golden opportunities\n"
+            "• Earnings (Beat/Miss)\n"
+            "• Re-entry suggestions\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "💡 גם שאלות חופשיות עובדות!\n"
+            "<i>\"מה דעתך על AAPL?\"</i>\n"
+            "<i>\"כמה הרווחתי השבוע?\"</i>"
+        )
+
+    # /journal — recent trade journal with lessons
+    if cmd in ("/journal", "journal", "יומן", "סיכום עסקאות"):
+        try:
+            history = database.get_trade_history(limit=10)
+            closed = [t for t in history if t.get("exit_time")]
+            if not closed:
+                return "📔 <b>יומן עסקאות</b>\n━━━━━━━━━━━━━━━━\n😴 עדיין אין עסקאות סגורות"
+            lines = ["📔 <b>יומן עסקאות אחרונות</b>", "━━━━━━━━━━━━━━━━"]
+            best_pct = -999.0; worst_pct = 999.0
+            best_trade = worst_trade = None
+            total_pnl = 0.0
+            for t in closed[:5]:
+                tk = t.get("ticker")
+                entry = t.get("entry_price", 0)
+                exit_p = t.get("exit_price", 0)
+                if entry and exit_p:
+                    pct = (exit_p - entry) / entry * 100
+                    pnl = t.get("pnl_gross", 0) or 0
+                    total_pnl += pnl
+                    status = t.get("status", "?")
+                    icon = "✅" if pnl > 0 else "❌"
+                    reason_map = {
+                        "take_profit": "יעד רווח", "stop_loss": "סטופ",
+                        "smart_sell": "מכירה חכמה", "news_exit": "חדשות שליליות",
+                        "earnings_miss": "פספוס דוח", "time_exit": "פג זמן",
+                        "momentum_exit": "אובדן מומנטום", "partial_tp": "חלק מהיעד",
+                        "closed": "סגור", "stale_restart": "restart",
+                    }
+                    reason = reason_map.get(status, status)
+                    lines.append(f"{icon} <b>{tk}</b>: {pct:+.2f}% (${pnl:+.2f}) — {reason}")
+                    if pct > best_pct:
+                        best_pct = pct; best_trade = tk
+                    if pct < worst_pct:
+                        worst_pct = pct; worst_trade = tk
+            # Summary
+            lines.append("━━━━━━━━━━━━━━━━")
+            lines.append(f"💰 רווח כולל מ-5 העסקאות: <b>${total_pnl:+.2f}</b>")
+            if best_trade:
+                lines.append(f"🏆 הטובה: <b>{best_trade}</b> ({best_pct:+.1f}%)")
+            if worst_trade and worst_trade != best_trade:
+                lines.append(f"📉 הגרועה: <b>{worst_trade}</b> ({worst_pct:+.1f}%)")
+            # Insights
+            wins = sum(1 for t in closed[:5] if (t.get("pnl_gross") or 0) > 0)
+            wr5 = wins / min(5, len(closed)) * 100
+            if wr5 >= 70:
+                lines.append(f"💡 כושר טוב — {wr5:.0f}% הצלחה ב-5 האחרונות")
+            elif wr5 >= 50:
+                lines.append(f"💡 ביצוע סביר — {wr5:.0f}% הצלחה")
+            else:
+                lines.append(f"💡 צריך לעבוד — רק {wr5:.0f}% הצלחה (הבוט יחמיר קריטריונים)")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/journal] Error: {e}")
+            return "❌ שגיאה בייצור יומן"
+
     # /why TICKER — explain why bot bought/didn't buy this stock
     if cmd in ("/why", "why", "למה") and len(t.split()) > 1:
         _ticker = _safe_ticker(t.split()[1])
