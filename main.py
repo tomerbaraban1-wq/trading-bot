@@ -291,7 +291,8 @@ async def lifespan(app: FastAPI):
                            position_alert_loop, backtest_learning_loop, eod_sweep_loop,
                            price_alert_loop, market_closed_training_loop,
                            telegram_context_warmup_loop, earnings_monitor_loop,
-                           market_pulse_loop, webhook_keeper_loop)
+                           market_pulse_loop, webhook_keeper_loop,
+                           golden_opportunity_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -311,6 +312,7 @@ async def lifespan(app: FastAPI):
     earnings_monitor_task  = asyncio.create_task(earnings_monitor_loop())  # דוחות → פעולה מיידית
     market_pulse_task      = asyncio.create_task(market_pulse_loop())      # פעימת שוק 24/7
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
+    golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
 
     # ── Optional tasks (disabled on free tier to save memory) ────────
     import os as _os
@@ -333,6 +335,7 @@ async def lifespan(app: FastAPI):
         portfolio_update_task, news_refresh_task, news_monitor_task, morning_briefing_task,
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
         earnings_monitor_task, market_pulse_task, webhook_keeper_task,
+        golden_opp_task,
     ] if t is not None]
 
     # Cancel all background tasks

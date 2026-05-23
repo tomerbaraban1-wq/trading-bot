@@ -632,6 +632,33 @@ async def stop_loss_monitor():
                             f"{flash_reason}"
                         )
 
+                    # ── 1b2. Profit Milestone Alerts — celebrate winning positions! ──
+                    # שולח התראה ב-+3%, +5%, +10%, +15% רווח (פעם אחת לכל יעד)
+                    try:
+                        for _milestone, _emoji, _msg in [
+                            (3.0,  "📈", "רווח קטן וכבר נחמד!"),
+                            (5.0,  "🚀", "רווח יפה — לוקח בקרוב חלק ראשון"),
+                            (10.0, "💎", "רווח דו-ספרתי!"),
+                            (15.0, "🏆", "רווח מצוין — מתקרבים ליעד מלא!"),
+                        ]:
+                            _ms_key = f"ms_{trade['id']}_{int(_milestone)}"
+                            if plpc >= _milestone and not _position_alert_sent.get(_ms_key):
+                                _position_alert_sent[_ms_key] = True
+                                try:
+                                    from telegram_chat import _fmt_price as _fpm
+                                    _create_background_task(send_message(
+                                        f"{_emoji} <b>{ticker} ב-+{plpc:.1f}%!</b>\n"
+                                        f"━━━━━━━━━━━━━━━━\n"
+                                        f"💵 מחיר עכשיו: {_fpm(cur_price)}\n"
+                                        f"📌 נכנסתי ב: {_fpm(trade['entry_price'])}\n"
+                                        f"💡 {_msg}"
+                                    ))
+                                except Exception:
+                                    pass
+                                break   # only one milestone per cycle
+                    except Exception:
+                        pass
+
                     # ── 1c. Near-TP Alert — warn when within 2% of take profit ─
                     try:
                         from atr_stop import _fetch_atr as _atr_near
@@ -1824,6 +1851,95 @@ async def earnings_monitor_loop():
             logger.error(f"earnings_monitor_loop error: {e}")
 
         await asyncio.sleep(30 * 60)  # check every 30 min
+
+
+async def golden_opportunity_loop():
+    """
+    מאתר "הזדמנויות זהב" — מניות עם ציון מעל 75 + ציון באפט מעל 70.
+    אם אין מזומן זמין → מציע למשתמש לסגור פוזיציה חלשה.
+    רץ כל שעה בזמן שוק פתוח.
+    """
+    await asyncio.sleep(10 * 60)   # 10 min after startup
+    _seen_today: dict[str, str] = {}   # ticker → date (avoid spam same ticker daily)
+
+    while True:
+        try:
+            # Only run during market hours
+            mkt_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if not mkt_open:
+                await asyncio.sleep(30 * 60)
+                continue
+
+            import datetime as _dt_op
+            today_str = _dt_op.date.today().isoformat()
+
+            # Reset daily tracker
+            _seen_today = {k: v for k, v in _seen_today.items() if v == today_str}
+
+            from scanner import get_watchlist as _gwl
+            from scoring import get_composite_score
+            from sentiment import score_sentiment
+
+            # Sample top 15 tickers
+            candidates = _gwl()[:15]
+            best = None
+            best_score = 0
+
+            for ticker in candidates:
+                if _seen_today.get(ticker) == today_str:
+                    continue
+                # Skip if already in portfolio
+                if database.get_open_trade_by_ticker(ticker):
+                    continue
+                try:
+                    sent = await asyncio.wait_for(
+                        asyncio.to_thread(score_sentiment, ticker), timeout=15
+                    )
+                    score_r = await asyncio.wait_for(
+                        asyncio.to_thread(get_composite_score, ticker, sent.score), timeout=15
+                    )
+                    score = score_r.get("composite_score", 0)
+                    if score >= 75 and score > best_score:
+                        best = (ticker, score, score_r)
+                        best_score = score
+                except Exception:
+                    continue
+
+            if best:
+                ticker, score, _r = best
+                _seen_today[ticker] = today_str
+
+                # Get Buffett score
+                buf_score = 0
+                try:
+                    from buffett_analysis import get_buffett_analysis
+                    buf = await asyncio.wait_for(
+                        asyncio.to_thread(get_buffett_analysis, ticker), timeout=15
+                    )
+                    buf_score = buf.get("score", 0)
+                except Exception:
+                    pass
+
+                # Only notify if both technical AND fundamentals strong
+                if buf_score >= 60:
+                    _create_background_task(send_message(
+                        f"🌟 <b>הזדמנות זהב — {ticker}!</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"⭐ ציון טכני: <b>{score:.0f}/100</b> (מעולה!)\n"
+                        f"🎩 ציון באפט: <b>{buf_score:.0f}/100</b>\n"
+                        f"💡 הבוט מזהה הזדמנות איכותית — סורק לעומק\n"
+                        f"📋 לפרטים: /buffett {ticker} | /score {ticker}"
+                    ))
+                    logger.info(f"[GOLDEN] {ticker} score={score:.0f} buf={buf_score:.0f} — alerted")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"golden_opportunity_loop error: {e}")
+
+        await asyncio.sleep(60 * 60)   # check every hour
 
 
 async def webhook_keeper_loop():
