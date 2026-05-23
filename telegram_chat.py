@@ -471,6 +471,14 @@ def _llm_reply(user_message: str, context: dict, history: list | None = None) ->
 
 שער דולר/שקל עכשיו: 1$ = ₪{ils_rate:.2f}
 
+══ סטטיסטיקת עסקאות (סך הכל מאז ההתחלה) ══
+📊 סה"כ עסקאות:    {context.get('trade_counts', {}).get('total', 0)}
+📂 פתוחות:           {context.get('trade_counts', {}).get('open', 0)}
+✔️ סגורות:           {context.get('trade_counts', {}).get('closed', 0)}
+✅ ברווח:            {context.get('trade_counts', {}).get('wins', 0)}
+❌ בהפסד:             {context.get('trade_counts', {}).get('losses', 0)}
+📅 היום:             {context.get('trade_counts', {}).get('today', 0)}
+
 ══ מצב התיק עכשיו ══
 💰 מזומן פנוי:       {_ils(context.get('cash', 0))}
 💼 מושקע במניות:   {_ils(context.get('total_invested', 0))}
@@ -494,6 +502,7 @@ Circuit Breaker: {'⚠️ פעיל' if context.get('circuit_breaker') else '✅ 
 {closed_text}
 
 ══ הנחיות מענה ══
+• שאלות על מספר עסקאות (כמה עסקאות עשית?): השתמש בנתון "trade_counts" — ענה במספרים מדויקים
 • שאלות על תיק: ענה עם מחירים בדולר + שקל
 • שאלות "האם כדאי לקנות X?" — תמיד תחשוב כמו באפט: ROE? Moat? חוב? תמחור? תן המלצה מנומקת
 • שאלות "מה קורה עם X?" — נתח: מחיר, מגמה, fundamentals, סיכונים, הזדמנויות
@@ -749,7 +758,15 @@ def _handle_command(text: str, context: dict) -> str | None:
         )
 
     # /count — quick trade statistics summary
-    if cmd in ("/count", "count", "כמה עסקאות", "ספור", "ספירה"):
+    # Match full text for Hebrew variations + common typos
+    _trade_count_triggers = (
+        "כמה עסק", "כמה סק", "כמה הסק", "כמה הסכ", "כמה סכ",  # שגיאות כתיב נפוצות
+        "כמה הקנייות", "כמה קניות", "כמה מכרת", "כמה קנית",
+        "ספירה", "ספור", "סטטיסטיק", "סיכום עסק",
+        "כמה ברווח", "כמה בהפסד", "כמה עשית",
+    )
+    if (cmd in ("/count", "count") or
+        any(tr in t for tr in _trade_count_triggers)):
         tc = context.get("trade_counts", {}) or {}
         total   = tc.get("total", 0)
         open_   = tc.get("open", 0)
