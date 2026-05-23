@@ -490,6 +490,17 @@ def _llm_reply(user_message: str, context: dict, history: list | None = None) ->
 ❌ בהפסד:             {context.get('trade_counts', {}).get('losses', 0)}
 📅 היום:             {context.get('trade_counts', {}).get('today', 0)}
 
+══ הגדרות הבוט הנוכחיות (חשוב!) ══
+🎯 ציון קנייה מינימלי: {context.get('min_buy_score', 60)}/100
+🎩 איכות באפט מינימלית: 50/100 (אחרת לא קונה)
+🛡️ הגנה Drawdown: 10% מהשיא ההיסטורי
+🚦 Take Profit (TP): 15% | Stop Loss: 3.5%
+📉 פילטר VIX: לא קונה אם VIX > 22 (פאניקה)
+⏰ שעות סחר: 10:00-15:30 ET (חוץ מ-15 דק' פתיחה/סגירה)
+📈 Stage 1 (נעילת רווח): +1.5%-2% — מוכר 50%
+📈 Stage 2: +4%-6% — מוכר עוד 50% מהנותר
+🛡️ Break-Even: ב-+1% הסטופ עולה לכניסה
+
 ══ מצב התיק עכשיו ══
 💰 מזומן פנוי:       {_ils(context.get('cash', 0))}
 💼 מושקע במניות:   {_ils(context.get('total_invested', 0))}
@@ -886,6 +897,79 @@ def _handle_command(text: str, context: dict) -> str | None:
         for r in risk_factors:
             lines.append(f"   {r}")
         return "\n".join(lines)
+
+    # /digest — mega daily summary (everything in one place)
+    if cmd in ("/digest", "digest", "סיכום מלא", "מעדכן", "תקציר", "סיכום יומי"):
+        try:
+            equity   = context.get("equity", 0)
+            cash     = context.get("cash", 0)
+            pos_pnl  = context.get("open_pnl", 0)
+            realized = context.get("realized_pnl_net", 0)
+            positions = context.get("open_positions", [])
+            tc       = context.get("trade_counts", {})
+            vix      = context.get("vix")
+            market_open = context.get("market_open", False)
+
+            wr = (tc.get("wins", 0) / tc.get("closed", 1) * 100) if tc.get("closed") else 0
+            n_pos = len(positions)
+
+            # Portfolio change vs initial
+            initial = float(__import__("os").getenv("MAX_BUDGET", "10000"))
+            total_return = (equity - initial) / initial * 100 if initial else 0
+
+            # Top performer + worst
+            winners = sorted([p for p in positions if p.get("pct", 0) > 0], key=lambda p: -p.get("pct", 0))
+            losers  = sorted([p for p in positions if p.get("pct", 0) < 0], key=lambda p: p.get("pct", 0))
+
+            lines = [
+                f"📋 <b>תקציר יומי</b>",
+                f"━━━━━━━━━━━━━━━━",
+                f"💼 שווי תיק:    <b>${equity:,.2f}</b>",
+                f"📊 תשואה כוללת: <b>{total_return:+.2f}%</b>",
+                f"💵 מזומן:        ${cash:,.2f}",
+                f"📈 רווח פתוח:   ${pos_pnl:+.2f}",
+                f"💰 רווח ממומש:  ${realized:+.2f}",
+                f"━━━━━━━━━━━━━━━━",
+                f"📂 פוזיציות: <b>{n_pos}</b>",
+            ]
+            if winners:
+                top = winners[0]
+                lines.append(f"   🏆 הכי טובה: <b>{top['ticker']}</b> ({top['pct']:+.1f}%)")
+            if losers:
+                worst = losers[0]
+                lines.append(f"   📉 הכי חלשה: <b>{worst['ticker']}</b> ({worst['pct']:+.1f}%)")
+
+            lines.append(f"━━━━━━━━━━━━━━━━")
+            lines.append(f"🎯 עסקאות: {tc.get('total', 0)} (אחוז הצלחה {wr:.0f}%)")
+            lines.append(f"   ✅ {tc.get('wins', 0)} ניצחונות  |  ❌ {tc.get('losses', 0)} הפסדים")
+
+            # Market state
+            lines.append(f"━━━━━━━━━━━━━━━━")
+            mkt_emoji = "🟢" if market_open else "🔴"
+            lines.append(f"{mkt_emoji} שוק: {'פתוח' if market_open else 'סגור'}")
+            if vix:
+                vix_emoji = "🟢" if vix < 20 else "🟡" if vix < 27 else "🔴"
+                lines.append(f"{vix_emoji} VIX: {vix:.1f}")
+
+            # Suggestions
+            lines.append(f"━━━━━━━━━━━━━━━━")
+            lines.append(f"💡 <b>צעדים שאני ממליץ:</b>")
+            suggestions = []
+            if n_pos == 0:
+                suggestions.append("• /best — לראות הזדמנויות עכשיו")
+            if cash / equity > 0.5 if equity else False:
+                suggestions.append("• /best — יש לך הרבה מזומן זמין")
+            if losers and any(p.get("pct", 0) < -3 for p in losers):
+                suggestions.append("• /risk_score — לבדוק סיכון")
+            if not suggestions:
+                suggestions.append("• /journal — לראות יומן עסקאות")
+                suggestions.append("• /alpha — ביצוע מול השוק")
+            for s in suggestions[:3]:
+                lines.append(s)
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error(f"[/digest] Error: {e}")
+            return "❌ שגיאה בייצור תקציר"
 
     # /diversity — quick portfolio diversity check
     if cmd in ("/diversity", "diversity", "פיזור", "ריכוז"):
@@ -4123,14 +4207,16 @@ async def handle_telegram_update(update: dict) -> dict:
     _BUTTON_MAP = {
         "💰 רווח/הפסד":      "/pnl",
         "📊 מצב התיק":       "/status",
+        "📋 תקציר יומי":     "/digest",
         "📈 מניות שלי":      "/manioth",
         "🔢 כמה עסקאות":     "/count",
         "🤖 מה אתה עושה":    "/activity_now",
+        "🌟 הכי טובות":      "/best",
         "🌍 מצב השוק":       "/market",
         "🏆 מובילים היום":   "/gainers",
         "📰 חדשות":          "/newscheck",
         "💡 ייעוץ AI":       "/advice",
-        "⚠️ ניתוח סיכון":    "/risk",
+        "⚠️ ניתוח סיכון":    "/risk_score",
         "📅 מה היה היום":    "/today",
         "📋 כל הפקודות":     "/help",
     }
