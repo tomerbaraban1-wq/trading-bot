@@ -77,6 +77,14 @@ def _verify_secret(
         )
 
 
+def _secret_eq(provided: str | None) -> bool:
+    """Timing-safe comparison against WEBHOOK_SECRET. Returns False if either side is empty."""
+    import hmac as _hmac
+    if not settings.WEBHOOK_SECRET or not provided:
+        return False
+    return _hmac.compare_digest(str(provided), settings.WEBHOOK_SECRET)
+
+
 import re as _re_ticker
 _TICKER_RE = _re_ticker.compile(r'^[A-Z0-9.\-]{1,10}$')
 
@@ -190,7 +198,7 @@ async def receive_webhook(payload: WebhookPayload, request: Request):
     if not settings.WEBHOOK_SECRET:
         logger.error("WEBHOOK_SECRET is not configured — rejecting all webhook requests")
         raise HTTPException(status_code=503, detail="Bot not configured: WEBHOOK_SECRET missing")
-    if payload.secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(payload.secret):
         client_ip = _get_client_ip(request)
         now = time.time()
         cnt, first = _failed_auth.get(client_ip, (0, now))
@@ -856,7 +864,7 @@ async def scan_now(secret: str = ""):
     Requires secret param: /scan/now?secret=YOUR_SECRET
     Ignores market hours (useful for testing outside trading hours).
     """
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     from scanner import get_watchlist
@@ -1142,7 +1150,7 @@ async def set_broker(payload: BrokerSwitch, request: Request):
     """
     # Auth — accept secret from body OR from X-Webhook-Secret header
     secret = getattr(payload, "secret", None) or request.headers.get("X-Webhook-Secret", "")
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         logger.warning(f"Broker switch auth failed from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
@@ -1173,7 +1181,7 @@ async def emergency_exit(ticker: str, request: Request):
     """
     # Prefer header auth — query param accepted for backward compat but header is safer
     secret = request.headers.get("X-Webhook-Secret", "") or request.query_params.get("secret", "")
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         logger.warning(f"Emergency exit auth failed for {ticker} from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
@@ -1256,7 +1264,7 @@ async def auto_invest(data: dict):
     הבוט מחליט לבד כמה חברות לקנות.
     Body: { "secret": "..." }
     """
-    if not settings.WEBHOOK_SECRET or data.get("secret") != settings.WEBHOOK_SECRET:
+    if not _secret_eq(data.get("secret")):
         raise HTTPException(status_code=401, detail="Invalid secret")
 
     import asyncio
@@ -1434,7 +1442,7 @@ async def run_backtest_endpoint(secret: str = "", tickers: str = ""):
     Run historical backtest to learn which indicator conditions predicted profit.
     /backtest?secret=YOUR_SECRET&tickers=AAPL,MSFT,NVDA (optional — defaults to top 20 watchlist)
     """
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     from backtest_learner import run_backtest, apply_insights
@@ -1657,7 +1665,7 @@ async def update_settings(data: dict, request: Request):
     Auth: pass `secret` in body OR X-Webhook-Secret header.
     """
     secret = data.get("secret", "") or request.headers.get("X-Webhook-Secret", "")
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         logger.warning(f"Settings update auth failed from {request.client.host if request.client else 'unknown'}")
         raise HTTPException(status_code=401, detail="Invalid secret")
 
@@ -1721,7 +1729,7 @@ async def update_settings(data: dict, request: Request):
 @router.get("/telegram/test")
 async def test_telegram(secret: str = "", request: Request = None):
     """Sends a test message. Requires secret for security."""
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         raise HTTPException(status_code=403, detail="Invalid secret")
     from telegram_bot import send_message, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     token_set = bool(TELEGRAM_BOT_TOKEN)
@@ -1767,7 +1775,7 @@ async def send_morning_briefing_now(secret: str = ""):
     Force-send the morning briefing right now (manual trigger).
     /telegram/briefing?secret=YOUR_WEBHOOK_SECRET
     """
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     try:
@@ -1836,7 +1844,7 @@ async def telegram_setup_webhook(secret: str = ""):
     Call this URL once after deploying:
       /telegram/setup?secret=YOUR_WEBHOOK_SECRET
     """
-    if not settings.WEBHOOK_SECRET or secret != settings.WEBHOOK_SECRET:
+    if not _secret_eq(secret):
         raise HTTPException(status_code=403, detail="Invalid secret")
 
     from telegram_bot import TELEGRAM_BOT_TOKEN
