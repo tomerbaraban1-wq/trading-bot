@@ -3894,3 +3894,131 @@ async def continuous_learning_loop():
             await asyncio.sleep(300)  # retry in 5 min on error
 
         await asyncio.sleep(60 * 60)   # run every hour
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADAPTIVE TRADER MONITORING LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def adaptive_parameters_monitor_loop():
+    """
+    Monitor and send adaptive trading parameters every 4 hours.
+    Helps trader understand how the bot adjusts to market conditions.
+    """
+    await asyncio.sleep(5 * 60)   # wait 5 min after startup
+    while True:
+        try:
+            # Only during market hours
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from telegram_bot import notify_adaptive_parameters
+                await notify_adaptive_parameters()
+                logger.info("[ADAPTIVE] Parameters sent to trader")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Adaptive parameters monitor error: {e}")
+
+        await asyncio.sleep(4 * 60 * 60)   # run every 4 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CORRELATION MONITORING LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def correlation_monitor_loop():
+    """
+    Monitor position correlations every 2 hours.
+    Warns trader if positions are becoming too correlated.
+    """
+    await asyncio.sleep(3 * 60)   # wait 3 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from telegram_bot import notify_correlation_analysis
+                await notify_correlation_analysis()
+                logger.info("[CORRELATION] Analysis sent to trader")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Correlation monitor error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # run every 2 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MARKET INTELLIGENCE LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def market_intelligence_loop():
+    """
+    Send comprehensive market analysis every 3 hours.
+    Includes volatility regime, sector rotation, market breadth.
+    """
+    await asyncio.sleep(7 * 60)   # wait 7 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from telegram_bot import notify_market_regime_analysis
+                await notify_market_regime_analysis()
+                logger.info("[MARKET INTEL] Regime analysis sent to trader")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Market intelligence loop error: {e}")
+
+        await asyncio.sleep(3 * 60 * 60)   # run every 3 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DETAILED TRADE ANALYTICS LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def detailed_analytics_loop():
+    """
+    Send detailed trade analytics every 2 hours.
+    Shows P&L by ticker, best/worst trades, performance comparison.
+    """
+    await asyncio.sleep(9 * 60)   # wait 9 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from telegram_bot import (
+                    notify_detailed_trade_analytics,
+                    notify_performance_comparison,
+                    notify_ai_trading_insights
+                )
+
+                # Rotate through different analytics
+                hour = asyncio.get_event_loop().time()
+                analytics_cycle = int(hour / 3600) % 3
+
+                if analytics_cycle == 0:
+                    await notify_detailed_trade_analytics()
+                elif analytics_cycle == 1:
+                    await notify_performance_comparison()
+                else:
+                    await notify_ai_trading_insights()
+
+                logger.info("[ANALYTICS] Detailed analytics sent to trader")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Detailed analytics loop error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # run every 2 hours

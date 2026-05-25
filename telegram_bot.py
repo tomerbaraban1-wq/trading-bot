@@ -913,3 +913,326 @@ def _fmt_duration(hours: float) -> str:
     if hours < 24:
         return f"{hours:.1f} שעות"
     return f"{hours / 24:.1f} ימים"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENHANCED ANALYTICS & INTERACTIVE FEATURES
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_detailed_trade_analytics() -> None:
+    """
+    Send detailed trade analytics with:
+    - P&L breakdown by ticker
+    - Win rate by hour of day
+    - Best and worst trades
+    - Average holding time
+    """
+    if not _enabled():
+        return
+
+    try:
+        import database
+        conn = database.get_connection()
+
+        # Get all closed trades from today
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        trades = conn.execute("""
+            SELECT ticker, pnl_gross, entry_price, exit_price, created_at, exit_time,
+                   quality_score, entry_sentiment_score
+            FROM trade_log
+            WHERE status IN ('stopped', 'sold')
+            AND exit_time LIKE ?
+            ORDER BY exit_time DESC
+        """, (f"{today}%",)).fetchall()
+
+        if not trades:
+            await send_message("📊 עדיין אין עסקאות היום")
+            return
+
+        # Analyze by ticker
+        by_ticker = {}
+        for ticker, pnl, entry, exit_p, created, exit_t, quality, sentiment in trades:
+            if ticker not in by_ticker:
+                by_ticker[ticker] = {"count": 0, "pnl": 0, "wins": 0}
+            by_ticker[ticker]["count"] += 1
+            by_ticker[ticker]["pnl"] += pnl
+            if pnl > 0:
+                by_ticker[ticker]["wins"] += 1
+
+        # Sort by P&L
+        sorted_tickers = sorted(by_ticker.items(), key=lambda x: x[1]["pnl"], reverse=True)
+
+        # Build message
+        lines = [
+            "📊 <b>ניתוח עסקאות מפורט</b>",
+            "━━━━━━━━━━━━━━━━━━━",
+            f"📅 {today}",
+            f"📈 סה״כ עסקאות: {len(trades)}",
+            "",
+            "<b>💰 P&L לפי מניה:</b>",
+        ]
+
+        for ticker, stats in sorted_tickers[:10]:
+            pnl = stats["pnl"]
+            color = "🟢" if pnl >= 0 else "🔴"
+            win_rate = (stats["wins"] / stats["count"] * 100) if stats["count"] > 0 else 0
+            lines.append(
+                f"{color} {ticker}: ${pnl:+.2f} | {stats['count']} עסקאות | {win_rate:.0f}% win"
+            )
+
+        # Find best and worst
+        best_trade = max(trades, key=lambda x: x[1], default=None)
+        worst_trade = min(trades, key=lambda x: x[1], default=None)
+
+        if best_trade:
+            lines.extend([
+                "",
+                f"🏆 <b>עסקה הטובה ביותר:</b> {best_trade[0]} ${best_trade[1]:+.2f}",
+            ])
+
+        if worst_trade:
+            lines.append(
+                f"📉 <b>עסקה הגרועה ביותר:</b> {worst_trade[0]} ${worst_trade[1]:+.2f}"
+            )
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"Detailed trade analytics error: {e}")
+
+
+async def notify_correlation_analysis() -> None:
+    """
+    Send analysis of current positions and their correlations.
+    Warns if positions are too correlated.
+    """
+    if not _enabled():
+        return
+
+    try:
+        from adaptive_trader import get_position_correlation_risk
+
+        import broker
+        positions = await asyncio.to_thread(broker.get_positions)
+
+        if not positions:
+            await send_message("✅ לא יש פוזיציות פתוחות")
+            return
+
+        tickers = [p.symbol for p in positions]
+        correlation_risk = await get_position_correlation_risk(tickers)
+
+        lines = [
+            "📍 <b>ניתוח התאם בין פוזיציות</b>",
+            "━━━━━━━━━━━━━━━━━",
+        ]
+
+        if correlation_risk["correlated"]:
+            lines.append("⚠️ <b>הוזהרו קורלציות גבוהות:</b>")
+            for pair in correlation_risk["pairs"]:
+                lines.append(
+                    f"  {pair['ticker1']} ↔️ {pair['ticker2']}: {pair['correlation']:.2f} ({pair['risk']})"
+                )
+        else:
+            lines.append("✅ אין קורלציות גבוהות בין הפוזיציות")
+
+        lines.append("")
+        lines.append(f"📌 סה״כ פוזיציות: {len(tickers)}")
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"Correlation analysis error: {e}")
+
+
+async def notify_market_regime_analysis() -> None:
+    """
+    Send market regime analysis:
+    - Volatility status
+    - Sector leaders/laggards
+    - Market breadth
+    """
+    if not _enabled():
+        return
+
+    try:
+        from market_intelligence import detect_volatility_regime, analyze_sector_rotation, get_market_breadth
+
+        vol_regime = await detect_volatility_regime()
+        sectors = await asyncio.to_thread(analyze_sector_rotation)
+        breadth = await asyncio.to_thread(get_market_breadth)
+
+        lines = [
+            "🌍 <b>ניתוח משטר שוק</b>",
+            "━━━━━━━━━━━━━━",
+            "",
+            f"<b>📊 משטר תנודתיות:</b> {vol_regime.regime}",
+            f"  Volatility 5d: {vol_regime.volatility_5d:.1f}%",
+            f"  Volatility 20d: {vol_regime.volatility_20d:.1f}%",
+            f"  {vol_regime.recommendation}",
+            "",
+            f"<b>📈 רוחב שוק:</b> {breadth.strength_indicator}",
+            f"  Advances: {breadth.advances} | Declines: {breadth.declines}",
+            f"  Breadth: {breadth.market_breadth_percent:.1f}%",
+            "",
+            "<b>🏆 סקטורים המובילים:</b>",
+        ]
+
+        for sector in sectors[:3]:
+            lines.append(
+                f"  {sector.rank}. {sector.sector}: +{sector.performance_pct:.2f}% {sector.recommendation}"
+            )
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"Market regime analysis error: {e}")
+
+
+async def notify_adaptive_parameters() -> None:
+    """
+    Send current adaptive trading parameters.
+    Shows how the bot is adjusting for current market conditions.
+    """
+    if not _enabled():
+        return
+
+    try:
+        from adaptive_trader import get_adaptive_trading_params
+        from config import settings
+
+        params = await get_adaptive_trading_params(
+            base_quantity=1,
+            base_min_buy_score=settings.MIN_BUY_SCORE,
+            base_stop_loss_pct=settings.STOP_LOSS_PCT,
+            base_take_profit_pct=settings.TAKE_PROFIT_PCT,
+        )
+
+        lines = [
+            "🤖 <b>פרמטרים אדפטיביים נוכחיים</b>",
+            "━━━━━━━━━━━━━━━━",
+            "",
+            "<b>📊 גודל פוזיציה:</b>",
+            f"  Risk factor: {params['position_sizing']['risk_factor']:.2f}x",
+            f"  Confidence: {params['position_sizing']['confidence_level']:.0%}",
+            f"  Time factor: {params['position_sizing']['time_of_day_factor']:.2f}x",
+            f"  Reason: {params['position_sizing']['reason']}",
+            "",
+            "<b>🎯 סף קנייה & RSI:</b>",
+            f"  MIN_BUY_SCORE: {params['thresholds']['min_buy_score']:.1f}",
+            f"  RSI Overbought: {params['thresholds']['rsi_overbought']:.0f}",
+            f"  RSI Oversold: {params['thresholds']['rsi_oversold']:.0f}",
+            "",
+            "<b>🛑 Stop Loss & Take Profit:</b>",
+            f"  Stop Loss: {params['stop_loss_tp']['stop_loss_pct']:.2f}%",
+            f"  Take Profit: {params['stop_loss_tp']['take_profit_pct']:.2f}%",
+            "",
+            f"<b>🌡️ תנאי שוק:</b> {params['market_conditions']['volatility_level']}",
+            f"  VIX-like: {params['market_conditions']['volatility']:.1f}",
+        ]
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"Adaptive parameters error: {e}")
+
+
+async def notify_performance_comparison() -> None:
+    """
+    Compare today's performance vs this week vs this month.
+    """
+    if not _enabled():
+        return
+
+    try:
+        import database
+        from datetime import datetime, timedelta
+        conn = database.get_connection()
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+        # Today
+        today_stats = conn.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN pnl_gross > 0 THEN 1 ELSE 0 END), SUM(pnl_gross)
+            FROM trade_log
+            WHERE status IN ('stopped', 'sold') AND exit_time LIKE ?
+        """, (f"{today}%",)).fetchone()
+
+        # This week
+        week_stats = conn.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN pnl_gross > 0 THEN 1 ELSE 0 END), SUM(pnl_gross)
+            FROM trade_log
+            WHERE status IN ('stopped', 'sold') AND exit_time >= ?
+        """, (week_ago,)).fetchone()
+
+        # This month
+        month_stats = conn.execute("""
+            SELECT COUNT(*), SUM(CASE WHEN pnl_gross > 0 THEN 1 ELSE 0 END), SUM(pnl_gross)
+            FROM trade_log
+            WHERE status IN ('stopped', 'sold') AND exit_time >= ?
+        """, (month_ago,)).fetchone()
+
+        def format_period(label, count, wins, pnl):
+            if not count:
+                return f"{label}: 0 עסקאות"
+            win_rate = (wins / count * 100) if count > 0 else 0
+            return f"{label}: {count} עסקאות | {win_rate:.0f}% win | ${pnl or 0:+.2f}"
+
+        lines = [
+            "📈 <b>השוואת ביצועים</b>",
+            "━━━━━━━━━━━━",
+            format_period("📅 היום", today_stats[0] or 0, today_stats[1] or 0, today_stats[2]),
+            format_period("📊 השבוע", week_stats[0] or 0, week_stats[1] or 0, week_stats[2]),
+            format_period("📆 החודש", month_stats[0] or 0, month_stats[1] or 0, month_stats[2]),
+        ]
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"Performance comparison error: {e}")
+
+
+async def notify_ai_trading_insights() -> None:
+    """
+    Send AI-generated insights about trading patterns and recommendations.
+    Uses continuous learner analysis.
+    """
+    if not _enabled():
+        return
+
+    try:
+        from continuous_learner import learn_error_patterns, learn_sentiment_correlation
+
+        errors = await asyncio.to_thread(learn_error_patterns)
+        sentiments = await asyncio.to_thread(learn_sentiment_correlation)
+
+        lines = [
+            "💡 <b>AI Trading Insights</b>",
+            "━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        if errors:
+            lines.append("<b>🔴 דפוסי טעויות מתחזרים:</b>")
+            for error in errors[:3]:
+                lines.append(
+                    f"  • {error.error_type}: {error.frequency}x | "
+                    f"הפסד ממוצע ${error.avg_loss:.2f}"
+                )
+                lines.append(f"    💡 הצעה: {error.suggested_fix}")
+
+        if sentiments:
+            lines.append("")
+            lines.append("<b>💬 מניות עם התאם סנטימנט טוב:</b>")
+            best_sentiment = sorted(sentiments.items(), key=lambda x: x[1].correlation_strength, reverse=True)[:3]
+            for ticker, corr in best_sentiment:
+                lines.append(
+                    f"  • {ticker}: correlation={corr.correlation_strength:.2f} | {corr.recommendation}"
+                )
+
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"AI insights error: {e}")
