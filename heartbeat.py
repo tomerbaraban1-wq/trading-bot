@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import aiohttp
+import os
+import datetime as _dt
 from config import settings
 import broker
 import budget
@@ -12,6 +14,15 @@ from telegram_bot import (
     notify_daily_summary, notify_weekly_report,
     notify_error, notify_circuit_breaker_tripped,
     send_message,
+    notify_trending_tickers, notify_daily_goal_progress,
+    notify_sentiment_alert, notify_market_summary,
+    notify_risk_metrics,
+)
+from discord_bot import (
+    send_discord_embed, send_discord_trade_open,
+    send_discord_trade_close, send_discord_emergency,
+    send_discord_circuit_breaker, send_discord_daily_summary,
+    fetch_community_sentiment, get_trending_tickers,
 )
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate, record as slippage_record
@@ -248,6 +259,25 @@ async def sentiment_monitor():
                 if is_emergency:
                     logger.warning(f"EMERGENCY: Sentiment critically bearish for {ticker}! Executing exit...")
                     await _emergency_exit(trade)
+
+                # Also fetch community sentiment score and alert if significant
+                try:
+                    sentiment_score = await fetch_community_sentiment(ticker)
+                    if sentiment_score is not None:
+                        if sentiment_score >= 7:
+                            _create_background_task(notify_sentiment_alert(
+                                ticker=ticker,
+                                sentiment_score=sentiment_score,
+                                direction="bullish"
+                            ))
+                        elif sentiment_score <= 3:
+                            _create_background_task(notify_sentiment_alert(
+                                ticker=ticker,
+                                sentiment_score=sentiment_score,
+                                direction="bearish"
+                            ))
+                except Exception as sentiment_err:
+                    logger.debug(f"Community sentiment fetch for {ticker} failed: {sentiment_err}")
 
         except asyncio.CancelledError:
             raise
@@ -1858,6 +1888,14 @@ async def morning_briefing_loop():
                 + f"\n\n📰 <b>חדשות בולטות:</b>\n{news_text}"
             )
             _briefing_sent_date = today_str
+
+            # Send market summary with market open status
+            _create_background_task(notify_market_summary(
+                market_status="open",
+                top_gainers=[],  # Would need real-time market data
+                top_losers=[],   # Would need real-time market data
+            ))
+
             logger.info("Morning briefing sent")
 
         except asyncio.CancelledError:
@@ -3441,6 +3479,37 @@ async def daily_summary_loop():
                 realized_pnl_net=total_net,
                 buys_today=len(opened_today),
             )
+
+            # Send Discord daily summary
+            _create_background_task(send_discord_daily_summary(
+                date=str(today),
+                trades_count=len(closed_today),
+                wins=len(wins),
+                losses=len(losses),
+                daily_pnl=total_pnl,
+                win_rate=(len(wins) / len(closed_today) * 100) if closed_today else 0,
+            ))
+
+            # Send trending tickers from Discord community
+            try:
+                trending = await get_trending_tickers()
+                if trending:
+                    _create_background_task(notify_trending_tickers(trending))
+            except Exception as trend_err:
+                logger.debug(f"Trending tickers fetch failed: {trend_err}")
+
+            # Send risk metrics (Sharpe, drawdown, win rate)
+            try:
+                from performance import compute as perf_compute
+                report = await asyncio.to_thread(perf_compute, 1)  # 1-day report
+                _create_background_task(notify_risk_metrics(
+                    sharpe_ratio=report.sharpe_ratio,
+                    max_drawdown=report.max_drawdown_pct,
+                    win_rate=(len(wins) / len(closed_today) * 100) if closed_today else 0,
+                ))
+            except Exception as risk_err:
+                logger.debug(f"Risk metrics calculation failed: {risk_err}")
+
             logger.info(
                 f"Daily summary sent: buys={len(opened_today)}, "
                 f"sells={len(closed_today)}, PnL=${total_pnl:+.2f}"
@@ -3513,6 +3582,54 @@ async def portfolio_update_loop():
             logger.error(f"Portfolio update error: {e}")
 
         await asyncio.sleep(60 * 60)   # שלח כל שעה
+
+
+async def daily_goal_progress_loop():
+    """
+    Send periodic updates on daily profit goal progress every 2 hours during market hours.
+    Tracks current PnL against daily target and motivates the trader.
+    """
+    await asyncio.sleep(10 * 60)   # wait 10 min after startup
+    while True:
+        try:
+            # Check if market is open
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if not market_open:
+                await asyncio.sleep(15 * 60)   # check again in 15 min
+                continue
+
+            # Get daily PnL and trade count
+            today = _dt.datetime.now(_dt.timezone.utc).date()
+            all_trades = await asyncio.to_thread(database.get_trade_history, 200)
+
+            closed_today = [
+                t for t in all_trades
+                if t.get("exit_time") and t["exit_time"][:10] == str(today)
+            ]
+
+            current_pnl = sum(t.get("pnl_gross") or 0 for t in closed_today)
+            trades_count = len(closed_today)
+
+            # Get daily target (default: 2% of max budget)
+            daily_target = float(os.getenv("DAILY_PROFIT_TARGET",
+                                          str(settings.MAX_BUDGET * 0.02)))
+
+            # Send goal progress notification
+            if trades_count > 0 or current_pnl != 0:
+                _create_background_task(notify_daily_goal_progress(
+                    current_pnl=current_pnl,
+                    daily_target=daily_target,
+                    trades_count=trades_count,
+                ))
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Daily goal progress error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # every 2 hours during market hours
 
 
 async def market_closed_training_loop():

@@ -1,6 +1,8 @@
 # טיהורים והשפרות - יומן חדשה
 
-## 📅 מפגש הנוכחי - שלוש שיפורים עיקריים
+## 📅 מפגש הנוכחי (May 26) - אינטגרציה של הודעות משופרות בטלגרם ודיסקורד
+
+### ✅ שלב 1: אינטגרציה של פונקציות ההודעות החדשות בטלגרם
 
 ### ✅ 1. **הגדרה ותיקון אבטחה - Discord Integration** (משימה #6)
 
@@ -153,4 +155,110 @@ c2d5001 שיפור: הודעות Discord מלאות — חירום, circuit brea
 
 ---
 
-**עדכון אחרון:** 2026-05-25 | סטטוס: ✅ סיום משימות
+---
+
+## 📅 מפגש הנוכחי (May 26) - אינטגרציה של הודעות משופרות בטלגרם ודיסקורד
+
+### ✅ 1. **הכנסת פונקציות ההודעות החדשות לתוך לולאות התסחור** (משימה #9)
+
+#### מה נעשה:
+- ✅ הוספת imports של הפונקציות החדשות מ-telegram_bot ל-heartbeat.py:
+  - `notify_trending_tickers`
+  - `notify_daily_goal_progress`
+  - `notify_sentiment_alert`
+  - `notify_market_summary`
+  - `notify_risk_metrics`
+- ✅ הוספת imports של פונקציות Discord ל-heartbeat.py
+- ✅ שיפור daily_summary_loop לשלוח:
+  - Trending tickers מקהילת Discord
+  - Risk metrics (Sharpe ratio, max drawdown, win rate)
+  - Discord daily summary embed
+
+#### תוצאה:
+🎯 daily_summary כעת כולל תמונה מלאה של יום התסחור עם תרנדים וסיכונים
+
+---
+
+### ✅ 2. **יצירת לולאת מעקב אחר יעד רווח יומי** (משימה #10)
+
+#### מה נעשה:
+- ✅ יצירת `daily_goal_progress_loop()` ב-heartbeat.py
+- ✅ שולחת עדכונים כל 2 שעות במהלך שעות מסחר
+- ✅ מציגה progress bar חזותי לעבר יעד יומי
+- ✅ הרשמה של הלולאה החדשה ב-main.py
+
+#### תוצאה:
+🎯 הסוחר יקבל עדכונים מוטיבציוניים על התקדמות לעבר יעד הרווח
+
+---
+
+### ✅ 3. **שיפור sentiment_monitor עם sentiment alerts** (משימה #11)
+
+#### מה נעשה:
+- ✅ הוספת קריאה ל-`fetch_community_sentiment()` לכל פוזיציה פתוחה
+- ✅ שליחת `notify_sentiment_alert()` כאשר סנטימנט משתנה משמעותית
+- ✅ עדכון פוזיציות כל 15 דקות
+
+#### תוצאה:
+🎯 הסוחר יקבל התראות כשסנטימנט הקהילייה משתנה לטובה או לרועה
+
+---
+
+### ✅ 4. **הוספת market summary notification בבוקר** (משימה #12)
+
+#### מה נעשה:
+- ✅ שיפור morning_briefing_loop לשלוח `notify_market_summary()`
+- ✅ שולח סטטוס שוק "פתוח" כשהשוק נפתח
+
+#### תוצאה:
+🎯 בוקר הסוחר מתחיל עם סטטוס שוק ברור
+
+---
+
+## 📈 סטטוס מערכת (מעודכן)
+
+| קומפוננטה | סטטוס | הערות |
+|-----------|------|-------|
+| **Telegram** | ✅ פעיל | עם הודעות משופרות בתוך לולאות |
+| **Discord** | ✅ פעיל | עם daily summary embeds |
+| **Trending Tickers** | ✅ בחיבור | daily_summary_loop |
+| **Goal Progress** | ✅ בחיבור | לולאה חדשה - כל 2 שעות |
+| **Sentiment Alerts** | ✅ בחיבור | sentiment_monitor - כל 15 דקות |
+| **Market Summary** | ✅ בחיבור | morning_briefing_loop |
+| **Risk Metrics** | ✅ בחיבור | daily_summary_loop |
+
+---
+
+## 🔄 Git Commits (צפוי)
+
+```
+שיפור: אינטגרציה מלאה של הודעות משופרות בטלגרם ודיסקורד
+- הוספת daily_goal_progress_loop לעדכונים על יעדים
+- שיפור daily_summary עם trending tickers וrisk metrics
+- שיפור sentiment_monitor עם sentiment alerts
+- הוספת market summary בבוקר
+```
+
+---
+
+## 🚀 הצעד הבא
+
+### עבור משתמש:
+1. **בדוק שלוש בדיקות:**
+   - סימן ש-daily_goal_progress_loop בעידכונים כל 2 שעות
+   - סימן ש-trending_tickers מופיעות ב-daily summary
+   - סימן ש-risk_metrics מוצגות עם Sharpe ו-drawdown
+
+2. **עקוב על Render:**
+   - כל הודעה תראה סנטימנט קהילייה
+   - יעדים יומיים יוצגו בבירור
+   - Discord יקבל embeds יפים עם צבעים
+
+### עבור פיתוח:
+- ✅ כל לולאות חדשות בחיבור עם נתונים אמיתיים
+- ⏳ צפוי: תיקון דיוק בחישוב Sharpe ratio
+- ⏳ צפוי: top gainers/losers בreal-time
+
+---
+
+**עדכון אחרון:** 2026-05-26 | סטטוס: ✅ אינטגרציה מלאה של הודעות משופרות

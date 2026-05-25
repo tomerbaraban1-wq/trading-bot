@@ -296,7 +296,7 @@ async def lifespan(app: FastAPI):
                            weekend_research_loop, daily_ai_insights_loop,
                            self_improvement_loop, rapid_move_alert_loop,
                            drawdown_protection_loop, idle_cash_alert_loop,
-                           adaptive_threshold_loop)
+                           adaptive_threshold_loop, daily_goal_progress_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -315,6 +315,7 @@ async def lifespan(app: FastAPI):
     news_monitor_task      = asyncio.create_task(news_monitor_loop())   # real-time news → sell/tighten
     earnings_monitor_task  = asyncio.create_task(earnings_monitor_loop())  # דוחות → פעולה מיידית
     market_pulse_task      = asyncio.create_task(market_pulse_loop())      # פעימת שוק 24/7
+    goal_progress_task     = asyncio.create_task(daily_goal_progress_loop())# עדכוני יעד יומי
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
     golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
     reentry_task           = asyncio.create_task(smart_reentry_loop())     # חזרה למניות שעלו אחרי מכירה
@@ -346,7 +347,7 @@ async def lifespan(app: FastAPI):
         keep_alive_task, daily_summary_task, weekly_report_task, shadow_monitor_task,
         portfolio_update_task, news_refresh_task, news_monitor_task, morning_briefing_task,
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
-        earnings_monitor_task, market_pulse_task, webhook_keeper_task,
+        earnings_monitor_task, market_pulse_task, goal_progress_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
         drawdown_task, idle_cash_task, adaptive_task,

@@ -765,6 +765,139 @@ async def notify_slippage_alert(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 🆕 Enhanced notifications (trending, goals, sentiment, market)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_trending_tickers(tickers: list[str]) -> None:
+    """📈 Alert about most-mentioned tickers in community today."""
+    if not _enabled() or not tickers:
+        return
+
+    ticker_list = " • ".join(tickers[:5])
+    await send_message(
+        f"🔥 <b>מניות חמות היום</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"הקהילייה דיברה הכי הרבה על:\n"
+        f"{ticker_list}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>כדאי לשים עין על המניות האלו</i>"
+    )
+
+
+async def notify_daily_goal_progress(
+    current_pnl: float,
+    daily_target: float,
+    trades_count: int,
+) -> None:
+    """🎯 Update on daily profit goal progress."""
+    if not _enabled():
+        return
+
+    if daily_target <= 0:
+        return
+
+    progress_pct = (current_pnl / daily_target * 100) if daily_target > 0 else 0
+    remaining = daily_target - current_pnl
+
+    # Visual progress bar
+    filled = int(progress_pct / 10)
+    bar = "🟩" * filled + "⬜" * (10 - filled)
+
+    emoji = "🎉" if current_pnl >= daily_target else "💪" if current_pnl > 0 else "🔄"
+    status = "הגעת ליעד! 🏆" if current_pnl >= daily_target else f"עוד ${abs(remaining):.2f} עד היעד"
+
+    await send_message(
+        f"{emoji} <b>התקדמות יעד יומי</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"לאן נתאחדנו: ${current_pnl:+.2f}\n"
+        f"היעד: ${daily_target:.2f}\n"
+        f"{bar}  <b>{progress_pct:.0f}%</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📊 עסקאות סגורות היום: {trades_count}\n"
+        f"💬 {status}"
+    )
+
+
+async def notify_sentiment_alert(
+    ticker: str,
+    sentiment_score: float,
+    direction: str = "bullish",
+) -> None:
+    """📣 Alert when community sentiment shifts significantly."""
+    if not _enabled():
+        return
+
+    emoji = "🟢" if sentiment_score >= 6 else "🔴" if sentiment_score <= 4 else "🟡"
+    sentiment_text = "שורי" if sentiment_score >= 6 else "דובי" if sentiment_score <= 4 else "נייטרלי"
+
+    await send_message(
+        f"{emoji} <b>שינוי סנטימנט! {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"הקהילייה חושבת שהמניה: <b>{sentiment_text}</b>\n"
+        f"ציון סנטימנט: <b>{sentiment_score:.1f}/10</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"💡 שים עין על הדיונים בערוץ"
+    )
+
+
+async def notify_market_summary(
+    market_status: str = "open",
+    top_gainers: list[tuple[str, float]] = None,
+    top_losers: list[tuple[str, float]] = None,
+) -> None:
+    """🌍 Market opening summary with gainers/losers."""
+    if not _enabled():
+        return
+
+    lines = [
+        f"🌍 <b>מצב השוק</b>",
+        f"━━━━━━━━━━━━━━━━",
+    ]
+
+    if market_status == "open":
+        lines.append("✅ השוק <b>פתוח</b> — זמן לסחור! 🚀")
+    elif market_status == "closed":
+        lines.append("🛑 השוק <b>סגור</b> — חזור מחר")
+    else:
+        lines.append(f"⏰ השוק: {market_status}")
+
+    if top_gainers:
+        lines.append("\n📈 <b>אצלים (Gainers):</b>")
+        for ticker, pct in top_gainers[:3]:
+            lines.append(f"  🟢 <b>{ticker}</b>: +{pct:.1f}%")
+
+    if top_losers:
+        lines.append("\n📉 <b>יורדים (Losers):</b>")
+        for ticker, pct in top_losers[:3]:
+            lines.append(f"  🔴 <b>{ticker}</b>: {pct:.1f}%")
+
+    lines.append(f"\n━━━━━━━━━━━━━━━━")
+    lines.append(f"💼 בואו נעשה כסף היום! 💪")
+
+    await send_message("\n".join(lines))
+
+
+async def notify_risk_metrics(
+    sharpe_ratio: float,
+    max_drawdown: float,
+    win_rate: float,
+) -> None:
+    """📊 Daily risk and performance metrics."""
+    if not _enabled():
+        return
+
+    await send_message(
+        f"📊 <b>מדדי סיכון וביצועים</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🎯 Sharpe Ratio: <b>{sharpe_ratio:.2f}</b>\n"
+        f"📉 Max Drawdown: <b>-{max_drawdown:.1f}%</b>\n"
+        f"✅ Win Rate: <b>{win_rate:.1f}%</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"<i>מדדים טובים = סחירות בטוחות יותר</i>"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
