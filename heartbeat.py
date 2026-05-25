@@ -26,6 +26,7 @@ from discord_bot import (
 )
 from circuit_breaker import check_circuit_breaker, record_trade_result, get_status as cb_status
 from slippage import limit_buy_price, limit_sell_price, estimate as slippage_estimate, record as slippage_record
+from continuous_learner import run_continuous_learning_cycle, get_learning_summary
 
 logger = logging.getLogger(__name__)
 
@@ -3846,9 +3847,50 @@ async def weekly_report_loop():
             await notify_weekly_report(html)
             logger.info(f"Weekly report sent: {report.total_trades} trades | "
                         f"Sharpe={report.sharpe_ratio} | DD={report.max_drawdown_pct:.2f}%")
-
         except asyncio.CancelledError:
             raise
         except Exception as e:
             logger.error(f"Weekly report error: {e}")
             await asyncio.sleep(3600)
+
+
+async def continuous_learning_loop():
+    """
+    Hourly learning cycle: analyze errors, sentiment correlation, and live performance.
+    Sends insights to trader about what the bot is learning and how to improve.
+
+    Runs every hour during market hours to adapt in real-time.
+    """
+    await asyncio.sleep(10 * 60)   # wait 10 min after startup
+    while True:
+        try:
+            # Check if market is open
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if not market_open:
+                await asyncio.sleep(15 * 60)   # check again in 15 min
+                continue
+
+            # Run the continuous learning cycle
+            from continuous_learner import run_continuous_learning_cycle, get_learning_summary
+
+            logger.info("[LEARNING] Running continuous learning cycle...")
+            results = await asyncio.wait_for(
+                asyncio.to_thread(run_continuous_learning_cycle),
+                timeout=120
+            )
+
+            # Send summary to trader (hourly during market hours)
+            if results.get("error_patterns") or results.get("live_performance", {}).get("recommendations"):
+                summary = get_learning_summary()
+                _create_background_task(send_message(summary))
+                logger.info("[LEARNING] Insights sent to trader")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Continuous learning error: {e}")
+            await asyncio.sleep(300)  # retry in 5 min on error
+
+        await asyncio.sleep(60 * 60)   # run every hour
