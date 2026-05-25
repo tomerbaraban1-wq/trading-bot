@@ -224,3 +224,186 @@ async def send_discord(text: str) -> bool:
     except Exception as exc:
         logger.warning(f"[DISCORD] Send failed: {exc}")
         return False
+
+
+async def send_discord_embed(
+    title: str,
+    description: str = "",
+    color: int = 0x2F3136,
+    fields: list[dict] | None = None,
+    footer_text: str = "",
+) -> bool:
+    """
+    Send a rich embed message to Discord.
+
+    Args:
+        title: Embed title
+        description: Embed description
+        color: Embed color (RGB integer, e.g., 0xFF0000 for red)
+        fields: List of dicts with 'name', 'value', 'inline' keys
+        footer_text: Footer text
+
+    Returns:
+        True if sent successfully
+    """
+    if not _enabled():
+        return False
+
+    embed = {
+        "title": title[:256],
+        "description": description[:4096],
+        "color": color,
+    }
+
+    if fields:
+        embed["fields"] = [
+            {
+                "name": f["name"][:256],
+                "value": f["value"][:1024],
+                "inline": f.get("inline", False),
+            }
+            for f in fields[:25]
+        ]
+
+    if footer_text:
+        embed["footer"] = {"text": footer_text[:2048]}
+
+    url = f"{_DISCORD_API}/channels/{DISCORD_CHANNEL_ID}/messages"
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {"embeds": [embed]}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status in (200, 201):
+                    logger.debug(f"[DISCORD] Embed sent successfully")
+                    return True
+                else:
+                    body = await resp.text()
+                    logger.warning(f"[DISCORD] Embed HTTP {resp.status}: {body[:200]}")
+                    return False
+    except Exception as exc:
+        logger.warning(f"[DISCORD] Embed send failed: {exc}")
+        return False
+
+
+async def send_discord_trade_open(
+    ticker: str,
+    qty: float,
+    price: float,
+    notional: float,
+    stop_price: float,
+    tp_price: float,
+    score: float = 0,
+) -> bool:
+    """Send a buy trade notification to Discord with embed formatting."""
+    stop_pct = (price - stop_price) / price * 100 if price else 0
+    tp_pct = (tp_price - price) / price * 100 if price else 0
+
+    return await send_discord_embed(
+        title=f"🛒 BUY: {ticker}",
+        description=f"Opening position with {qty:.4f} shares at ${price:.2f}",
+        color=0x00FF00,  # Green
+        fields=[
+            {
+                "name": "Entry Price",
+                "value": f"${price:.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Position Size",
+                "value": f"{qty:.4f} shares",
+                "inline": True,
+            },
+            {
+                "name": "Notional Value",
+                "value": f"${notional:,.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Stop Loss",
+                "value": f"${stop_price:.2f} (-{stop_pct:.1f}%)",
+                "inline": True,
+            },
+            {
+                "name": "Take Profit",
+                "value": f"${tp_price:.2f} (+{tp_pct:.1f}%)",
+                "inline": True,
+            },
+            {
+                "name": "Quality Score",
+                "value": f"{score:.0f}/100",
+                "inline": True,
+            },
+        ],
+        footer_text="TradingBot • Real-time Trading",
+    )
+
+
+async def send_discord_trade_close(
+    ticker: str,
+    qty: float,
+    entry_price: float,
+    exit_price: float,
+    pnl_gross: float,
+    pnl_net: float,
+    duration_hours: float = 0,
+) -> bool:
+    """Send a sell trade notification to Discord with embed formatting."""
+    win = pnl_gross >= 0
+    pct = ((exit_price - entry_price) / entry_price * 100) if entry_price else 0
+    color = 0x00FF00 if win else 0xFF0000  # Green for profit, Red for loss
+
+    emoji = "💰" if win else "📉"
+    result_text = "PROFIT" if win else "LOSS"
+
+    # Format duration
+    if duration_hours >= 24:
+        dur_str = f"{duration_hours/24:.1f} days"
+    else:
+        dur_str = f"{duration_hours:.1f} hours"
+
+    return await send_discord_embed(
+        title=f"{emoji} {result_text}: {ticker}",
+        description=f"Closed position of {qty:.4f} shares",
+        color=color,
+        fields=[
+            {
+                "name": "Entry Price",
+                "value": f"${entry_price:.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Exit Price",
+                "value": f"${exit_price:.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Change",
+                "value": f"{pct:+.2f}%",
+                "inline": True,
+            },
+            {
+                "name": "Gross P&L",
+                "value": f"{'$' if pnl_gross >= 0 else '-$'}{abs(pnl_gross):.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Net P&L (after tax)",
+                "value": f"{'$' if pnl_net >= 0 else '-$'}{abs(pnl_net):.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Duration",
+                "value": dur_str,
+                "inline": True,
+            },
+        ],
+        footer_text="TradingBot • Real-time Trading",
+    )

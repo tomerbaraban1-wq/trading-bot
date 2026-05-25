@@ -251,6 +251,19 @@ async def notify_trade_open(
         f"{id_line}"
     )
 
+    # Also send to Discord with embed formatting
+    try:
+        from discord_bot import send_discord_trade_open as _send_discord_open
+        import asyncio as _asyncio
+        _loop = _asyncio.get_running_loop()
+        task = _loop.create_task(_send_discord_open(ticker, qty, price, notional, stop_price, tp_price, score))
+        task.add_done_callback(
+            lambda t: logger.debug(f"Discord trade open send failed: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
+    except Exception:
+        pass  # Discord send is non-critical
+
 
 async def notify_trade_close(
     ticker:         str,
@@ -312,6 +325,19 @@ async def notify_trade_close(
         f"🧾 מס שהפרשתי: {_tax_str}"
         f"{id_line}"
     )
+
+    # Also send to Discord with embed formatting
+    try:
+        from discord_bot import send_discord_trade_close as _send_discord_close
+        import asyncio as _asyncio
+        _loop = _asyncio.get_running_loop()
+        task = _loop.create_task(_send_discord_close(ticker, qty, entry_price, exit_price, pnl_gross, pnl_net, duration_hours))
+        task.add_done_callback(
+            lambda t: logger.debug(f"Discord trade close send failed: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
+    except Exception:
+        pass  # Discord send is non-critical
 
 
 async def notify_emergency(ticker: str, reason: str) -> None:
