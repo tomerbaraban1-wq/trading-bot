@@ -1994,6 +1994,69 @@ async def earnings_monitor_loop():
         await asyncio.sleep(30 * 60)  # check every 30 min
 
 
+async def adaptive_threshold_loop():
+    """
+    סף קנייה אדפטיבי — אם אין עסקאות 3 ימים, מוריד את הסף זמנית.
+    בכל קנייה חדשה → סף חוזר לרגיל.
+
+    מטרה: הבוט לא יהיה תקוע מדי בלי לחרוג מהאיכות.
+    """
+    await asyncio.sleep(60 * 60)  # 1 hour after startup
+    _original_score: int | None = None
+
+    while True:
+        try:
+            import os as _os_at
+            import datetime as _dt_at
+
+            # Get most recent trade
+            history = await asyncio.to_thread(database.get_trade_history, limit=10)
+            recent = [t for t in history if t.get("entry_time")]
+            if not recent:
+                await asyncio.sleep(6 * 60 * 60)
+                continue
+
+            last_trade = recent[0]
+            last_entry = last_trade.get("entry_time", "")
+            try:
+                last_dt = _dt_at.datetime.strptime(
+                    str(last_entry)[:19], "%Y-%m-%d %H:%M:%S"
+                ).replace(tzinfo=_dt_at.timezone.utc)
+                days_since = (_dt_at.datetime.now(_dt_at.timezone.utc) - last_dt).days
+            except Exception:
+                await asyncio.sleep(6 * 60 * 60)
+                continue
+
+            current_min = int(_os_at.getenv("MIN_BUY_SCORE", "60"))
+
+            if days_since >= 3 and current_min > 53:
+                # No trades for 3+ days — lower threshold temporarily
+                if _original_score is None:
+                    _original_score = current_min
+                new_min = max(53, current_min - 3)
+                _os_at.environ["MIN_BUY_SCORE"] = str(new_min)
+                logger.info(f"[ADAPTIVE] {days_since}d no trades — lowering MIN_BUY_SCORE: {current_min} → {new_min}")
+                _create_background_task(send_message(
+                    f"📉 <b>הקלת סף זמנית</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"⏰ {days_since} ימים בלי עסקאות\n"
+                    f"⬇️ סף ציון: {current_min} → <b>{new_min}</b>\n"
+                    f"💡 חוזר לסף הרגיל בעסקה הבאה"
+                ))
+            elif days_since < 1 and _original_score is not None:
+                # Just made a trade — restore original threshold
+                _os_at.environ["MIN_BUY_SCORE"] = str(_original_score)
+                logger.info(f"[ADAPTIVE] new trade — restoring MIN_BUY_SCORE: {current_min} → {_original_score}")
+                _original_score = None
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"adaptive_threshold_loop error: {e}")
+
+        await asyncio.sleep(6 * 60 * 60)   # check every 6 hours
+
+
 async def idle_cash_alert_loop():
     """
     התראת מזומן חופשי — אם יש $1000+ מזומן יותר מ-3 ימים, התראה.

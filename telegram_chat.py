@@ -898,6 +898,82 @@ def _handle_command(text: str, context: dict) -> str | None:
             lines.append(f"   {r}")
         return "\n".join(lines)
 
+    # /tomorrow — what to expect tomorrow + watchlist
+    if cmd in ("/tomorrow", "tomorrow", "מחר", "מה מחר", "תוכנית מחר"):
+        try:
+            import datetime as _dt_tm
+            now = _dt_tm.datetime.now()
+            weekday = now.weekday()
+            day_names = ['שני','שלישי','רביעי','חמישי','שישי','שבת','ראשון']
+            tomorrow_day = (weekday + 1) % 7
+            tomorrow_name = day_names[tomorrow_day]
+            tomorrow_date = (now + _dt_tm.timedelta(days=1)).strftime("%d-%m-%Y")
+
+            # Will market be open tomorrow?
+            if tomorrow_day in (5, 6):   # Sat=5, Sun=6
+                market_status = "🔴 שוק סגור (סוף שבוע)"
+            else:
+                market_status = "🟢 שוק פתוח 16:30-23:00 ישראל"
+
+            # Top 3 Buffett picks for tomorrow
+            picks_lines = ["⏳ מחשב Top 3 איכותיות..."]
+            try:
+                from scanner import get_watchlist as _gwl_t
+                from buffett_analysis import get_buffett_analysis as _ba_t
+                tickers = _gwl_t()[:10]
+                picks = []
+                for tk in tickers:
+                    try:
+                        a = _ba_t(tk)
+                        if a.get("score", 0) >= 65:
+                            picks.append((tk, a.get("score", 0), a.get("moat", "?")))
+                    except Exception:
+                        continue
+                if picks:
+                    picks.sort(key=lambda x: x[1], reverse=True)
+                    top3 = picks[:3]
+                    picks_lines = []
+                    for tk, s, m in top3:
+                        moat_icon = {"strong": "💪", "medium": "🛡️", "weak": "⚠️"}.get(m, "?")
+                        picks_lines.append(f"   {moat_icon} <b>{tk}</b> — איכות {s:.0f}/100")
+                else:
+                    picks_lines = ["   (אין מניות איכותיות בקריטריונים הנוכחיים)"]
+            except Exception:
+                picks_lines = ["   (לא הצלחתי לחשב — נסה מאוחר יותר)"]
+
+            # Check for earnings tomorrow
+            earnings_alert = ""
+            try:
+                positions = context.get("open_positions", [])
+                from earnings import check_earnings_risk
+                tomorrow_earnings = []
+                for p in positions:
+                    risky, _, days = check_earnings_risk(p["ticker"])
+                    if days is not None and days <= 1:
+                        tomorrow_earnings.append(p["ticker"])
+                if tomorrow_earnings:
+                    earnings_alert = (
+                        f"\n📑 <b>דוחות מחר:</b>\n"
+                        + "\n".join(f"   ⚠️ {t}" for t in tomorrow_earnings)
+                    )
+            except Exception:
+                pass
+
+            return (
+                f"📅 <b>תוכנית מחר — יום {tomorrow_name} ({tomorrow_date})</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{market_status}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🎯 <b>Top 3 לבדיקה:</b>\n"
+                + "\n".join(picks_lines)
+                + earnings_alert
+                + f"\n━━━━━━━━━━━━━━━━\n"
+                + f"💡 אני אסרוק אוטומטית בפתיחה ואקנה את האיכותיות"
+            )
+        except Exception as e:
+            logger.error(f"[/tomorrow] Error: {e}")
+            return "❌ שגיאה ביצירת תוכנית מחר"
+
     # /digest — mega daily summary (everything in one place)
     if cmd in ("/digest", "digest", "סיכום מלא", "מעדכן", "תקציר", "סיכום יומי"):
         try:
