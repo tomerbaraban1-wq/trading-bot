@@ -407,3 +407,86 @@ async def send_discord_trade_close(
         ],
         footer_text="TradingBot • Real-time Trading",
     )
+
+
+async def send_discord_emergency(ticker: str, reason: str) -> bool:
+    """Send emergency exit alert to Discord."""
+    return await send_discord_embed(
+        title=f"🚨 EMERGENCY EXIT: {ticker}",
+        description=reason,
+        color=0xFF0000,  # Red
+        footer_text="TradingBot • Critical Alert",
+    )
+
+
+async def send_discord_circuit_breaker(
+    daily_pnl: float,
+    loss_limit: float,
+    loss_pct: float,
+) -> bool:
+    """Send circuit breaker trip alert to Discord."""
+    return await send_discord_embed(
+        title="🔴 CIRCUIT BREAKER TRIPPED",
+        description="Daily loss limit reached — trading halted",
+        color=0xFF0000,  # Red
+        fields=[
+            {
+                "name": "Daily P&L",
+                "value": f"${daily_pnl:.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Loss Limit",
+                "value": f"${loss_limit:.2f}",
+                "inline": True,
+            },
+            {
+                "name": "Loss %",
+                "value": f"{loss_pct:.1f}%",
+                "inline": True,
+            },
+        ],
+        footer_text="TradingBot • Safety Mechanism",
+    )
+
+
+async def send_discord_daily_summary(
+    date: str,
+    trades_count: int,
+    wins: int,
+    losses: int,
+    daily_pnl: float,
+    win_rate: float,
+) -> bool:
+    """Send daily trading summary to Discord."""
+    win_loss_ratio = f"{wins}W / {losses}L"
+    emoji = "🟢" if daily_pnl >= 0 else "🔴"
+
+    return await send_discord_embed(
+        title=f"📊 Daily Summary - {date}",
+        description=f"Trading Summary for {date}",
+        color=0x00FF00 if daily_pnl >= 0 else 0xFF0000,
+        fields=[
+            {
+                "name": "Total Trades",
+                "value": str(trades_count),
+                "inline": True,
+            },
+            {
+                "name": "Win/Loss",
+                "value": win_loss_ratio,
+                "inline": True,
+            },
+            {
+                "name": "Win Rate",
+                "value": f"{win_rate:.1f}%",
+                "inline": True,
+            },
+            {
+                "name": f"{emoji} Daily P&L",
+                "value": f"{'$' if daily_pnl >= 0 else '-$'}{abs(daily_pnl):.2f}",
+                "inline": False,
+            },
+        ],
+        footer_text="TradingBot • Daily Report",
+    )

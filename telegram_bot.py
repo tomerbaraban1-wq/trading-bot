@@ -347,6 +347,19 @@ async def notify_emergency(ticker: str, reason: str) -> None:
         f"⚠️ {reason}"
     )
 
+    # Also send to Discord
+    try:
+        from discord_bot import send_discord_emergency as _send_discord_emerg
+        import asyncio as _asyncio
+        _loop = _asyncio.get_running_loop()
+        task = _loop.create_task(_send_discord_emerg(ticker, reason))
+        task.add_done_callback(
+            lambda t: logger.debug(f"Discord emergency send failed: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
+    except Exception:
+        pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Error notifications (rate-limited)
@@ -429,6 +442,20 @@ async def notify_circuit_breaker_tripped(
         f"💬 {trip_reason}\n"
         f"<i>⏰ {_utcnow()}</i>"
     )
+
+    # Also send to Discord
+    try:
+        from discord_bot import send_discord_circuit_breaker as _send_discord_cb
+        import asyncio as _asyncio
+        loss_pct = abs(daily_pnl / loss_limit * 100) if loss_limit else 0
+        _loop = _asyncio.get_running_loop()
+        task = _loop.create_task(_send_discord_cb(daily_pnl, loss_limit, loss_pct))
+        task.add_done_callback(
+            lambda t: logger.debug(f"Discord circuit breaker send failed: {t.exception()}")
+            if not t.cancelled() and t.exception() else None
+        )
+    except Exception:
+        pass
 
 
 async def notify_budget_warning(reason: str, cash_available: float) -> None:
