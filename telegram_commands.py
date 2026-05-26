@@ -680,6 +680,72 @@ async def handle_sector_command() -> str:
         return f"❌ Sector error: {e}"
 
 
+async def handle_pro_analysis_command(ticker: str = "") -> str:
+    """Handle /pro_analysis TICKER — professional entry analysis."""
+    if not ticker:
+        return "שימוש: /pro AAPL"
+    try:
+        ticker = ticker.strip().upper()
+        from pro_entry_system import analyze_entry
+        analysis = await analyze_entry(ticker)
+
+        grade_emoji = {"A": "🏆", "B": "✅", "C": "🟡", "D": "🟠", "F": "❌"}.get(analysis.overall_grade, "⚪")
+
+        lines = [
+            f"{grade_emoji} <b>ניתוח מקצועי: {ticker}</b>  ציון {analysis.overall_grade}",
+            "━━━━━━━━━━━━━━━━",
+            f"📊 ADX: {analysis.adx:.0f} ({'מגמה' if analysis.adx > 25 else 'ללא מגמה'})",
+            f"📈 RSI: {analysis.rsi:.0f}",
+            f"⚡ Relative Strength: {analysis.relative_strength:+.0%} vs SPY",
+            f"⚖️  Risk/Reward: 1:{analysis.risk_reward_ratio:.1f}",
+            f"{'✅ Pullback in uptrend!' if analysis.is_pullback_in_uptrend else ''}",
+            "",
+            "<b>✅ מצב טוב:</b>",
+        ]
+        for r in analysis.reasoning[:3]:
+            lines.append(f"  • {r}")
+
+        if analysis.warnings:
+            lines.append("<b>⚠️ אזהרות:</b>")
+            for w in analysis.warnings[:2]:
+                lines.append(f"  • {w}")
+
+        if analysis.stop_price:
+            lines.append(f"\n🛑 Stop: ${analysis.stop_price:.2f}")
+        if analysis.target_price:
+            lines.append(f"🎯 Target: ${analysis.target_price:.2f}")
+
+        lines.append(f"\n{'✅ כניסה מומלצת!' if analysis.should_enter else '❌ לא להיכנס עכשיו'}")
+        return "\n".join([l for l in lines if l is not None])
+    except Exception as e:
+        return f"❌ Pro analysis error: {e}"
+
+
+async def handle_drawdown_command() -> str:
+    """Handle /drawdown — show drawdown control status."""
+    try:
+        from drawdown_control import get_status
+        status = get_status()
+        mode = status["mode"]
+        emoji = "🟢" if mode == "NORMAL" else "🟡" if mode == "CAUTION" else "🔴"
+
+        lines = [
+            f"{emoji} <b>Drawdown Control: {mode}</b>",
+            "━━━━━━━━━━━━━━━━",
+            f"📉 הפסד יומי: {status['daily_loss_pct']:.1f}% (מגבלה: {status['limits']['daily']}%)",
+            f"📉 הפסד שבועי: {status['weekly_loss_pct']:.1f}% (מגבלה: {status['limits']['weekly']}%)",
+            f"❌ הפסדים רצופים: {status['consecutive_losses']} (מגבלה: {status['limits']['consecutive']})",
+            f"📊 גודל פוזיציה: {status['size_multiplier']*100:.0f}% מנורמלי",
+        ]
+        if status["pause_remaining_hours"] > 0:
+            lines.append(f"⏸️ עצור עוד: {status['pause_remaining_hours']:.1f} שעות")
+        if status["reason"]:
+            lines.append(f"📌 סיבה: {status['reason']}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Drawdown status error: {e}"
+
+
 COMMAND_HANDLERS = {
     "health": handle_health_command,
     "performance": handle_performance_command,
@@ -696,6 +762,8 @@ COMMAND_HANDLERS = {
     "sector": handle_sector_command,
 }
 
+COMMAND_HANDLERS["drawdown"] = handle_drawdown_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,
@@ -704,6 +772,9 @@ COMMAND_HANDLERS_WITH_ARG = {
     "alert": handle_alert_set_command,
     "remove_alert": handle_alert_remove_command,
     "setalert": handle_alert_set_command,
+    "pro": handle_pro_analysis_command,
+    "pro_analysis": handle_pro_analysis_command,
+    "analyze": handle_pro_analysis_command,
 }
 
 COMMAND_HANDLERS_WITH_ARG = {

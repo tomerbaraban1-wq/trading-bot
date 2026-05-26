@@ -687,12 +687,15 @@ def _handle_command(text: str, context: dict) -> str | None:
         "/doctor": "doctor",
         "/anomalies": "anomalies",
         "/positions": "positions",
+        "/drawdown": "drawdown",
         "/pos": "positions",
         "/portfolio": "portfolio",
         "/top": "top",
         "/sector": "sector",
         "/alerts": "alerts",
         "/setalert": "alert",
+        "/pro": "pro",
+        "/analyze": "pro",
         "/remove_alert": "remove_alert",
         # Hebrew aliases (use English in commands - Telegram requirement)
         "/briut": "health",         # בריאות

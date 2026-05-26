@@ -396,13 +396,34 @@ async def _close_position(
             st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
         ))
 
+    # ── Professional Drawdown Control ─────────────────────────────────
+    try:
+        from drawdown_control import record_trade_loss, record_trade_win, get_status as dd_status
+        if pnl_gross < 0:
+            # Calculate loss as % of budget
+            from config import settings as _cfg_dd
+            loss_pct = abs(pnl_gross) / _cfg_dd.MAX_BUDGET * 100
+            dd_result = record_trade_loss(loss_pct)
+            if dd_result.get("triggered"):
+                _create_background_task(send_message(
+                    f"🚨 <b>Drawdown Control מופעל</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"❌ הסיבה: {dd_result.get('mode')}\n"
+                    f"📉 הפסד יומי: {dd_result.get('daily_loss_pct', 0):.1f}%\n"
+                    f"🔢 הפסדים רצופים: {dd_result.get('consecutive_losses', 0)}\n"
+                    f"⏸️ עוצר קניות {dd_result.get('pause_hours', 0):.0f} שעות!"
+                ))
+        else:
+            record_trade_win()
+    except Exception as _dd_err:
+        logger.debug(f"Drawdown control update failed: {_dd_err}")
+
     # ── Recovery Protocol: react to losses ────────────────────────────
     if pnl_gross < 0:
         try:
             from recovery_protocol import get_current_mode, tighten_stops_after_loss, send_recovery_status
             _rmode = get_current_mode()
             if _rmode in ("caution", "recovery"):
-                # Tighten stops on other positions and notify
                 _create_background_task(tighten_stops_after_loss())
                 _create_background_task(send_recovery_status())
         except Exception as _rp_err:
@@ -1662,6 +1683,34 @@ async def auto_invest_loop():
                                         continue
                         except Exception:
                             pass  # fail-open — don't block on price fetch error
+
+                        # ── Professional Entry Analysis (pro_entry_system) ────
+                        try:
+                            from pro_entry_system import pro_entry_gate as _pro_gate
+                            _pro_result = await _asyncio.wait_for(
+                                _pro_gate(ticker, score), timeout=30
+                            )
+                            if not _pro_result.get("should_enter", True):
+                                _skip_reason = _pro_result.get("skip_reason", "Pro gate")
+                                logger.info(f"AUTO-INVEST: {ticker} PRO BLOCKED — {_skip_reason}")
+                                continue
+                            # Apply score adjustment from professional analysis
+                            _pro_adj = _pro_result.get("score_adjustment", 0)
+                            if abs(_pro_adj) > 0:
+                                score = max(0, min(100, score + _pro_adj))
+                                logger.info(f"AUTO-INVEST: {ticker} Pro grade={_pro_result.get('grade')} adj={_pro_adj:+.0f} → {score:.0f}")
+                        except (_asyncio.TimeoutError, Exception) as _pro_err:
+                            logger.debug(f"Pro gate skipped: {type(_pro_err).__name__}")
+
+                        # ── Drawdown Control ───────────────────────────────────
+                        try:
+                            from drawdown_control import get_drawdown_mode, get_size_multiplier
+                            _dd_mode = get_drawdown_mode()
+                            if _dd_mode == "PAUSE":
+                                logger.info(f"AUTO-INVEST: Drawdown PAUSE active — no new buys")
+                                break  # Stop scanning entirely when in drawdown pause
+                        except Exception:
+                            pass
 
                         # ── Pre-Buy Checklist — 7 final quality gates ─────────
                         try:
