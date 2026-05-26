@@ -422,6 +422,14 @@ app.add_middleware(
 from webhook import router
 app.include_router(router)
 
+# Rental/SaaS admin endpoints (dormant until RENTAL_MODE_ENABLED=true)
+try:
+    from rental_admin import router as rental_router
+    app.include_router(rental_router)
+    logger.info("Rental admin endpoints registered (currently dormant - set RENTAL_MODE_ENABLED=true to activate)")
+except Exception as _rental_err:
+    logger.warning(f"Rental admin endpoints not available: {_rental_err}")
+
 
 @app.get("/ping")
 async def ping():
