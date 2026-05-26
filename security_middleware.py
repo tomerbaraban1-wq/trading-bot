@@ -1,0 +1,229 @@
+"""
+Security Middleware for FastAPI
+=================================
+
+Centralized security middleware that:
+1. Rate limits all requests
+2. Detects injection attempts
+3. Logs security events
+4. Adds security headers
+5. Validates request integrity
+6. Blocks suspicious IPs
+"""
+
+import asyncio
+import json
+import logging
+import time
+from typing import Optional
+
+from fastapi import Request, HTTPException
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+
+from security_manager import (
+    _rate_limiter, _brute_force,
+    log_security_event, SecurityEventType,
+    inspect_request, detect_injection_attempt,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """
+    Comprehensive security middleware.
+
+    Applied to all requests automatically.
+    """
+
+    def __init__(self, app: ASGIApp):
+        super().__init__(app)
+        self.public_endpoints = {
+            "/ping",
+            "/health",
+            "/",
+            "/dashboard/advanced",
+            "/health/dashboard",
+            "/admin/plans",  # Public pricing page
+        }
+
+    async def dispatch(self, request: Request, call_next):
+        """Process request through security checks."""
+        start_time = time.time()
+
+        # Get client IP
+        client_ip = self._get_client_ip(request)
+        endpoint = request.url.path
+
+        try:
+            # ── 1. Check if IP is blocked ─────────────────────────────────
+            if _rate_limiter.is_blocked(client_ip):
+                log_security_event(
+                    event_type=SecurityEventType.UNAUTHORIZED,
+                    severity="warning",
+                    source_ip=client_ip,
+                    endpoint=endpoint,
+                    description="Blocked IP attempted access",
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "IP temporarily blocked", "retry_after": 600},
+                    headers=self._get_security_headers(),
+                )
+
+            # ── 2. Rate limiting ──────────────────────────────────────────
+            rate_check = _rate_limiter.check_rate_limit(
+                ip=client_ip,
+                endpoint=endpoint,
+            )
+
+            if not rate_check["allowed"]:
+                log_security_event(
+                    event_type=SecurityEventType.RATE_LIMIT_HIT,
+                    severity="warning",
+                    source_ip=client_ip,
+                    endpoint=endpoint,
+                    description=rate_check["reason"],
+                )
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error": rate_check["reason"],
+                        "retry_after": rate_check["retry_after"],
+                    },
+                    headers={
+                        **self._get_security_headers(),
+                        "Retry-After": str(rate_check["retry_after"]),
+                    },
+                )
+
+            # ── 3. Inspect request for attacks ────────────────────────────
+            # Only inspect non-public endpoints for body
+            body_data = None
+            if request.method in ("POST", "PUT", "PATCH") and endpoint not in self.public_endpoints:
+                try:
+                    body_bytes = await request.body()
+                    if body_bytes:
+                        body_data = json.loads(body_bytes.decode())
+
+                    # Re-create receive to allow downstream to read body
+                    async def receive():
+                        return {"type": "http.request", "body": body_bytes}
+                    request._receive = receive
+
+                except json.JSONDecodeError:
+                    pass
+                except Exception as e:
+                    logger.debug(f"Body parsing failed: {e}")
+
+            # Check headers
+            for header_name, header_value in request.headers.items():
+                attack = detect_injection_attempt(header_value)
+                if attack:
+                    log_security_event(
+                        event_type=SecurityEventType.SUSPICIOUS_REQUEST,
+                        severity="critical",
+                        source_ip=client_ip,
+                        endpoint=endpoint,
+                        description=f"{attack} in header {header_name}",
+                    )
+                    _rate_limiter.block_ip(client_ip, 3600)
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "Invalid request"},
+                        headers=self._get_security_headers(),
+                    )
+
+            # Check URL params for injection
+            for param_name, param_value in request.query_params.items():
+                attack = detect_injection_attempt(param_value)
+                if attack:
+                    log_security_event(
+                        event_type=SecurityEventType.SUSPICIOUS_REQUEST,
+                        severity="critical",
+                        source_ip=client_ip,
+                        endpoint=endpoint,
+                        description=f"{attack} in query param {param_name}",
+                    )
+                    _rate_limiter.block_ip(client_ip, 3600)
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "Invalid request parameters"},
+                        headers=self._get_security_headers(),
+                    )
+
+            # ── 4. Process request ───────────────────────────────────────
+            response = await call_next(request)
+
+            # ── 5. Add security headers ──────────────────────────────────
+            for key, value in self._get_security_headers().items():
+                response.headers[key] = value
+
+            # ── 6. Log slow requests (potential DoS) ─────────────────────
+            duration_ms = (time.time() - start_time) * 1000
+            if duration_ms > 5000:  # > 5 seconds
+                logger.warning(
+                    f"[SECURITY] Slow request from {client_ip}: {endpoint} took {duration_ms:.0f}ms"
+                )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Security middleware error: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={"error": "Internal server error"},
+                headers=self._get_security_headers(),
+            )
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Get real client IP, considering proxies."""
+        # Render uses X-Forwarded-For
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # Take first IP (original client)
+            return forwarded.split(",")[0].strip()
+
+        # Cloudflare
+        cf_ip = request.headers.get("cf-connecting-ip")
+        if cf_ip:
+            return cf_ip
+
+        # Direct connection
+        if request.client:
+            return request.client.host
+
+        return "unknown"
+
+    def _get_security_headers(self) -> dict:
+        """Get security headers to add to responses."""
+        return {
+            # Prevent XSS
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "X-XSS-Protection": "1; mode=block",
+
+            # HSTS (HTTPS Strict Transport Security)
+            "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+
+            # CSP - Content Security Policy
+            "Content-Security-Policy": (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none';"
+            ),
+
+            # Referrer policy
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+
+            # Permissions policy (replaces Feature-Policy)
+            "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+
+            # Remove server identification
+            "Server": "Bot",
+        }

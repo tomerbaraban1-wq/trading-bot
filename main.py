@@ -429,9 +429,17 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Webhook-Secret", "X-Telegram-Bot-Api-Secret-Token"],
+    allow_headers=["Content-Type", "X-Webhook-Secret", "X-Telegram-Bot-Api-Secret-Token", "X-Admin-Key", "X-Api-Key"],
     allow_credentials=False,
 )
+
+# Add security middleware (rate limiting, injection detection, security headers)
+try:
+    from security_middleware import SecurityMiddleware
+    app.add_middleware(SecurityMiddleware)
+    logger.info("Security middleware enabled: rate limiting, injection detection, security headers")
+except Exception as _sec_err:
+    logger.warning(f"Security middleware not available: {_sec_err}")
 
 # Import and include routes
 from webhook import router
@@ -452,6 +460,14 @@ try:
     logger.info("Analytics API endpoints registered at /api/v1/*")
 except Exception as _analytics_err:
     logger.warning(f"Analytics API not available: {_analytics_err}")
+
+# Security management endpoints
+try:
+    from security_endpoints import router as security_router
+    app.include_router(security_router)
+    logger.info("Security endpoints registered at /security/*")
+except Exception as _sec_err:
+    logger.warning(f"Security endpoints not available: {_sec_err}")
 
 
 @app.get("/ping")
