@@ -515,25 +515,85 @@ async def stop_loss_monitor():
                             f"({stop_meta['stop_pct']:.2f}% from entry)"
                         )
 
-                    # ── Break-even lock: once price > entry + 1.5%, floor stop at entry ──
-                    # This guarantees the trade can't turn into a loss after a decent move.
+                    # ── Break-even lock: once price > entry + 0.5%, floor stop at entry ──
+                    # Tightened: was 1.0%, now 0.5% — lock in sooner
                     _entry_price = trade["entry_price"]
-                    _breakeven_trigger = 1.0  # % above entry to activate BE lock — קונסרבטיבי יותר
+                    _breakeven_trigger = float(_os.getenv("BREAKEVEN_TRIGGER_PCT", "0.5"))
                     if (atr_stop is not None
                             and atr_stop < _entry_price
                             and plpc >= _breakeven_trigger):
-                        _be_stop = round(_entry_price * 1.001, 4)  # 0.1% above entry (covers slippage)
+                        _be_stop = round(_entry_price * 1.002, 4)  # 0.2% above entry (covers slippage)
                         if _be_stop > atr_stop:
                             atr_stop = _be_stop
                             await asyncio.to_thread(
                                 database.update_trade_stop, trade["id"], atr_stop, high_wm
                             )
                             logger.info(
-                                f"[BE LOCK] {ticker}: stop floored to entry "
+                                f"[BE LOCK] {ticker}: stop locked to entry "
                                 f"${_be_stop:.2f} (+{plpc:.1f}% | trigger={_breakeven_trigger}%)"
                             )
-                            # Break-even alert disabled — too noisy
-                            pass
+
+                    # ── Profit-fade exit: "רווח קטן > הפסד" ─────────────────────────
+                    # If the position once reached profit_protect_peak% and has since
+                    # faded back toward entry, sell now and keep the small gain.
+                    # Better to book +0.3% than ride it back to -3%.
+                    _profit_protect_enabled = _os.getenv("PROFIT_PROTECT_ENABLED", "true").lower() == "true"
+                    if _profit_protect_enabled:
+                        try:
+                            _peak_pct = ((high_wm - _entry_price) / _entry_price * 100) if _entry_price > 0 else 0
+                            _fade_threshold  = float(_os.getenv("PROFIT_PROTECT_PEAK_PCT",  "1.5"))  # had this much profit
+                            _exit_floor_pct  = float(_os.getenv("PROFIT_PROTECT_FLOOR_PCT", "0.2"))  # exit at this profit
+                            _pp_key = f"pp_{trade['id']}"
+                            if (
+                                _peak_pct >= _fade_threshold      # was in profit
+                                and 0 <= plpc <= _exit_floor_pct  # profit is fading toward entry
+                                and not _position_alert_sent.get(_pp_key)
+                            ):
+                                _position_alert_sent[_pp_key] = True
+                                logger.info(
+                                    f"[PROFIT-FADE] {ticker}: was +{_peak_pct:.1f}% → now +{plpc:.1f}% — selling to protect gain"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "smart_sell",
+                                    f"הרווח נשחק ({_peak_pct:.1f}%→{plpc:.1f}%) — נועל רווח קטן"
+                                )
+                                _create_background_task(send_message(
+                                    f"🔒 <b>נעלתי רווח קטן — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📈 שיא: <b>+{_peak_pct:.1f}%</b>\n"
+                                    f"💵 מכרתי ב: <b>+{plpc:.1f}%</b>\n"
+                                    f"✅ עדיף רווח קטן מאשר להמתין ולהפסיד!\n"
+                                    f"💡 הפסד הנמנע: ~{settings.STOP_LOSS_PCT:.1f}%"
+                                ))
+                                continue
+                        except Exception as _pp_err:
+                            logger.debug(f"[PROFIT-FADE] {ticker}: check error: {_pp_err}")
+
+                    # ── Declining-momentum exit: sell when trending down while in profit ──
+                    # If position has been in profit AND price is now declining for 2 checks,
+                    # sell before it crosses below entry.
+                    try:
+                        _dm_enabled = _os.getenv("DECLINE_MOMENTUM_EXIT", "true").lower() == "true"
+                        _peak_pct2 = ((high_wm - _entry_price) / _entry_price * 100) if _entry_price > 0 else 0
+                        if _dm_enabled and _peak_pct2 >= 1.0 and 0 < plpc < 1.0:
+                            # Was in profit, now falling — check price history for decline
+                            _ph = _price_history.get(ticker, [])
+                            if len(_ph) >= 3:
+                                # All last 3 prices declining and still positive
+                                _declining = all(_ph[i] > _ph[i+1] for i in range(len(_ph)-1))
+                                _dm_key = f"dm_{trade['id']}"
+                                if _declining and not _position_alert_sent.get(_dm_key):
+                                    _position_alert_sent[_dm_key] = True
+                                    logger.info(
+                                        f"[DECLINE EXIT] {ticker}: declining from +{_peak_pct2:.1f}% → now +{plpc:.1f}% — exiting"
+                                    )
+                                    await _close_position(
+                                        trade, cur_price, "smart_sell",
+                                        f"ירידת מומנטום מהשיא (peak={_peak_pct2:.1f}%, now={plpc:.1f}%)"
+                                    )
+                                    continue
+                    except Exception:
+                        pass
 
                     # Trail the stop upward as price rises
                     try:
