@@ -515,6 +515,39 @@ async def stop_loss_monitor():
                             f"({stop_meta['stop_pct']:.2f}% from entry)"
                         )
 
+                    # ── Pre-loss guardian: "אם לא אמכור — אהיה בהפסד" ──────────────
+                    # If price is declining AND approaching entry from above → sell now
+                    # This catches the "slowly bleeding" case before stop-loss fires.
+                    try:
+                        _ph2 = _price_history.get(ticker, [])
+                        if len(_ph2) >= 2 and 0 < plpc < 1.0:
+                            # In thin profit zone AND declining
+                            _trending_down = _ph2[-1] < _ph2[-2]
+                            # How far from stop loss? (% remaining buffer)
+                            _stop_buffer = ((cur_price - atr_stop) / cur_price * 100) if atr_stop else 99
+                            # If only 0.5% away from stop and declining → sell NOW
+                            _preempt_key = f"preempt_{trade['id']}"
+                            if _trending_down and _stop_buffer < 0.5 and not _position_alert_sent.get(_preempt_key):
+                                _position_alert_sent[_preempt_key] = True
+                                logger.info(
+                                    f"[PRE-LOSS] {ticker}: plpc={plpc:+.1f}% declining, "
+                                    f"stop buffer={_stop_buffer:.2f}% — selling before loss"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "smart_sell",
+                                    f"מניעת הפסד: מחיר יורד לסטופ ({_stop_buffer:.2f}% מהסטופ)"
+                                )
+                                _create_background_task(send_message(
+                                    f"⚡ <b>מכרתי לפני הפסד — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📉 המחיר ירד ל-{plpc:+.1f}%\n"
+                                    f"🛑 הסטופ נמצא {_stop_buffer:.2f}% מתחת\n"
+                                    f"✅ יצאתי עם {plpc:+.2f}% — לא חיכיתי להפסד!"
+                                ))
+                                continue
+                    except Exception:
+                        pass
+
                     # ── Break-even lock: once price > entry + 0.5%, floor stop at entry ──
                     # Tightened: was 1.0%, now 0.5% — lock in sooner
                     _entry_price = trade["entry_price"]
@@ -768,15 +801,17 @@ async def stop_loss_monitor():
                     except Exception:
                         pass
 
-                    # ── 1b1. Stagnant Position Exit — sell if flat for 24h ──
-                    # מניה שלא זזה (-1% ל-+1%) 24 שעות = הון מבוזבז
+                    # ── 1b1. Stagnant Position Exit — sell if flat/losing for 12h ──
+                    # מניה שלא זזה (-0.5% ל-+1%) 12 שעות = הון מבוזבז + סיכון
                     try:
                         from datetime import datetime as _dt_sg, timezone as _tz_sg
                         _entry_ts = trade.get("entry_time")
-                        if _entry_ts and -1.0 <= plpc <= 1.0:
+                        if _entry_ts and -1.5 <= plpc <= 1.0:
                             _entry_dt = _dt_sg.strptime(str(_entry_ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz_sg.utc)
                             _hours_held = (_dt_sg.now(_tz_sg.utc) - _entry_dt).total_seconds() / 3600
-                            if _hours_held >= 24:
+                            # Negative/flat: exit after 12h. Small profit: exit after 18h.
+                            _stagnant_hours = 12 if plpc < 0 else 18
+                            if _hours_held >= _stagnant_hours:
                                 logger.info(
                                     f"[STAGNANT] {ticker}: {_hours_held:.0f}h held, plpc={plpc:+.1f}% — selling stale position"
                                 )
@@ -784,6 +819,13 @@ async def stop_loss_monitor():
                                     trade, cur_price, "time_exit",
                                     f"מניה תקועה {_hours_held:.0f}ש' ({plpc:+.1f}%) — משחרר הון"
                                 )
+                                _create_background_task(send_message(
+                                    f"⏰ <b>מכרתי מניה תקועה — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"⏱️ החזקתי {_hours_held:.0f} שעות\n"
+                                    f"💵 P&L: {plpc:+.1f}%\n"
+                                    f"✅ שיחררתי הון לעסקה טובה יותר"
+                                ))
                                 continue
                     except Exception:
                         pass
@@ -1084,12 +1126,15 @@ async def stop_loss_monitor():
                     if _smart_sell_lock is None:  # ensure lock exists (first cycle)
                         _smart_sell_lock = asyncio.Lock()
                     # Hold lock ONLY to read/update timestamp — release before expensive I/O
+                    # Check interval: faster when near break-even or in loss
+                    _near_entry = abs(plpc) < 1.0   # within ±1% of entry
+                    _check_interval = 90 if _near_entry else 240  # 90s near entry, 4 min otherwise
                     async with _smart_sell_lock:
                         last = _smart_sell_last_check.get(ticker, 0)
-                        if _time.time() - last < 300:
-                            continue  # Skip check if run too recently
+                        if _time.time() - last < _check_interval:
+                            continue  # Skip if checked recently
                         _smart_sell_last_check[ticker] = _time.time()
-                    # Lock released — now do expensive scoring outside the lock
+                    # Lock released — do scoring outside the lock
                     try:
                         from scoring import get_composite_score
                         score_result = await asyncio.to_thread(
@@ -1099,33 +1144,63 @@ async def stop_loss_monitor():
                         if comp is None:
                             raise ValueError("composite_score missing from result")
 
-                        # Profit-adjusted threshold: tighter exit when sitting on gains
-                        smart_threshold = 35
+                        # ── Adaptive threshold: exit sooner when score falls ──
+                        # When in profit: protect gains aggressively
+                        # When at/near entry: exit before it becomes a loss
+                        # When in loss: exit fast (stop already handles big loss)
                         if plpc >= 8.0:
-                            smart_threshold = 45   # lock in large gains aggressively
+                            smart_threshold = 50   # was 45 — tighter
                         elif plpc >= 4.0:
-                            smart_threshold = 40   # moderate protection of profits
+                            smart_threshold = 45   # was 40
+                        elif plpc >= 1.0:
+                            smart_threshold = 42   # new: small profit — protect it
+                        elif plpc >= -0.5:
+                            smart_threshold = 48   # near breakeven: exit fast on bad score
+                        else:
+                            smart_threshold = 38   # already losing: quick exit if score bad
 
+                        # ── No-confirmation for near-entry positions ──────────
+                        # If near entry (±1%) and score bad → sell immediately, no wait
                         if comp < smart_threshold:
-                            # Require 2 consecutive low scores before selling (noise filter)
-                            _smart_sell_low_count[ticker] = _smart_sell_low_count.get(ticker, 0) + 1
-                            if _smart_sell_low_count[ticker] >= 2:
+                            if _near_entry:
+                                # Near entry + bad score = sell NOW (1 check)
                                 logger.warning(
-                                    f"[SMART SELL] {ticker}: score={comp}/100 "
-                                    f"(threshold={smart_threshold}, confirmed) — exiting"
+                                    f"[SMART SELL] {ticker}: score={comp} < {smart_threshold} "
+                                    f"near entry ({plpc:+.1f}%) — immediate exit"
                                 )
                                 _smart_sell_low_count.pop(ticker, None)
                                 await _close_position(
                                     trade, cur_price, "smart_sell",
-                                    f"מכירה חכמה (ציון={comp}/100)"
+                                    f"ציון נפל ({comp}/100) ליד כניסה — מניעת הפסד"
                                 )
+                                _create_background_task(send_message(
+                                    f"🧠 <b>מכרתי לפני הפסד — {ticker}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📊 ציון נפל ל-{comp}/100\n"
+                                    f"💵 P&L: {plpc:+.1f}%\n"
+                                    f"✅ יצאתי בזמן לפני שהפך להפסד!"
+                                ))
                             else:
-                                logger.info(
-                                    f"[SMART SELL] {ticker}: score={comp} < {smart_threshold} "
-                                    f"— waiting for confirmation (1/2)"
-                                )
+                                # Not near entry: wait for 2 confirmations (noise filter)
+                                _smart_sell_low_count[ticker] = _smart_sell_low_count.get(ticker, 0) + 1
+                                if _smart_sell_low_count[ticker] >= 2:
+                                    logger.warning(
+                                        f"[SMART SELL] {ticker}: score={comp}/100 "
+                                        f"(threshold={smart_threshold}, confirmed) — exiting"
+                                    )
+                                    _smart_sell_low_count.pop(ticker, None)
+                                    await _close_position(
+                                        trade, cur_price, "smart_sell",
+                                        f"מכירה חכמה מאושרת (ציון={comp}/100)"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[SMART SELL] {ticker}: score={comp} < {smart_threshold} "
+                                        f"— waiting for confirmation (1/2)"
+                                    )
                         else:
                             _smart_sell_low_count.pop(ticker, None)   # reset on recovery
+
                     except Exception as se:
                         logger.warning(f"Smart sell check error for {ticker}: {se}")
                         _create_background_task(
