@@ -396,6 +396,18 @@ async def _close_position(
             st["daily_pnl"], st["max_daily_loss"], st["trip_reason"]
         ))
 
+    # ── Recovery Protocol: react to losses ────────────────────────────
+    if pnl_gross < 0:
+        try:
+            from recovery_protocol import get_current_mode, tighten_stops_after_loss, send_recovery_status
+            _rmode = get_current_mode()
+            if _rmode in ("caution", "recovery"):
+                # Tighten stops on other positions and notify
+                _create_background_task(tighten_stops_after_loss())
+                _create_background_task(send_recovery_status())
+        except Exception as _rp_err:
+            logger.debug(f"Recovery protocol reaction failed: {_rp_err}")
+
     # Fire-and-forget — Telegram failure must NOT prevent position cleanup or
     # cause _close_position to return False (trade is already closed in broker+DB)
     _create_background_task(notify_sell(ticker, exit_price, pnl_gross, label))
@@ -1240,6 +1252,18 @@ async def auto_invest_loop():
                 await asyncio.sleep(5 * 60)
                 continue
 
+            # ── Recovery Protocol check ────────────────────────────────────
+            try:
+                from recovery_protocol import get_current_mode, should_skip_buy_in_recovery
+                _recovery_mode = get_current_mode()
+                if should_skip_buy_in_recovery(_recovery_mode):
+                    logger.info(f"AUTO-INVEST: Recovery mode={_recovery_mode} — skipping buys")
+                    await asyncio.sleep(5 * 60)
+                    continue
+            except Exception as _rp_err:
+                _recovery_mode = "normal"
+                logger.debug(f"Recovery protocol check failed: {_rp_err}")
+
             # Only trade during market hours — timeout prevents loop hang on broker outage
             try:
                 mkt_open = await asyncio.wait_for(
@@ -1438,6 +1462,30 @@ async def auto_invest_loop():
 
                 # Smart scan: put high-momentum stocks first, then random rotation
                 SCAN_PER_CYCLE = int(_os.getenv("SCAN_PER_CYCLE", "10"))
+
+                # ── Advanced Momentum Pre-Filter (momentum_filter.py) ─────
+                # Rank stocks by 5-day return + volume trend + SMA position
+                # before expensive full scoring. Focus scan on best setups.
+                try:
+                    from momentum_filter import get_top_momentum_tickers
+                    _cands_for_momentum = [
+                        t for t in shuffled[:50]
+                        if not database.get_open_trade_by_ticker(t)
+                    ]
+                    if len(_cands_for_momentum) >= 5:
+                        _top_momentum = await _asyncio.wait_for(
+                            get_top_momentum_tickers(_cands_for_momentum, top_n=20),
+                            timeout=60,
+                        )
+                        # Add remaining at the end
+                        _remaining = [t for t in shuffled if t not in _top_momentum]
+                        shuffled = _top_momentum + _remaining
+                        logger.info(
+                            f"[MOMENTUM FILTER] Top tickers: {_top_momentum[:5]}"
+                        )
+                except Exception as _mf_err:
+                    logger.debug(f"Momentum filter skipped: {_mf_err}")
+
                 # Momentum pre-filter: quick 1-day % change check (cheap, no full scoring)
                 _momentum_tickers = []
                 _normal_tickers = []
