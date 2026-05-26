@@ -400,6 +400,27 @@ def _build_context() -> dict:
     return _result
 
 
+def _handle_command(text: str, context: dict) -> str | None:
+    """
+    SYNC backward-compat stub.
+    The real logic is in _handle_command_async().
+    This is only called from sync code paths that handle simple
+    commands (not advanced async ones).
+    Uses a fresh event loop to run the async handler.
+    """
+    import asyncio as _aio_sync
+    try:
+        # Run in a new event loop (safe from non-async context)
+        loop = _aio_sync.new_event_loop()
+        _aio_sync.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(_handle_command_async(text, context))
+        finally:
+            loop.close()
+    except Exception as e:
+        return None  # Fall through to LLM
+
+
 def _generate_reply(user_message: str) -> str:
     """
     Fully dynamic reply — LLM analyzes ANY question and responds intelligently.
@@ -661,17 +682,19 @@ async def _send_typing(chat_id: str) -> None:
         pass  # typing indicator is best-effort
 
 
-def _handle_command(text: str, context: dict) -> str | None:
+async def _handle_command_async(text: str, context: dict) -> str | None:
     """
-    Handle common questions directly — guaranteed formatting, no LLM needed.
-    Returns reply string or None (→ fall through to LLM).
+    ASYNC version of _handle_command.
+    Properly handles advanced commands without deadlocks.
+    Called with `await` from handle_telegram_update.
     """
+    import asyncio as _aio
+
     t = text.strip().lower()
     cmd = t.split()[0] if t else ""
     args = " ".join(t.split()[1:]) if len(t.split()) > 1 else ""
 
-    # ── Advanced commands via telegram_commands.py ────────────────────────
-    # Map /command → handler  (lazy loaded to avoid circular import)
+    # ── Advanced commands via telegram_commands.py (ASYNC — no deadlock) ─
     advanced_commands = {
         # English commands
         "/health": "health",
@@ -724,41 +747,36 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     if cmd in advanced_commands:
         try:
-            import asyncio as _asyncio
             from telegram_commands import route_command
             handler_name = advanced_commands[cmd]
-
-            # Run async command in current event loop
-            try:
-                loop = _asyncio.get_event_loop()
-                if loop.is_running():
-                    # Create task and wait for result
-                    future = _asyncio.run_coroutine_threadsafe(
-                        route_command(handler_name, args),
-                        loop
-                    )
-                    result = future.result(timeout=60)
-                    if result:
-                        return result
-                else:
-                    result = loop.run_until_complete(route_command(handler_name, args))
-                    if result:
-                        return result
-            except Exception as e:
-                return f"⚠️ שגיאה בפקודה {cmd}: {e}"
+            # Direct await — no deadlock, no thread gymnastics
+            result = await _aio.wait_for(
+                route_command(handler_name, args),
+                timeout=20,
+            )
+            if result:
+                return result
+        except _aio.TimeoutError:
+            return f"⏳ {cmd} לקח יותר מדי זמן — נסה שוב"
         except Exception as e:
-            return f"⚠️ {cmd} זמנית לא זמין: {e}"
+            return f"⚠️ {cmd} שגיאה: {e}"
 
     # ── /commands ──────────────────────────────────────────────────────────
     if cmd == "/start":
-        import asyncio as _asyncio
         try:
             from telegram_bot import send_smart_welcome, send_menu
-            _asyncio.ensure_future(send_smart_welcome())
-            _asyncio.ensure_future(send_menu())
+            # Use create_task — works properly in async context
+            loop = _aio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(send_smart_welcome())
+                loop.create_task(send_menu())
+            else:
+                await send_smart_welcome()
+                await send_menu()
         except Exception:
-            pass
-        return None  # smart_welcome already sent
+            # Fallback: return a basic welcome
+            return "👋 <b>מנהל ההשקעות שלך</b>\n💬 שאל כל שאלה או לחץ /help"
+        return None  # already sent via create_task
 
     if cmd in ("/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (
@@ -4269,7 +4287,7 @@ def _handle_command(text: str, context: dict) -> str | None:
     if len(_parts) >= 2 and _parts[0] in _sell_trigger:
         _auto_sell_tk = _safe_ticker(_parts[1])
         if _auto_sell_tk:
-            return _handle_command(f"/sell {_auto_sell_tk}", context)
+            return await _handle_command_async(f"/sell {_auto_sell_tk}", context)
 
     # ── Auto-detect ticker in free Hebrew text ─────────────────────────────────
     _auto_ticker = _extract_ticker_from_text(text)
@@ -4280,19 +4298,19 @@ def _handle_command(text: str, context: dict) -> str | None:
         _vol_kws   = ["נפח", "volume", "כמה נסחר"]
         _52w_kws   = ["שיא", "שפל", "52", "גבוה", "נמוך"]
         if any(k in t for k in _score_kws):
-            return _handle_command(f"/score {_auto_ticker}", context)
+            return await _handle_command_async(f"/score {_auto_ticker}", context)
         if any(k in t for k in _news_kws):
-            return _handle_command(f"/news {_auto_ticker}", context)
+            return await _handle_command_async(f"/news {_auto_ticker}", context)
         if any(k in t for k in _price_kws):
-            return _handle_command(f"/price {_auto_ticker}", context)
+            return await _handle_command_async(f"/price {_auto_ticker}", context)
         if any(k in t for k in _vol_kws):
-            return _handle_command(f"/volume {_auto_ticker}", context)
+            return await _handle_command_async(f"/volume {_auto_ticker}", context)
         if any(k in t for k in _52w_kws):
-            return _handle_command(f"/52week {_auto_ticker}", context)
+            return await _handle_command_async(f"/52week {_auto_ticker}", context)
         # If user mentions a ticker they OWN → show their position details
         owned_tickers = {p["ticker"] for p in context.get("open_positions", [])}
         if _auto_ticker in owned_tickers:
-            return _handle_command(f"/stop {_auto_ticker}", context)
+            return await _handle_command_async(f"/stop {_auto_ticker}", context)
 
         # If message is ONLY a ticker (e.g. user answers "V" after /news asked "which ticker?")
         # → show quick overview + offer options
@@ -4464,7 +4482,7 @@ async def handle_telegram_update(update: dict) -> dict:
                     f"💡 או שלח שאלה: <i>\"האם כדאי לקנות {_detected_ticker}?\"</i>"
                 )
 
-            rep = await asyncio.to_thread(_handle_command, text, ctx)
+            rep = await _handle_command_async(text, ctx)
             if rep is None:
                 client = _get_client()
                 if client:
