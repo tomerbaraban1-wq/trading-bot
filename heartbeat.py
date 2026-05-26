@@ -4025,6 +4025,108 @@ async def detailed_analytics_loop():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HEALTH MONITORING LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def health_monitoring_loop():
+    """
+    Monitor system health every 10 minutes.
+    Sends alerts on critical issues.
+    """
+    await asyncio.sleep(2 * 60)  # wait 2 min after startup
+    while True:
+        try:
+            from health_monitor import run_health_check, perform_auto_recovery
+            report = await run_health_check()
+
+            # Auto-recovery for critical issues
+            if report.overall_status == "critical":
+                recovery = await perform_auto_recovery(report)
+
+                # Notify trader
+                from smart_notifications import notify_critical
+                issues_text = "\n".join(report.issues[:5])
+                actions_text = "\n".join(recovery.get("actions_taken", []))
+
+                await notify_critical(
+                    title="System Health Critical",
+                    message=f"<b>Issues:</b>\n{issues_text}\n\n<b>Auto-recovery:</b>\n{actions_text}",
+                    category="system",
+                )
+
+            elif report.overall_status == "degraded":
+                # Just log for degraded state
+                logger.warning(f"[HEALTH] Degraded: {len(report.issues)} issues")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Health monitoring error: {e}")
+
+        await asyncio.sleep(10 * 60)   # run every 10 minutes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEWS CATALYST LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def news_catalyst_loop():
+    """
+    Scan portfolio for news catalysts every 30 minutes.
+    Alerts on breaking news.
+    """
+    await asyncio.sleep(20 * 60)  # wait 20 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from news_intelligence import get_portfolio_news
+                news_data = await get_portfolio_news()
+
+                if "error" not in news_data:
+                    catalysts = news_data.get("catalysts", [])
+                    breaking = news_data.get("breaking_news", [])
+
+                    # Alert on breaking high-impact news
+                    if breaking:
+                        from smart_notifications import notify_high
+                        for article in breaking[:3]:
+                            tickers_str = ", ".join(article.get("tickers", []))
+                            await notify_high(
+                                title=f"📰 Breaking News: {tickers_str}",
+                                message=f"<b>{article['title']}</b>\nSentiment: {article.get('sentiment', 'neutral')}",
+                                category="market",
+                                subkey=tickers_str,
+                            )
+
+                    # Send catalyst summary
+                    if catalysts:
+                        lines = ["📰 <b>News Catalysts</b>", "━━━━━━━━━━━━━━"]
+                        for cat in catalysts[:3]:
+                            tickers_str = ", ".join(cat.get("tickers", []))
+                            lines.append(f"  • {tickers_str}: {cat['title'][:80]}...")
+                            lines.append(f"    Impact: {cat.get('impact', 0):.1f}/10 | {cat.get('sentiment', 'neutral')}")
+
+                        from smart_notifications import notify_medium
+                        await notify_medium(
+                            title="News Catalysts Detected",
+                            message="\n".join(lines),
+                            category="market",
+                        )
+
+                logger.info(f"[NEWS] Scanned portfolio: {news_data.get('total_articles', 0)} articles")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"News catalyst loop error: {e}")
+
+        await asyncio.sleep(30 * 60)   # run every 30 minutes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AI DECISION ENGINE LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 

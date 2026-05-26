@@ -301,7 +301,8 @@ async def lifespan(app: FastAPI):
                            correlation_monitor_loop, market_intelligence_loop,
                            detailed_analytics_loop, ai_decision_loop,
                            attribution_loop, notification_digest_loop,
-                           multi_timeframe_loop)
+                           multi_timeframe_loop, health_monitoring_loop,
+                           news_catalyst_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -330,6 +331,8 @@ async def lifespan(app: FastAPI):
     attribution_task       = asyncio.create_task(attribution_loop())       # תובנות ביצועים
     digest_task            = asyncio.create_task(notification_digest_loop())# digest חכם
     mtf_task               = asyncio.create_task(multi_timeframe_loop())   # multi-timeframe
+    health_task            = asyncio.create_task(health_monitoring_loop()) # ניטור בריאות
+    news_catalyst_task     = asyncio.create_task(news_catalyst_loop())     # אירועי חדשות
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
     golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
     reentry_task           = asyncio.create_task(smart_reentry_loop())     # חזרה למניות שעלו אחרי מכירה
@@ -363,7 +366,7 @@ async def lifespan(app: FastAPI):
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
         earnings_monitor_task, market_pulse_task, goal_progress_task, learning_task, adaptive_params_task,
         correlation_task, market_intel_task, analytics_task, ai_decision_task,
-        attribution_task, digest_task, mtf_task, webhook_keeper_task,
+        attribution_task, digest_task, mtf_task, health_task, news_catalyst_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
         drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task,
@@ -443,6 +446,41 @@ async def ping():
     """Ultra-lightweight liveness endpoint for UptimeRobot / external keep-alive.
     No DB calls — returns instantly so Render never marks it as slow."""
     return {"ok": True, "uptime": round(time.time() - START_TIME)}
+
+
+@app.get("/health")
+async def health_endpoint():
+    """Comprehensive health check endpoint."""
+    try:
+        from health_monitor import run_health_check
+        report = await run_health_check()
+        return {
+            "status": report.overall_status,
+            "timestamp": report.timestamp,
+            "metrics": report.metrics,
+            "issues": report.issues,
+            "uptime_seconds": round(time.time() - START_TIME),
+        }
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+
+@app.get("/health/dashboard", response_class=HTMLResponse)
+async def health_dashboard():
+    """Visual health monitoring dashboard."""
+    try:
+        from health_monitor import run_health_check, generate_health_dashboard_html
+        report = await run_health_check()
+        html = generate_health_dashboard_html(report)
+        return HTMLResponse(content=html)
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<html><body><h1>Health Dashboard Error</h1><p>{e}</p></body></html>",
+            status_code=500
+        )
 
 
 @app.get("/", response_class=HTMLResponse)
