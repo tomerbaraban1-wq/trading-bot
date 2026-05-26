@@ -688,7 +688,12 @@ def _handle_command(text: str, context: dict) -> str | None:
         "/anomalies": "anomalies",
         "/positions": "positions",
         "/pos": "positions",
+        "/portfolio": "portfolio",
         "/top": "top",
+        "/sector": "sector",
+        "/alerts": "alerts",
+        "/setalert": "alert",
+        "/remove_alert": "remove_alert",
         # Hebrew aliases (use English in commands - Telegram requirement)
         "/briut": "health",         # בריאות
         "/betzuim": "performance",  # ביצועים
@@ -743,25 +748,14 @@ def _handle_command(text: str, context: dict) -> str | None:
 
     # ── /commands ──────────────────────────────────────────────────────────
     if cmd == "/start":
-        # Send the persistent keyboard menu
         import asyncio as _asyncio
         try:
-            from telegram_bot import send_menu as _send_menu
-            _asyncio.ensure_future(_send_menu())
+            from telegram_bot import send_smart_welcome, send_menu
+            _asyncio.ensure_future(send_smart_welcome())
+            _asyncio.ensure_future(send_menu())
         except Exception:
             pass
-        return (
-            "👋 <b>שלום! אני מנהל ההשקעות שלך</b>\n"
-            "━━━━━━━━━━━━━━━━\n"
-            "📱 כפתורי תפריט הופיעו למטה ↓\n\n"
-            "💬 <b>אפשר לשאול אותי כל שאלה חופשית!</b>\n"
-            "לדוגמה:\n"
-            "  • <i>מה קורה עם AAPL?</i>\n"
-            "  • <i>האם השוק עולה או יורד?</i>\n"
-            "  • <i>כמה הרווחתי החודש?</i>\n"
-            "  • <i>מה דעתך על התיק שלי?</i>\n\n"
-            "📋 /help — כל הפקודות"
-        )
+        return None  # smart_welcome already sent
 
     if cmd in ("/help", "עזרה", "עזר", "פקודות", "מה אתה יכול"):
         return (

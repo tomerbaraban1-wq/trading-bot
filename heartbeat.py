@@ -3180,12 +3180,35 @@ async def market_pulse_loop():
 async def price_alert_loop():
     """
     Check user-defined price alerts every 2 minutes.
-    Alerts set via /alert TICKER PRICE command stored in USER_ALERTS env var.
+    Supports:
+    1. Legacy: USER_ALERTS env var (ticker:price)
+    2. New: telegram_bot._price_alerts (set via /alert command)
     """
     await asyncio.sleep(120)
     while True:
         try:
             import os as _os
+
+            # ── Check in-memory alerts (set via /alert command) ──────────
+            try:
+                from telegram_bot import _price_alerts, check_price_alerts
+                if _price_alerts:
+                    prices = {}
+                    for ticker in list(_price_alerts.keys()):
+                        try:
+                            cur = await asyncio.wait_for(
+                                asyncio.to_thread(broker.get_price, ticker), timeout=8
+                            )
+                            if cur:
+                                prices[ticker] = cur
+                        except Exception:
+                            pass
+                    if prices:
+                        await check_price_alerts(prices)
+            except Exception as _pal_err:
+                logger.debug(f"[PRICE ALERT] in-memory check error: {_pal_err}")
+
+            # ── Legacy: USER_ALERTS env var ──────────────────────────────
             alerts_str = _os.getenv("USER_ALERTS", "")
             if alerts_str:
                 alerts = [a.strip() for a in alerts_str.split(",") if ":" in a.strip()]
@@ -3199,7 +3222,7 @@ async def price_alert_loop():
                         cur = await asyncio.wait_for(
                             asyncio.to_thread(broker.get_price, ticker), timeout=8
                         )
-                        if cur and abs(cur - target) / target < 0.01:  # within 1%
+                        if cur and abs(cur - target) / target < 0.01:
                             _price_alerts_fired.add(key)
                             direction = "📈 עלה" if cur >= target else "📉 ירד"
                             await send_message(

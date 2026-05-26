@@ -58,6 +58,42 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         endpoint = request.url.path
 
         try:
+            # ── 0. Progressive blocking (enhanced) ───────────────────────
+            try:
+                from security_enhanced import is_ip_blocked as _enh_blocked
+                if _enh_blocked(client_ip):
+                    return JSONResponse(
+                        status_code=429,
+                        content={"error": "Temporarily blocked"},
+                        headers=self._get_security_headers(),
+                    )
+            except Exception:
+                pass
+
+            # ── 0.5 Suspicious pattern detection ─────────────────────────
+            try:
+                from security_enhanced import detect_suspicious_request, record_violation
+                ua = request.headers.get("user-agent", "")
+                qs = str(request.query_params)
+                pattern = detect_suspicious_request(endpoint, ua, qs, dict(request.headers))
+                if pattern:
+                    log_security_event(
+                        event_type=SecurityEventType.SUSPICIOUS_REQUEST,
+                        severity="warning",
+                        source_ip=client_ip,
+                        endpoint=endpoint,
+                        description=f"Suspicious pattern: {pattern}",
+                    )
+                    result = record_violation(client_ip, "scanner")
+                    if result.get("blocked"):
+                        return JSONResponse(
+                            status_code=403,
+                            content={"error": "Forbidden"},
+                            headers=self._get_security_headers(),
+                        )
+            except Exception:
+                pass
+
             # ── 1. Check if IP is blocked ─────────────────────────────────
             if _rate_limiter.is_blocked(client_ip):
                 log_security_event(
@@ -80,6 +116,12 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             )
 
             if not rate_check["allowed"]:
+                # Record violation for progressive blocking
+                try:
+                    from security_enhanced import record_violation as _rec_v
+                    _rec_v(client_ip, "rate_limit")
+                except Exception:
+                    pass
                 log_security_event(
                     event_type=SecurityEventType.RATE_LIMIT_HIT,
                     severity="warning",
@@ -100,7 +142,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 )
 
             # ── 3. Inspect request for attacks ────────────────────────────
-            # Only inspect non-public endpoints for body
             body_data = None
             if request.method in ("POST", "PUT", "PATCH") and endpoint not in self.public_endpoints:
                 try:
@@ -108,7 +149,6 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                     if body_bytes:
                         body_data = json.loads(body_bytes.decode())
 
-                    # Re-create receive to allow downstream to read body
                     async def receive():
                         return {"type": "http.request", "body": body_bytes}
                     request._receive = receive
@@ -129,6 +169,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                         endpoint=endpoint,
                         description=f"{attack} in header {header_name}",
                     )
+                    try:
+                        from security_enhanced import record_violation as _rv
+                        _rv(client_ip, "injection")
+                    except Exception:
+                        pass
                     _rate_limiter.block_ip(client_ip, 3600)
                     return JSONResponse(
                         status_code=400,

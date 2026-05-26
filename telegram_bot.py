@@ -1510,3 +1510,236 @@ async def notify_score_enhancement(
         await send_message(msg)
     except Exception as e:
         logger.debug(f"Score enhancement notify failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RICH PORTFOLIO CARD  ← main daily overview
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def send_portfolio_card() -> None:
+    """
+    Beautiful real-time portfolio card with:
+    - Total value + daily P&L with sparkline
+    - Per-position breakdown with mini-charts
+    - Win rate bar + sector concentration
+    - Inline buttons for quick actions
+    """
+    if not _enabled():
+        return
+    try:
+        import broker, database
+        from datetime import datetime, timezone, timedelta
+
+        positions = await asyncio.to_thread(broker.get_positions)
+        open_trades = await asyncio.to_thread(database.get_open_trades)
+
+        if not positions:
+            await send_message(
+                "📊 <b>תיק ריק</b>\n"
+                "━━━━━━━━━━━━━━━━\n"
+                "🤖 הבוט מחפש הזדמנויות...\n"
+                "📈 MIN_BUY_SCORE=65 | SMA50=חובה"
+            )
+            return
+
+        total_val  = sum(float(p.market_value) for p in positions)
+        total_pnl  = sum(float(p.unrealized_pl) for p in positions)
+        total_cost = sum(float(p.cost_basis) for p in positions)
+        total_pct  = (total_pnl / total_cost * 100) if total_cost > 0 else 0
+
+        pnl_emoji  = "🟢" if total_pnl >= 0 else "🔴"
+        pnl_bar    = _build_progress_bar(min(100, max(0, 50 + total_pct * 3)))
+
+        # Weekly P&L sparkline
+        try:
+            conn = database.get_connection()
+            week_pnls = conn.execute("""
+                SELECT COALESCE(SUM(pnl_gross),0) FROM trade_log
+                WHERE status IN ('stopped','sold')
+                AND exit_time >= datetime('now','-7 days')
+                GROUP BY date(exit_time) ORDER BY date(exit_time)
+            """).fetchall()
+            spark = _build_pnl_chart([r[0] for r in week_pnls], width=7) if week_pnls else ""
+        except Exception:
+            spark = ""
+
+        lines = [
+            f"📊 <b>תיק מניות — עדכון חי</b>",
+            f"━━━━━━━━━━━━━━━━",
+            f"💼 שווי: <b>${total_val:,.2f}</b>",
+            f"{pnl_emoji} P&L: <b>${total_pnl:+,.2f}</b> ({total_pct:+.2f}%)",
+            f"{pnl_bar}{(' ' + spark) if spark else ''}",
+            f"━━━━━━━━━━━━━━━━",
+        ]
+
+        # Per position with stop distance
+        trade_map = {t["ticker"]: t for t in (open_trades or [])}
+        for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
+            pl   = float(p.unrealized_pl)
+            plpc = float(p.unrealized_plpc) * 100
+            cur  = float(p.current_price)
+            icon = "🟢" if pl >= 0 else "🔴"
+            trade = trade_map.get(p.symbol, {})
+            stop  = trade.get("atr_stop_price")
+            stop_str = f" | 🛑{((cur-stop)/cur*100):.1f}%↓" if stop else ""
+            lines.append(
+                f"{icon} <b>{p.symbol}</b>  "
+                f"${cur:.2f}  {plpc:+.1f}%"
+                f"{stop_str}"
+            )
+
+        lines.append("━━━━━━━━━━━━━━━━")
+        lines.append(f"📊 {len(positions)} פוזיציות פתוחות")
+
+        # Quick action buttons
+        buttons = [
+            [
+                {"text": "🔄 רענן", "callback_data": "positions:all"},
+                {"text": "📈 הכי טובות", "callback_data": "top:positions"},
+            ],
+            [
+                {"text": "🩺 מצב בוט", "callback_data": "health:check"},
+                {"text": "⚠️ סיכון", "callback_data": "risk:portfolio"},
+            ],
+        ]
+
+        await send_message(
+            "\n".join(lines),
+            reply_markup={"inline_keyboard": buttons},
+        )
+
+    except Exception as e:
+        logger.error(f"Portfolio card failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ALERT MANAGER  ← price alerts set via Telegram
+# ─────────────────────────────────────────────────────────────────────────────
+
+# In-memory price alerts: {ticker: [{"price": float, "direction": "above"|"below"}]}
+_price_alerts: dict[str, list[dict]] = {}
+
+
+def add_price_alert(ticker: str, target_price: float, direction: str = "above") -> str:
+    """Add a price alert. direction = 'above' or 'below'."""
+    ticker = ticker.upper()
+    if ticker not in _price_alerts:
+        _price_alerts[ticker] = []
+    _price_alerts[ticker].append({
+        "price": target_price,
+        "direction": direction,
+        "created_at": datetime.now(timezone.utc).isoformat() if True else "",
+    })
+    return f"✅ התראה נוספה: {ticker} {'מעל' if direction == 'above' else 'מתחת'} ${target_price:.2f}"
+
+
+def remove_price_alert(ticker: str) -> str:
+    """Remove all alerts for a ticker."""
+    ticker = ticker.upper()
+    if ticker in _price_alerts:
+        count = len(_price_alerts.pop(ticker))
+        return f"✅ הוסרו {count} התראות עבור {ticker}"
+    return f"לא נמצאו התראות עבור {ticker}"
+
+
+def list_price_alerts() -> str:
+    """List all active price alerts."""
+    if not _price_alerts:
+        return "📋 אין התראות מחיר פעילות"
+    lines = ["📋 <b>התראות מחיר פעילות:</b>"]
+    for ticker, alerts in _price_alerts.items():
+        for a in alerts:
+            dir_str = "מעל" if a["direction"] == "above" else "מתחת"
+            lines.append(f"  🔔 {ticker} {dir_str} ${a['price']:.2f}")
+    return "\n".join(lines)
+
+
+async def check_price_alerts(current_prices: dict[str, float]) -> None:
+    """Check if any price alerts have been triggered."""
+    fired = []
+    for ticker, alerts in list(_price_alerts.items()):
+        current = current_prices.get(ticker)
+        if not current:
+            continue
+        remaining = []
+        for alert in alerts:
+            triggered = (
+                (alert["direction"] == "above" and current >= alert["price"]) or
+                (alert["direction"] == "below" and current <= alert["price"])
+            )
+            if triggered:
+                fired.append((ticker, current, alert["price"], alert["direction"]))
+            else:
+                remaining.append(alert)
+        if remaining:
+            _price_alerts[ticker] = remaining
+        else:
+            _price_alerts.pop(ticker, None)
+
+    for ticker, current, target, direction in fired:
+        dir_str = "עלה מעל" if direction == "above" else "ירד מתחת"
+        await send_message(
+            f"🔔 <b>התראת מחיר! — {ticker}</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💵 מחיר עכשיו: <b>${current:.2f}</b>\n"
+            f"🎯 {dir_str}: ${target:.2f}\n"
+            f"⚡ בוצע!"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMART STATUS MESSAGE  ← /start shows this
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def send_smart_welcome() -> None:
+    """Rich welcome/status message shown on /start."""
+    if not _enabled():
+        return
+    try:
+        import broker, database
+        from datetime import datetime, timezone
+
+        # Quick stats
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            conn = database.get_connection()
+            today_row = conn.execute("""
+                SELECT COUNT(*), SUM(CASE WHEN pnl_gross>0 THEN 1 ELSE 0 END),
+                       COALESCE(SUM(pnl_gross),0)
+                FROM trade_log WHERE status IN ('stopped','sold') AND exit_time LIKE ?
+            """, (f"{today}%",)).fetchone()
+            trades_today = today_row[0] or 0
+            wins_today   = today_row[1] or 0
+            pnl_today    = today_row[2] or 0
+        except Exception:
+            trades_today = wins_today = 0
+            pnl_today = 0
+
+        market_open = False
+        try:
+            market_open = await asyncio.to_thread(broker.is_market_open)
+        except Exception:
+            pass
+
+        mkt_str = "🟢 שוק פתוח" if market_open else "🔴 שוק סגור"
+        pnl_str = f"${pnl_today:+.2f}" if pnl_today != 0 else "—"
+        wr_str  = f"{wins_today/trades_today*100:.0f}%" if trades_today > 0 else "—"
+
+        await send_message(
+            f"🤖 <b>מנהל ההשקעות שלך</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{mkt_str}\n"
+            f"📅 היום: {trades_today} עסקאות | WR:{wr_str} | {pnl_str}\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💬 שאל אותי כל שאלה, או:\n"
+            f"📍 /pos — פוזיציות פתוחות\n"
+            f"📊 /performance — ביצועים\n"
+            f"🩺 /doctor — בדיקה מקיפה\n"
+            f"🔔 /alert AAPL 200 — התראת מחיר"
+        )
+    except Exception as e:
+        logger.debug(f"Smart welcome failed: {e}")
+        await send_menu()
+
+
+from datetime import datetime, timezone  # ensure imported at module level

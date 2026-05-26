@@ -561,6 +561,88 @@ async def handle_top_command() -> str:
         return f"❌ Error: {e}"
 
 
+async def handle_portfolio_command() -> str:
+    """Handle /portfolio — beautiful portfolio card."""
+    try:
+        from telegram_bot import send_portfolio_card
+        await send_portfolio_card()
+        return ""   # already sent by send_portfolio_card
+    except Exception as e:
+        return f"❌ Portfolio error: {e}"
+
+
+async def handle_alerts_command(args: str = "") -> str:
+    """Handle /alerts — show active price alerts."""
+    try:
+        from telegram_bot import list_price_alerts
+        return list_price_alerts()
+    except Exception as e:
+        return f"❌ Alerts error: {e}"
+
+
+async def handle_alert_set_command(args: str = "") -> str:
+    """Handle /alert TICKER PRICE [above|below] — set price alert."""
+    try:
+        parts = args.strip().split()
+        if len(parts) < 2:
+            return (
+                "❌ שימוש: /alert TICKER PRICE [above|below]\n"
+                "דוגמה: /alert AAPL 200 above\n"
+                "דוגמה: /alert TSLA 150 below"
+            )
+
+        ticker = parts[0].upper()
+        try:
+            price = float(parts[1].replace("$", ""))
+        except ValueError:
+            return f"❌ מחיר לא תקין: {parts[1]}"
+
+        direction = "above"
+        if len(parts) >= 3 and parts[2].lower() in ("below", "מתחת", "down"):
+            direction = "below"
+
+        from telegram_bot import add_price_alert
+        result = add_price_alert(ticker, price, direction)
+        return result
+
+    except Exception as e:
+        return f"❌ Alert error: {e}"
+
+
+async def handle_alert_remove_command(args: str = "") -> str:
+    """Handle /remove_alert TICKER — remove price alerts."""
+    try:
+        if not args.strip():
+            return "❌ שימוש: /remove_alert TICKER"
+        ticker = args.strip().upper()
+        from telegram_bot import remove_price_alert
+        return remove_price_alert(ticker)
+    except Exception as e:
+        return f"❌ Error: {e}"
+
+
+async def handle_sector_command() -> str:
+    """Handle /sector — show portfolio sector distribution."""
+    try:
+        import broker, asyncio
+        positions = await asyncio.to_thread(broker.get_positions)
+        if not positions:
+            return "📊 אין פוזיציות פתוחות"
+
+        from sector_guard import get_portfolio_sector_distribution
+        tickers = [p.symbol for p in positions]
+        distribution = get_portfolio_sector_distribution(tickers)
+
+        lines = ["🏭 <b>פיזור סקטורים</b>", "━━━━━━━━━━━━"]
+        for sector, sector_tickers in sorted(distribution.items()):
+            emoji = "✅" if len(sector_tickers) <= 1 else "⚠️" if len(sector_tickers) >= 2 else "🟡"
+            lines.append(f"{emoji} {sector}: {', '.join(sector_tickers)}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Sector error: {e}"
+
+
 COMMAND_HANDLERS = {
     "health": handle_health_command,
     "performance": handle_performance_command,
@@ -572,6 +654,19 @@ COMMAND_HANDLERS = {
     "anomalies": handle_anomalies_command,
     "positions": handle_positions_command,
     "top": handle_top_command,
+    "portfolio": handle_portfolio_command,
+    "alerts": handle_alerts_command,
+    "sector": handle_sector_command,
+}
+
+COMMAND_HANDLERS_WITH_ARG = {
+    "ai_decision": handle_ai_decision_command,
+    "ai": handle_ai_decision_command,
+    "backtest": handle_backtest_command,
+    "bt": handle_backtest_command,
+    "alert": handle_alert_set_command,
+    "remove_alert": handle_alert_remove_command,
+    "setalert": handle_alert_set_command,
 }
 
 COMMAND_HANDLERS_WITH_ARG = {
