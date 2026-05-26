@@ -304,7 +304,7 @@ async def lifespan(app: FastAPI):
                            multi_timeframe_loop, health_monitoring_loop,
                            news_catalyst_loop, pairs_trading_loop,
                            benchmark_comparison_loop, trade_journal_loop,
-                           anomaly_detection_loop)
+                           anomaly_detection_loop, stale_position_guard_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -339,6 +339,7 @@ async def lifespan(app: FastAPI):
     benchmark_task         = asyncio.create_task(benchmark_comparison_loop()) # השוואה לבנצ׳מרק
     journal_task           = asyncio.create_task(trade_journal_loop())     # יומן עסקאות
     anomaly_task           = asyncio.create_task(anomaly_detection_loop()) # זיהוי אנומליות
+    stale_guard_task       = asyncio.create_task(stale_position_guard_loop()) # פוזיציות ישנות
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
     golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
     reentry_task           = asyncio.create_task(smart_reentry_loop())     # חזרה למניות שעלו אחרי מכירה
@@ -373,7 +374,7 @@ async def lifespan(app: FastAPI):
         earnings_monitor_task, market_pulse_task, goal_progress_task, learning_task, adaptive_params_task,
         correlation_task, market_intel_task, analytics_task, ai_decision_task,
         attribution_task, digest_task, mtf_task, health_task, news_catalyst_task,
-        pairs_task, benchmark_task, journal_task, anomaly_task, webhook_keeper_task,
+        pairs_task, benchmark_task, journal_task, anomaly_task, stale_guard_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
         drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task,

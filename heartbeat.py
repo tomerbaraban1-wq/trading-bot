@@ -440,7 +440,7 @@ async def stop_loss_monitor():
     """
     from atr_stop import compute_initial_stop, update_trailing_stop, should_exit_confirmed
     import os as _os
-    MAX_HOLD_HOURS: float = float(_os.getenv("MAX_HOLD_HOURS", "48.0"))
+    MAX_HOLD_HOURS: float = float(_os.getenv("MAX_HOLD_HOURS", "24.0"))  # reduced from 48 → 24h (27% WR after 48h)
     # Stale-trade detection: a trade must be reported as missing this many
     # consecutive times before we auto-close it (defends against transient
     # broker API hiccups returning None spuriously).
@@ -4822,3 +4822,48 @@ async def multi_timeframe_loop():
             logger.error(f"Multi-timeframe loop error: {e}")
 
         await asyncio.sleep(2 * 60 * 60)   # run every 2 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STALE POSITION GUARD LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def stale_position_guard_loop():
+    """
+    Check for stale positions every 4 hours.
+    Alerts on positions held too long without progress.
+    """
+    await asyncio.sleep(30 * 60)  # wait 30 min after startup
+    while True:
+        try:
+            from stale_position_guard import scan_stale_positions, notify_stale_positions, tighten_wide_stop
+            import database
+
+            recommendations = await scan_stale_positions()
+
+            if recommendations:
+                # Auto-tighten wide stops
+                open_trades = await asyncio.to_thread(database.get_open_trades)
+                trade_map = {t["ticker"]: t for t in (open_trades or [])}
+
+                for rec in recommendations:
+                    if rec["action"] == "TIGHTEN_STOP":
+                        trade = trade_map.get(rec["ticker"])
+                        if trade:
+                            await tighten_wide_stop(
+                                rec["ticker"], trade, rec["current_price"]
+                            )
+
+                # Notify about urgent ones
+                urgent = [r for r in recommendations if r["urgency"] == "high"]
+                if urgent:
+                    await notify_stale_positions(urgent)
+
+                logger.info(f"[STALE GUARD] {len(recommendations)} stale positions found")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Stale position guard error: {e}")
+
+        await asyncio.sleep(4 * 60 * 60)  # every 4 hours

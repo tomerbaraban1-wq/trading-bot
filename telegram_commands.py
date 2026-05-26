@@ -515,27 +515,64 @@ async def handle_anomalies_command() -> str:
 
 
 async def handle_positions_command() -> str:
-    """Handle /positions — live portfolio snapshot."""
+    """Handle /positions — rich live portfolio with age + stop distance."""
     try:
         import broker, database
+        from datetime import datetime, timezone
         positions = await asyncio.to_thread(broker.get_positions)
         if not positions:
-            return "📊 <b>אין פוזיציות פתוחות</b>"
+            return "📊 <b>אין פוזיציות פתוחות</b>\n🤖 הבוט מחפש הזדמנויות..."
+
+        open_trades = await asyncio.to_thread(database.get_open_trades)
+        trade_map = {t["ticker"]: t for t in (open_trades or [])}
+        now = datetime.now(timezone.utc)
 
         total_pnl = sum(float(p.unrealized_pl) for p in positions)
         total_val = sum(float(p.market_value) for p in positions)
 
         lines = ["📍 <b>פוזיציות פתוחות</b>", "━━━━━━━━━━━━━━━━"]
-        for p in positions:
+        stale_tickers = []
+
+        for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
             pl   = float(p.unrealized_pl)
             plpc = float(p.unrealized_plpc) * 100
             cur  = float(p.current_price)
-            qty  = float(p.qty)
             em   = "🟢" if pl >= 0 else "🔴"
-            lines.append(f"{em} <b>{p.symbol}</b> {qty:.0f}sh @ ${cur:.2f} → <b>${pl:+.2f}</b> ({plpc:+.1f}%)")
 
-        lines += ["━━━━━━━━━━━━━━━━",
-                  f"💼 ${total_val:,.2f} | {'🟢' if total_pnl>=0 else '🔴'} <b>${total_pnl:+,.2f}</b>"]
+            # Days held
+            trade = trade_map.get(p.symbol, {})
+            days_held = 0
+            try:
+                et = trade.get("entry_time")
+                if et:
+                    entry_dt = datetime.fromisoformat(
+                        str(et)[:19].replace("Z","")
+                    ).replace(tzinfo=timezone.utc)
+                    days_held = (now - entry_dt).total_seconds() / 86400
+            except Exception:
+                pass
+
+            age_icon = " ⚠️" if days_held > 5 else " 🕐" if days_held > 2 else ""
+            if days_held > 5:
+                stale_tickers.append(p.symbol)
+
+            # Stop distance
+            atr_stop = trade.get("atr_stop_price")
+            stop_str = f" | 🛑{((cur - atr_stop)/cur*100):.1f}%↓" if atr_stop else ""
+
+            lines.append(
+                f"{em} <b>{p.symbol}</b>  ${cur:.2f}  "
+                f"<b>{plpc:+.1f}%</b>  ${pl:+.2f}  "
+                f"{days_held:.0f}d{age_icon}{stop_str}"
+            )
+
+        lines += [
+            "━━━━━━━━━━━━━━━━",
+            f"💼 ${total_val:,.2f} | {'🟢' if total_pnl>=0 else '🔴'} <b>${total_pnl:+,.2f}</b>",
+        ]
+        if stale_tickers:
+            lines.append(f"\n⚠️ ישנות (>5 ימים): {', '.join(stale_tickers)}")
+
         return "\n".join(lines)
     except Exception as e:
         return f"❌ Positions error: {e}"
