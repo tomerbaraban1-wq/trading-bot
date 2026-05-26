@@ -728,3 +728,84 @@ async def get_dashboard_data(x_api_key: Optional[str] = Header(None)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMART EXECUTION (TWAP/VWAP/Iceberg)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/execution/analyze")
+async def analyze_execution(
+    ticker: str = Query(...),
+    quantity: float = Query(...),
+    side: str = Query("buy", regex="^(buy|sell)$"),
+    urgency: str = Query("normal", regex="^(low|normal|high)$"),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Analyze optimal execution strategy for an order."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from smart_execution import analyze_optimal_execution
+        return await analyze_optimal_execution(ticker.upper(), quantity, side, urgency)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STRATEGY OPTIMIZER
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/optimizer/run")
+async def run_strategy_optimizer(
+    ticker: str = Query("SPY"),
+    generations: int = Query(5, ge=1, le=20),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Run genetic algorithm to optimize trading strategy parameters."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from strategy_optimizer import GeneticOptimizer
+        optimizer = GeneticOptimizer(generations=generations, population_size=10)
+        result = await optimizer.optimize(ticker.upper())
+
+        return {
+            "ticker": ticker.upper(),
+            "optimization_score": result.optimization_score,
+            "confidence": result.confidence,
+            "optimal_params": {
+                "min_buy_score": result.min_buy_score,
+                "stop_loss_pct": result.stop_loss_pct,
+                "take_profit_pct": result.take_profit_pct,
+                "max_position_size_pct": result.max_position_size_pct,
+                "rsi_oversold": result.rsi_oversold,
+                "rsi_overbought": result.rsi_overbought,
+                "min_volume_ratio": result.min_volume_ratio,
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DYNAMIC PROTECTION (Stop Loss Optimization)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/protection/analyze")
+async def analyze_protection(x_api_key: Optional[str] = Header(None)):
+    """Analyze stop loss protection for all open positions."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from dynamic_protection import analyze_all_position_protections
+        recommendations = await analyze_all_position_protections()
+        return {
+            "recommendations": recommendations,
+            "count": len(recommendations),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

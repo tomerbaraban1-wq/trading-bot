@@ -668,6 +668,49 @@ def _handle_command(text: str, context: dict) -> str | None:
     """
     t = text.strip().lower()
     cmd = t.split()[0] if t else ""
+    args = " ".join(t.split()[1:]) if len(t.split()) > 1 else ""
+
+    # ── Advanced commands via telegram_commands.py ────────────────────────
+    # Map /command → handler  (lazy loaded to avoid circular import)
+    advanced_commands = {
+        "/health": "health",
+        "/performance": "performance",
+        "/news": "news",
+        "/risk": "risk",
+        "/confluence": "confluence",
+        "/forecast": "forecast",
+        "/ai_decision": "ai_decision",
+        "/ai": "ai_decision",
+        "/backtest": "backtest",
+        "/bt": "backtest",
+    }
+
+    if cmd in advanced_commands:
+        try:
+            import asyncio as _asyncio
+            from telegram_commands import route_command
+            handler_name = advanced_commands[cmd]
+
+            # Run async command in current event loop
+            try:
+                loop = _asyncio.get_event_loop()
+                if loop.is_running():
+                    # Create task and wait for result
+                    future = _asyncio.run_coroutine_threadsafe(
+                        route_command(handler_name, args),
+                        loop
+                    )
+                    result = future.result(timeout=60)
+                    if result:
+                        return result
+                else:
+                    result = loop.run_until_complete(route_command(handler_name, args))
+                    if result:
+                        return result
+            except Exception as e:
+                return f"⚠️ שגיאה בפקודה {cmd}: {e}"
+        except Exception as e:
+            return f"⚠️ {cmd} זמנית לא זמין: {e}"
 
     # ── /commands ──────────────────────────────────────────────────────────
     if cmd == "/start":
