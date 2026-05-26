@@ -18,12 +18,16 @@ logger = logging.getLogger(__name__)
 import os
 MAX_DAILY_LOSS_PCT: float = float(os.getenv("MAX_DAILY_LOSS_PCT", "5.0"))  # default 5%
 
+MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))  # stop after N consecutive losses
+
 _lock = threading.Lock()
 _state = {
     "tripped": False,         # True = circuit is open (no trading)
     "daily_pnl": 0.0,        # today's realized PnL
     "trade_date": None,       # date string (UTC) this state is for
     "trip_reason": "",
+    "consecutive_losses": 0,  # count of consecutive losses today
+    "daily_loss_count": 0,    # total losses today
 }
 
 
@@ -103,6 +107,13 @@ def record_trade_result(pnl_gross: float):
         if not _db_just_loaded:
             _state["daily_pnl"] += pnl_gross
 
+        # Track consecutive losses for max-daily-losses circuit
+        if pnl_gross < 0:
+            _state["consecutive_losses"] += 1
+            _state["daily_loss_count"] += 1
+        else:
+            _state["consecutive_losses"] = 0  # reset on win
+
         max_loss = settings.MAX_BUDGET * (MAX_DAILY_LOSS_PCT / 100)
         if not _state["tripped"] and _state["daily_pnl"] <= -max_loss:
             _state["tripped"] = True
@@ -111,6 +122,14 @@ def record_trade_result(pnl_gross: float):
                 f"limit ${max_loss:.2f} ({MAX_DAILY_LOSS_PCT}% of ${settings.MAX_BUDGET:,.0f})"
             )
             logger.warning(f"🚨 CIRCUIT BREAKER TRIPPED: {_state['trip_reason']}")
+
+        # NEW: trip on consecutive losses — prevents averaging down into a crashing market
+        if not _state["tripped"] and _state["consecutive_losses"] >= MAX_DAILY_LOSSES:
+            _state["tripped"] = True
+            _state["trip_reason"] = (
+                f"{_state['consecutive_losses']} consecutive losses today — pausing buying"
+            )
+            logger.warning(f"🚨 CIRCUIT BREAKER TRIPPED (consecutive losses): {_state['trip_reason']}")
 
 
 def check_circuit_breaker() -> tuple[bool, str]:

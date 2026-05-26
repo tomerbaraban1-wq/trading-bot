@@ -91,11 +91,17 @@ class Settings:
 
     # Budget
     MAX_BUDGET: float = float(os.getenv("MAX_BUDGET", "10000"))
-    MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "20"))
+    MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "15"))   # reduced 20→15
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "2.0"))
-    STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "5.0"))    # sell if drops N%
-    TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "15.0"))  # sell if gains N% (raised 10→15 for 3:1 ratio)
-    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))   # max concurrent positions (reduced 6→4)
+    STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "3.5"))
+    TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "15.0"))
+    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "6"))
+
+    # Entry quality filters (lesson from 33% win rate analysis)
+    MIN_BUY_SCORE: int = int(os.getenv("MIN_BUY_SCORE", "65"))           # raised 51→65
+    MIN_VOLUME_RATIO: float = float(os.getenv("MIN_VOLUME_RATIO", "0.75"))  # raised 0.5→0.75
+    REQUIRE_ABOVE_SMA50: bool = os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() in ("true", "1", "yes")
+    MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))  # circuit break after N consecutive losses
 
     # Tax
     TAX_RATE: float = float(os.getenv("TAX_RATE", "0.25"))

@@ -743,7 +743,42 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
 
     composite = round(composite, 1)
     _min_score = get_min_buy_score()  # read fresh — apply_insights may have updated env
-    decision = "BUY ✅" if composite >= _min_score else "SKIP ❌"
+    should_buy_score = composite >= _min_score
+
+    # ── Hard filters (env-controlled) ─────────────────────────────────────
+    # These override the score and block buying regardless of composite_score
+    hard_block_reason = None
+
+    # 1. SMA50 hard filter — lesson from 8/8 losses being below SMA50
+    if _os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() == "true":
+        indicators_for_filter = get_current_indicators(ticker) or {}
+        above_sma50 = indicators_for_filter.get("above_sma50")
+        above_sma200 = indicators_for_filter.get("above_sma200")
+        if above_sma50 is False and above_sma200 is False:
+            hard_block_reason = "Death Cross + below SMA50 — trend bearish"
+        elif above_sma50 is False:
+            # Below SMA50: penalise composite by 15 pts but don't hard-block
+            composite = max(0, composite - 15)
+            logger.info(f"[SCORE] {ticker}: below SMA50 → composite discounted to {composite}")
+
+    # 2. Volume hard filter — low volume = weak signal
+    _min_vol = float(_os.getenv("MIN_VOLUME_RATIO", "0.5"))
+    _vol_ratio = None
+    try:
+        _ind2 = tech_breakdown.get("volume_ratio")
+        if _ind2:
+            import re as _re
+            _m = _re.search(r"×([\d.]+)", str(_ind2))
+            if _m:
+                _vol_ratio = float(_m.group(1))
+    except Exception:
+        pass
+    if _vol_ratio is not None and _vol_ratio < _min_vol:
+        hard_block_reason = hard_block_reason or f"Volume too low ({_vol_ratio:.2f}x < {_min_vol}x)"
+
+    # Re-evaluate should_buy with updated composite and hard blocks
+    should_buy_score = composite >= _min_score and hard_block_reason is None
+    decision = "BUY ✅" if should_buy_score else f"SKIP ❌{(' — ' + hard_block_reason) if hard_block_reason else ''}"
 
     logger.info(
         f"[SCORE] {ticker}: composite={composite}/100 "
@@ -755,7 +790,8 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         "composite_score": composite,
         "min_score": _min_score,
         "decision": decision,
-        "should_buy": composite >= _min_score,
+        "should_buy": should_buy_score,
+        "hard_block_reason": hard_block_reason,
         "weights": {"technicals": f"{round(w_tech*100)}%", "market": f"{round(w_mkt*100)}%", "sentiment": f"{round(w_sent*100)}%"},
         "scores": {
             "technicals": tech_score,
