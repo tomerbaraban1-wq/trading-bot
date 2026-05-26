@@ -514,6 +514,53 @@ async def handle_anomalies_command() -> str:
         return f"❌ Anomalies error: {e}"
 
 
+async def handle_positions_command() -> str:
+    """Handle /positions — live portfolio snapshot."""
+    try:
+        import broker, database
+        positions = await asyncio.to_thread(broker.get_positions)
+        if not positions:
+            return "📊 <b>אין פוזיציות פתוחות</b>"
+
+        total_pnl = sum(float(p.unrealized_pl) for p in positions)
+        total_val = sum(float(p.market_value) for p in positions)
+
+        lines = ["📍 <b>פוזיציות פתוחות</b>", "━━━━━━━━━━━━━━━━"]
+        for p in positions:
+            pl   = float(p.unrealized_pl)
+            plpc = float(p.unrealized_plpc) * 100
+            cur  = float(p.current_price)
+            qty  = float(p.qty)
+            em   = "🟢" if pl >= 0 else "🔴"
+            lines.append(f"{em} <b>{p.symbol}</b> {qty:.0f}sh @ ${cur:.2f} → <b>${pl:+.2f}</b> ({plpc:+.1f}%)")
+
+        lines += ["━━━━━━━━━━━━━━━━",
+                  f"💼 ${total_val:,.2f} | {'🟢' if total_pnl>=0 else '🔴'} <b>${total_pnl:+,.2f}</b>"]
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Positions error: {e}"
+
+
+async def handle_top_command() -> str:
+    """Handle /top — best performing positions today."""
+    try:
+        import broker
+        positions = await asyncio.to_thread(broker.get_positions)
+        if not positions:
+            return "📊 אין פוזיציות"
+
+        sorted_pos = sorted(positions, key=lambda p: float(p.unrealized_plpc), reverse=True)
+        lines = ["🏆 <b>ביצועים היום</b>", "━━━━━━━━━━━━"]
+        for p in sorted_pos[:8]:
+            plpc = float(p.unrealized_plpc) * 100
+            pl   = float(p.unrealized_pl)
+            em   = "🟢" if pl >= 0 else "🔴"
+            lines.append(f"{em} {p.symbol}: {plpc:+.1f}% (${pl:+.2f})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Error: {e}"
+
+
 COMMAND_HANDLERS = {
     "health": handle_health_command,
     "performance": handle_performance_command,
@@ -523,6 +570,8 @@ COMMAND_HANDLERS = {
     "forecast": handle_forecast_command,
     "doctor": handle_doctor_command,
     "anomalies": handle_anomalies_command,
+    "positions": handle_positions_command,
+    "top": handle_top_command,
 }
 
 COMMAND_HANDLERS_WITH_ARG = {

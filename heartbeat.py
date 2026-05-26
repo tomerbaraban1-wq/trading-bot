@@ -1379,6 +1379,60 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             continue
 
+                        # ── AI Score Enhancement — ML + Patterns + MTF + News ──────────
+                        try:
+                            from score_enhancer import enhance_score as _enhance_score
+                            _ind = composite.get("indicators", {})
+                            _enhancement = await _asyncio.wait_for(
+                                _enhance_score(
+                                    ticker=ticker,
+                                    base_score=score,
+                                    rsi=_ind.get("rsi", 50.0),
+                                    macd=_ind.get("macd", 0.0),
+                                    volume_ratio=_ind.get("volume_ratio", 1.0),
+                                    sentiment_score=sentiment.score if hasattr(sentiment, "score") else 5.0,
+                                ),
+                                timeout=45,   # generous timeout for parallel AI calls
+                            )
+
+                            # Skip if AI signals say avoid
+                            if _enhancement.get("skip_trade"):
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} AI skip — {_enhancement['skip_reason']}"
+                                )
+                                continue
+
+                            # Use enhanced score
+                            _enhanced = _enhancement.get("enhanced_score", score)
+                            _adj = _enhancement.get("adjustment", 0)
+                            if _adj != 0:
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} AI enhancement: "
+                                    f"{score:.1f} → {_enhanced:.1f} ({_adj:+.1f} pts)"
+                                )
+                                # Notify on big adjustments
+                                if abs(_adj) >= 5:
+                                    try:
+                                        from telegram_bot import notify_score_enhancement
+                                        _create_background_task(
+                                            notify_score_enhancement(
+                                                ticker=ticker,
+                                                original_score=score,
+                                                enhanced_score=_enhanced,
+                                                adjustment=_adj,
+                                                skip_trade=False,
+                                                skip_reason="",
+                                                signals=_enhancement.get("signals", {}),
+                                            )
+                                        )
+                                    except Exception:
+                                        pass
+                            score = _enhanced
+
+                        except (_asyncio.TimeoutError, Exception) as _enh_err:
+                            # Fail-open: use original score if enhancement fails
+                            logger.debug(f"AUTO-INVEST: {ticker} enhancement skipped ({type(_enh_err).__name__})")
+
                         # ── Buffett Quality Filter — MAX-WIN MODE: only quality companies ──
                         # קונה רק חברות עם Buffett >= 50 (איכות בינונית+)
                         _buffett_score = None

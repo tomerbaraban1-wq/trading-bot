@@ -1250,3 +1250,116 @@ async def notify_ai_trading_insights() -> None:
 
     except Exception as e:
         logger.error(f"AI insights error: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIVE POSITIONS DASHBOARD
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notify_live_positions() -> None:
+    """
+    Send a rich live snapshot of all open positions:
+    Current price, P&L, stop-loss distance, AI score.
+    """
+    if not _enabled():
+        return
+    try:
+        import broker, database
+        positions = await asyncio.to_thread(broker.get_positions)
+        if not positions:
+            await send_message("📊 <b>אין פוזיציות פתוחות כרגע</b>")
+            return
+
+        total_value = sum(float(p.market_value) for p in positions)
+        total_pnl   = sum(float(p.unrealized_pl) for p in positions)
+
+        lines = [
+            "📍 <b>פוזיציות פתוחות</b>",
+            "━━━━━━━━━━━━━━━━",
+        ]
+
+        for p in positions:
+            try:
+                mv   = float(p.market_value)
+                pl   = float(p.unrealized_pl)
+                plpc = float(p.unrealized_plpc) * 100
+                cur  = float(p.current_price)
+                avg  = float(p.avg_entry_price)
+                qty  = float(p.qty)
+
+                pl_emoji = "🟢" if pl >= 0 else "🔴"
+                lines.append(
+                    f"{pl_emoji} <b>{p.symbol}</b>  "
+                    f"{qty:.0f}×${cur:.2f}  "
+                    f"P&L: <b>${pl:+.2f}</b> ({plpc:+.1f}%)"
+                )
+
+                # Show stop from DB if available
+                try:
+                    open_trades = await asyncio.to_thread(database.get_open_trades)
+                    trade_rec = next((t for t in open_trades if t["ticker"] == p.symbol), None)
+                    if trade_rec and trade_rec.get("atr_stop_price"):
+                        stop = trade_rec["atr_stop_price"]
+                        dist = (cur - stop) / cur * 100
+                        lines.append(f"  🛑 Stop ${stop:.2f} ({dist:.1f}% away)")
+                except Exception:
+                    pass
+
+            except Exception as e:
+                lines.append(f"  ⚠️ {p.symbol}: error ({e})")
+
+        lines.extend([
+            "━━━━━━━━━━━━━━━━",
+            f"💼 Total Value: ${total_value:,.2f}",
+            f"{'🟢' if total_pnl >= 0 else '🔴'} Total P&L: <b>${total_pnl:+,.2f}</b>",
+        ])
+        await send_message("\n".join(lines))
+
+    except Exception as e:
+        logger.error(f"notify_live_positions error: {e}")
+
+
+async def notify_score_enhancement(
+    ticker: str,
+    original_score: float,
+    enhanced_score: float,
+    adjustment: float,
+    skip_trade: bool,
+    skip_reason: str,
+    signals: dict,
+) -> None:
+    """
+    Notify when the AI score enhancer significantly changes a buy decision.
+    Only fires when |adjustment| > 5 points or skip_trade is True.
+    """
+    if not _enabled():
+        return
+    if abs(adjustment) < 5 and not skip_trade:
+        return
+
+    if skip_trade:
+        msg = (
+            f"🚫 <b>AI blocked buy: {ticker}</b>\n"
+            f"Base score {original_score:.1f} → SKIP\n"
+            f"Reason: {skip_reason}"
+        )
+    elif adjustment > 0:
+        msg = (
+            f"⬆️ <b>AI boosted: {ticker}</b>\n"
+            f"{original_score:.1f} → {enhanced_score:.1f} (+{adjustment:.1f})\n"
+        )
+    else:
+        msg = (
+            f"⬇️ <b>AI reduced: {ticker}</b>\n"
+            f"{original_score:.1f} → {enhanced_score:.1f} ({adjustment:.1f})\n"
+        )
+
+    # Add signal breakdown
+    for key, val in signals.items():
+        if isinstance(val, dict) and "adjustment" in val and val["adjustment"] != 0:
+            msg += f"  • {key}: {val['adjustment']:+.1f}pts\n"
+
+    try:
+        await send_message(msg)
+    except Exception as e:
+        logger.debug(f"Score enhancement notify failed: {e}")

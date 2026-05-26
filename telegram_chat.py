@@ -686,6 +686,9 @@ def _handle_command(text: str, context: dict) -> str | None:
         "/bt": "backtest",
         "/doctor": "doctor",
         "/anomalies": "anomalies",
+        "/positions": "positions",
+        "/pos": "positions",
+        "/top": "top",
         # Hebrew aliases (use English in commands - Telegram requirement)
         "/briut": "health",         # בריאות
         "/betzuim": "performance",  # ביצועים
@@ -705,6 +708,10 @@ def _handle_command(text: str, context: dict) -> str | None:
         "רופא": "doctor",
         "אנומליות": "anomalies",
         "בדיקה מקיפה": "doctor",
+        "פוזיציות": "positions",
+        "מה יש לי": "positions",
+        "הכי טובות": "top",
+        "הטובות": "top",
     }
 
     if cmd in advanced_commands:
