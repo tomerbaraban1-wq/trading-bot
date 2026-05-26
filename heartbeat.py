@@ -1832,9 +1832,13 @@ async def morning_briefing_loop():
             if briefing_time <= now_utc <= catch_up_deadline:
                 pass  # in the send window — fall through to send
             elif now_utc < briefing_time:
-                # Too early — wait
+                # Too early — sleep precisely to briefing_time
+                # Use 1-minute intervals when <5 min away to be accurate
                 wait_sec = (briefing_time - now_utc).total_seconds()
-                await asyncio.sleep(min(wait_sec, 5 * 60))
+                if wait_sec > 5 * 60:
+                    await asyncio.sleep(min(wait_sec - 60, 5 * 60))  # wake up 1 min before
+                else:
+                    await asyncio.sleep(max(wait_sec, 1))  # sleep exactly the remaining time
                 continue
             else:
                 # Past the catch-up window — skip until tomorrow

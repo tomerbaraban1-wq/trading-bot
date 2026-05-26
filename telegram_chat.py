@@ -4314,11 +4314,69 @@ def _handle_command(text: str, context: dict) -> str | None:
     return None  # let LLM handle everything else
 
 
+async def _handle_callback_query(callback: dict) -> dict:
+    """
+    Handle inline keyboard button presses (callback queries).
+    Routes to the appropriate command based on callback_data.
+    """
+    from config import settings as _cfg
+    from telegram_bot import answer_callback_query
+
+    callback_id   = callback.get("id", "")
+    data          = callback.get("data", "")
+    from_user     = callback.get("from", {})
+    from_user_id  = str(from_user.get("id", ""))
+
+    # Security: same user check
+    if from_user_id and from_user_id != str(_cfg.TELEGRAM_CHAT_ID):
+        return {"status": "ignored", "reason": "unauthorized user"}
+
+    # Parse callback_data: "action:param"
+    parts  = data.split(":", 1)
+    action = parts[0] if parts else ""
+    param  = parts[1] if len(parts) > 1 else ""
+
+    # Answer the callback immediately (removes loading spinner)
+    await answer_callback_query(callback_id, "⏳ רגע...")
+
+    try:
+        from telegram_commands import route_command
+
+        action_to_command = {
+            "positions":   ("positions", ""),
+            "performance": ("performance", ""),
+            "health":      ("health", ""),
+            "anomalies":   ("anomalies", ""),
+            "info":        ("ai_decision", param),
+            "ai":          ("ai_decision", param),
+            "news":        ("news", ""),
+        }
+
+        if action in action_to_command:
+            cmd, args = action_to_command[action]
+            reply = await route_command(cmd, args)
+            if reply:
+                from telegram_bot import send_message
+                await send_message(reply)
+                await answer_callback_query(callback_id, "✅")
+                return {"status": "ok", "action": action}
+
+    except Exception as e:
+        logger.error(f"[CALLBACK] Error handling {data}: {e}")
+        await answer_callback_query(callback_id, "❌ שגיאה")
+
+    return {"status": "ok", "action": action}
+
+
 async def handle_telegram_update(update: dict) -> dict:
     """
     Handle an incoming Telegram update.
     Returns a dict with status info (used for diagnostics).
     """
+    # Handle inline keyboard button presses
+    if "callback_query" in update:
+        return await _handle_callback_query(update["callback_query"])
+
     message = update.get("message") or update.get("edited_message") or {}
     if not message:
         return {"status": "ignored", "reason": "no message in update"}
@@ -4351,8 +4409,9 @@ async def handle_telegram_update(update: dict) -> dict:
     if len(text) > 1000:
         text = text[:1000]
 
-    # Map Hebrew button labels to commands
+    # Map Hebrew button labels to commands (keyboard buttons + new buttons)
     _BUTTON_MAP = {
+        # Original buttons
         "💰 רווח/הפסד":      "/pnl",
         "📊 מצב התיק":       "/status",
         "📋 תקציר יומי":     "/digest",
@@ -4367,6 +4426,15 @@ async def handle_telegram_update(update: dict) -> dict:
         "⚠️ ניתוח סיכון":    "/risk_score",
         "📅 מה היה היום":    "/today",
         "📋 כל הפקודות":     "/help",
+        # New enhanced buttons
+        "📍 פוזיציות":       "/positions",
+        "📊 ביצועים":        "/performance",
+        "⚠️ סיכון":          "/risk",
+        "🩺 בדיקה":          "/doctor",
+        "🚨 אנומליות":       "/anomalies",
+        "💡 תובנות AI":      "/ai_insights",
+        "📈 גרף":            "/chart",
+        "🤖 AI החלטה":       "/ai",
     }
     if text in _BUTTON_MAP:
         text = _BUTTON_MAP[text]

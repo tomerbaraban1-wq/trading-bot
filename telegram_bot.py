@@ -77,10 +77,33 @@ def _mark_sent(error_key: str) -> None:
 # Core sender — with retry + back-off
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _build_progress_bar(pct: float, width: int = 10, fill: str = "🟩", empty: str = "⬜") -> str:
+    """Build a visual progress bar. pct is 0-100."""
+    filled = max(0, min(width, round(pct / 100 * width)))
+    return fill * filled + empty * (width - filled)
+
+
+def _build_pnl_chart(values: list[float], width: int = 20) -> str:
+    """
+    Tiny ASCII sparkline chart for P&L trend.
+    Uses block characters: ▁▂▃▄▅▆▇█
+    """
+    if not values or len(values) < 2:
+        return ""
+    blocks = "▁▂▃▄▅▆▇█"
+    mn, mx = min(values), max(values)
+    rng = mx - mn if mx != mn else 1
+    result = ""
+    for v in values[-width:]:
+        idx = int((v - mn) / rng * (len(blocks) - 1))
+        result += blocks[max(0, min(len(blocks) - 1, idx))]
+    return result
+
+
 async def send_menu() -> bool:
     """
     Send a persistent reply keyboard with the most common commands.
-    Call this after /start or whenever you want to show the menu.
+    Enhanced version with more useful buttons and better layout.
     """
     if not _enabled():
         return False
@@ -88,12 +111,15 @@ async def send_menu() -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     keyboard = {
         "keyboard": [
-            [{"text": "📋 תקציר יומי"},    {"text": "💰 רווח/הפסד"}],
-            [{"text": "📊 מצב התיק"},      {"text": "📈 מניות שלי"}],
-            [{"text": "🌟 הכי טובות"},     {"text": "🔢 כמה עסקאות"}],
-            [{"text": "🤖 מה אתה עושה"},   {"text": "🌍 מצב השוק"}],
-            [{"text": "📰 חדשות"},         {"text": "💡 ייעוץ AI"}],
-            [{"text": "⚠️ ניתוח סיכון"},   {"text": "📅 מה היה היום"}],
+            # Row 1: Most-used portfolio commands
+            [{"text": "📍 פוזיציות"},       {"text": "💰 רווח/הפסד"},    {"text": "📊 ביצועים"}],
+            # Row 2: Market & analysis
+            [{"text": "🌍 מצב השוק"},       {"text": "📰 חדשות"},         {"text": "🤖 AI החלטה"}],
+            # Row 3: Advanced tools
+            [{"text": "⚠️ סיכון"},          {"text": "🩺 בדיקה"},         {"text": "🚨 אנומליות"}],
+            # Row 4: Bot control
+            [{"text": "📋 תקציר יומי"},     {"text": "💡 תובנות AI"},     {"text": "📈 גרף"}],
+            # Row 5: Help
             [{"text": "📋 כל הפקודות"}],
         ],
         "resize_keyboard": True,
@@ -101,7 +127,11 @@ async def send_menu() -> bool:
     }
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": "📱 <b>תפריט מהיר</b> — לחץ על כפתור:",
+        "text": (
+            "🤖 <b>מנהל ההשקעות שלך</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "📱 בחר מהתפריט או הקלד שאלה חופשית!"
+        ),
         "parse_mode": "HTML",
         "reply_markup": keyboard,
     }
@@ -109,6 +139,58 @@ async def send_menu() -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload,
                                     timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+
+async def send_message_with_inline(
+    text: str,
+    buttons: list[list[dict]] | None = None,
+) -> bool:
+    """
+    Send a message with optional inline keyboard buttons.
+
+    buttons format: [[{"text": "לחץ כאן", "callback_data": "action:data"}]]
+    """
+    reply_markup = {"inline_keyboard": buttons} if buttons else None
+    return await send_message(text, reply_markup=reply_markup)
+
+
+async def edit_message(chat_id: str, message_id: int, new_text: str) -> bool:
+    """Edit an existing Telegram message (for live updates)."""
+    if not _enabled():
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": new_text[:4096],
+        "parse_mode": "HTML",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                return resp.status == 200
+    except Exception:
+        return False
+
+
+async def answer_callback_query(callback_id: str, text: str = "") -> bool:
+    """Answer a Telegram callback query (removes the loading state on button)."""
+    if not _enabled():
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_id, "text": text[:200]}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload,
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 return resp.status == 200
     except Exception:
         return False
@@ -249,20 +331,35 @@ async def notify_trade_open(
     _bar_filled = round(score / 10)
     _score_bar  = "🟩" * _bar_filled + "⬜" * (10 - _bar_filled)
 
+    # Build risk/reward ratio
+    rr_ratio = tp_pct / stop_pct if stop_pct > 0 else 0
+    rr_str = f"1:{rr_ratio:.1f}" if rr_ratio > 0 else "—"
+
+    # Inline keyboard: quick actions
+    inline_buttons = [
+        [
+            {"text": f"📊 פרטים על {ticker}", "callback_data": f"info:{ticker}"},
+            {"text": "📍 כל הפוזיציות", "callback_data": "positions:all"},
+        ],
+        [
+            {"text": "⚡ AI ניתוח", "callback_data": f"ai:{ticker}"},
+            {"text": "📰 חדשות", "callback_data": f"news:{ticker}"},
+        ],
+    ]
+
     await send_message(
-        f"🛒 <b>קניתי מניה חדשה!</b>\n"
+        f"🛒 <b>קניתי!</b>  <b>{ticker}</b>  {qty_str} מניות\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🏷️ מניה: <b>{ticker}</b>\n"
-        f"🔢 כמות: {qty_str} מניות\n"
-        f"💵 קניתי במחיר: <b>{_price_str}</b>\n"
+        f"💵 מחיר כניסה:  <b>{_price_str}</b>\n"
+        f"💰 סה״כ השקעה:  <b>{_notional_str}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"✅ אמכור ברווח אם יגיע ל: {_tp_str} (+{tp_pct:.1f}%)\n"
-        f"🛑 אמכור בהפסד אם ירד ל: {_stop_str} (-{stop_pct:.1f}%)\n"
+        f"🎯 Take Profit:  {_tp_str}  <b>(+{tp_pct:.1f}%)</b>\n"
+        f"🛑 Stop Loss:    {_stop_str}  <b>(-{stop_pct:.1f}%)</b>\n"
+        f"⚖️  Risk/Reward:  {rr_str}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"💰 כמה השקעתי: <b>{_notional_str}</b>\n"
-        f"📊 איכות המניה: {_score_bar}\n"
-        f"   <b>{score:.0f} מתוך 100</b> — {q}"
-        f"{id_line}"
+        f"📊 ציון:  {_score_bar}  <b>{score:.0f}/100</b>  {q}"
+        f"{iceberg_line}{id_line}",
+        reply_markup={"inline_keyboard": inline_buttons},
     )
 
     # Also send to Discord with embed formatting
@@ -319,25 +416,35 @@ async def notify_trade_close(
     _arrow = "📈" if win else "📉"
     _pct_color = "🟢" if win else "🔴"
 
-    title = "💰 מכרתי ברווח! 🎉" if win else "📉 מכרתי בהפסד"
-    pnl_label = "רווח נטו" if win else "הפסד נטו"
-    pnl_icon  = "💚" if win else "❤️"
+    title    = "💰 מכרתי ברווח! 🎉" if win else "📉 מכרתי בהפסד"
+    pnl_icon = "💚" if win else "❤️"
+    pnl_bar  = _build_progress_bar(min(100, max(0, 50 + pct * 5)), fill="🟩" if win else "🟥")
+
+    # Reason emoji mapping
+    reason_emoji = {
+        "take_profit": "🎯 Take Profit",
+        "stop_loss_hit": "🛑 Stop Loss",
+        "smart_sell": "🤖 Smart Sell",
+        "emergency_exit": "🚨 Emergency Exit",
+        "time_exit": "⏰ זמן מקסימלי",
+        "stale_restart": "🔄 Restart",
+    }.get(reason, f"📌 {reason}" if reason else "")
 
     await send_message(
-        f"<b>{title}</b>\n"
+        f"{title}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🏷️ מניה: <b>{ticker}</b>\n"
-        f"🔢 כמות: {qty} מניות\n"
-        f"📌 קניתי במחיר: {_entry_str}\n"
-        f"💵 מכרתי במחיר: <b>{_exit_str}</b>\n"
-        f"{_pct_color} שינוי: <b>{pct:+.2f}%</b>\n"
-        f"⏱️ החזקתי: {dur_str}\n"
-        + (f"📝 למה מכרתי: {reason}\n" if reason else "")
-        + f"━━━━━━━━━━━━━━━━\n"
-        f"{pnl_icon} סה״כ הרווחתי/הפסדתי: {_pnl_str}\n"
-        f"💳 {pnl_label} (אחרי מס): {_net_str}\n"
-        f"🧾 מס שהפרשתי: {_tax_str}"
-        f"{id_line}"
+        f"🏷️  <b>{ticker}</b>  |  {qty:.0f} מניות\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📥 קנייה:  {_entry_str}\n"
+        f"📤 מכירה:  <b>{_exit_str}</b>\n"
+        f"{_pct_color} שינוי:   <b>{pct:+.2f}%</b>\n"
+        f"{pnl_bar}\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"{pnl_icon} P&L:  <b>{_pnl_str}</b>  (נטו: {_net_str})\n"
+        f"🧾 מס:    {_tax_str}\n"
+        f"⏱️  זמן:   {dur_str}"
+        + (f"\n{reason_emoji}" if reason_emoji else "")
+        + (f"\n🔖 עסקה #{trade_id}" if trade_id else "")
     )
 
     # Also send to Discord with embed formatting
@@ -592,14 +699,38 @@ async def notify_daily_summary(
         pnl_str     = f"${total_pnl:+.2f}"
         net_str     = f"${realized_pnl_net:+.2f}" if realized_pnl_net else ""
 
+    # Win rate visual bar
+    win_bar   = _build_progress_bar(win_rate, fill="🟩", empty="🟥")
+    pnl_color = "🟢" if total_pnl >= 0 else "🔴"
+
+    # Weekly P&L trend sparkline (last 7 days from DB)
+    sparkline = ""
+    try:
+        import database as _dbsp
+        from datetime import datetime, timezone, timedelta
+        _week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        _daily = _dbsp.get_connection().execute("""
+            SELECT date(exit_time) as d, SUM(pnl_gross) as dpnl
+            FROM trade_log WHERE status IN ('stopped','sold')
+            AND exit_time >= ?
+            GROUP BY d ORDER BY d
+        """, (_week_ago,)).fetchall()
+        if len(_daily) >= 3:
+            sparkline = " " + _build_pnl_chart([float(r[1]) for r in _daily], width=7)
+    except Exception:
+        pass
+
+    from datetime import datetime, timezone, timedelta
+    _now_il = datetime.now(timezone.utc) + timedelta(hours=3)
+    date_str = _now_il.strftime("%d/%m/%Y")
+
     lines = [
-        f"🌙 <b>סיכום יומי</b>\n━━━━━━━━━━━━━━━━",
-        f"🛒  קניות היום:    <b>{buys_today}</b>",
-        f"💸  מכירות היום:  <b>{total_trades}</b>  (✅{wins}  ❌{losses})",
+        f"🌙 <b>סיכום יום {date_str}</b>\n━━━━━━━━━━━━━━━━",
+        f"🛒  קניות:    <b>{buys_today}</b>  |  💸 מכירות: <b>{total_trades}</b>  (✅{wins} / ❌{losses})",
     ]
     if total_trades > 0:
-        lines.append(f"🎯  אחוז הצלחה:        <b>{win_rate:.1f}%</b>")
-    lines.append(f"{pnl_emoji}  רווח/הפסד:     <b>{pnl_str}</b>")
+        lines.append(f"🎯  Win Rate:  {win_bar}  <b>{win_rate:.1f}%</b>")
+    lines.append(f"{pnl_color}  P&L יומי:  <b>{pnl_str}</b>{sparkline}")
     if realized_pnl_net and net_str:
         lines.append(f"💳  נטו אחרי מס:  {net_str}")
     if tax_reserved > 0:
@@ -608,7 +739,8 @@ async def notify_daily_summary(
     # Per-trade breakdown (today's closed trades from DB)
     try:
         import database as _db
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _today = _now_il.strftime("%Y-%m-%d")  # Israel date
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # UTC fallback
         all_t = _db.get_trade_history(limit=30) or []
         today_closed = [x for x in all_t
                         if str(x.get("exit_time", ""))[:10] == today
@@ -645,7 +777,22 @@ async def notify_daily_summary(
     except Exception:
         pass
 
-    await send_message("\n".join(lines))
+    # Quick-action inline keyboard on daily summary
+    summary_buttons = [
+        [
+            {"text": "📍 פוזיציות פתוחות", "callback_data": "positions:all"},
+            {"text": "📊 ניתוח מלא",       "callback_data": "performance:full"},
+        ],
+        [
+            {"text": "🩺 מצב הבוט",        "callback_data": "health:check"},
+            {"text": "🚨 אנומליות",         "callback_data": "anomalies:scan"},
+        ],
+    ]
+
+    await send_message(
+        "\n".join(lines),
+        reply_markup={"inline_keyboard": summary_buttons},
+    )
 
 
 async def notify_weekly_report(report_html: str) -> None:
