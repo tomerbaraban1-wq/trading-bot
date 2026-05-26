@@ -123,8 +123,22 @@ async def send_message(text: str, reply_markup: dict | None = None) -> bool:
         text: HTML-formatted message body.
         reply_markup: Optional inline keyboard. Example:
             {"inline_keyboard": [[{"text": "💲 מחיר", "callback_data": "price:AAPL"}]]}
+
+    Note: Automatically translates English text to Hebrew via translation_service.
     """
+    # ── AUTO-TRANSLATE TO HEBREW ──────────────────────────────────────────
+    # Smart translation: financial glossary first, then Google Translate
+    # Preserves: HTML tags, tickers ($AAPL), numbers, percentages, URLs
+    try:
+        from translation_service import translate_message_smart, TRANSLATION_ENABLED
+        if TRANSLATION_ENABLED:
+            text = await translate_message_smart(text)
+    except Exception as e:
+        logger.debug(f"Translation skipped: {e}")
+        # Continue with original text if translation fails
+
     # Send to Discord in parallel — only if a running event loop exists
+    # Note: Discord gets the translated (Hebrew) version
     try:
         from discord_bot import send_discord as _send_discord
         import asyncio as _asyncio

@@ -809,3 +809,68 @@ async def analyze_protection(x_api_key: Optional[str] = Header(None)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSLATION SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/translation/stats")
+async def get_translation_stats_endpoint(x_api_key: Optional[str] = Header(None)):
+    """Get translation service statistics."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from translation_service import get_translation_stats
+        return get_translation_stats()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/translation/test")
+async def test_translation(request: Request, x_api_key: Optional[str] = Header(None)):
+    """Test translation with custom text. Body: {'text': '...'}"""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        data = await request.json()
+        text = data.get("text", "")
+
+        if not text:
+            raise HTTPException(status_code=400, detail="text required")
+
+        from translation_service import translate_message
+        translated = await translate_message(text)
+
+        return {
+            "original": text,
+            "translated": translated,
+            "changed": text != translated,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/translation/toggle")
+async def toggle_translation(request: Request, x_api_key: Optional[str] = Header(None)):
+    """Enable/disable translation. Body: {'enabled': true/false}"""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        data = await request.json()
+        enabled = data.get("enabled", True)
+
+        from translation_service import enable_translation, disable_translation
+        if enabled:
+            enable_translation()
+        else:
+            disable_translation()
+
+        return {"enabled": enabled}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
