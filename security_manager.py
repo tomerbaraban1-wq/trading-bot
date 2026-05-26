@@ -379,10 +379,24 @@ def log_security_event(
 
         # Send alert for critical events
         if severity == "critical":
-            asyncio.create_task(_send_security_alert(event))
+            try:
+                # Get running loop - may not exist if called from sync context
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Store reference to prevent garbage collection
+                    task = loop.create_task(_send_security_alert(event))
+                    _pending_alert_tasks.add(task)
+                    task.add_done_callback(_pending_alert_tasks.discard)
+            except RuntimeError:
+                # No event loop - skip the alert (DB log is still recorded)
+                logger.debug("No event loop available for security alert")
 
     except Exception as e:
         logger.error(f"Failed to log security event: {e}")
+
+
+# Track pending alert tasks to prevent garbage collection
+_pending_alert_tasks: set = set()
 
 
 async def _send_security_alert(event: SecurityEvent) -> None:

@@ -231,7 +231,8 @@ async def make_trading_decision(
                 market_score = 0.5
 
             signals["market_intel"] = {"score": market_score}
-        except:
+        except Exception as e:
+            logger.debug(f"Market intelligence signal failed: {e}")
             signals["market_intel"] = {"score": 0.5}
 
         # ── 6. RISK ADJUSTMENT ────────────────────────────────────────────
@@ -249,7 +250,8 @@ async def make_trading_decision(
                     warnings.append(f"⚠️ Portfolio risk high ({risk_score:.0f}/100)")
                 elif risk_score < 25:
                     reasoning.append(f"✅ Portfolio risk low ({risk_score:.0f}/100)")
-        except:
+        except Exception as e:
+            logger.debug(f"Risk signal failed: {e}")
             signals["risk"] = {"score": 0.5}
 
         # ── 7. CONTINUOUS LEARNING ────────────────────────────────────────
@@ -268,7 +270,8 @@ async def make_trading_decision(
                 learning_score = 0.5
 
             signals["learning"] = {"score": learning_score}
-        except:
+        except Exception as e:
+            logger.debug(f"Learning signal failed: {e}")
             signals["learning"] = {"score": 0.5}
 
         # ── AGGREGATE ALL SIGNALS ─────────────────────────────────────────
@@ -283,7 +286,8 @@ async def make_trading_decision(
             base_size = 0.10  # 10% of capital base
             adjusted_size = base_size * (2 * final_score)  # Scale by confidence
             adjusted_size = max(0.02, min(0.25, adjusted_size))  # 2-25% range
-        except:
+        except Exception as e:
+            logger.debug(f"Position sizing failed, using default: {e}")
             adjusted_size = 0.05  # Default 5%
 
         # ── STOP LOSS / TAKE PROFIT ───────────────────────────────────────

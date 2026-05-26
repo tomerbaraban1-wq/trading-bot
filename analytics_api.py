@@ -529,6 +529,24 @@ async def project_compound_growth(
 # ─────────────────────────────────────────────────────────────────────────────
 # BENCHMARK COMPARISON
 # ─────────────────────────────────────────────────────────────────────────────
+# IMPORTANT: /benchmark/all MUST be defined BEFORE /benchmark/{ticker}
+# otherwise "/benchmark/all" gets matched as ticker="all"
+
+@router.get("/benchmark/all")
+async def get_all_benchmarks(
+    days: int = Query(90, ge=7, le=365),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Compare to all major benchmarks."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from benchmark_compare import compare_to_all_benchmarks
+        return await compare_to_all_benchmarks(days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/benchmark/{ticker}")
 async def get_benchmark_comparison(
@@ -539,6 +557,10 @@ async def get_benchmark_comparison(
     """Compare bot performance to a specific benchmark."""
     if not _verify_api_key(x_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+    # Guard: reject 'all' explicitly - should go to /benchmark/all
+    if ticker.lower() == "all":
+        raise HTTPException(status_code=400, detail="Use /benchmark/all for all benchmarks")
 
     try:
         from benchmark_compare import compare_to_benchmark
@@ -556,22 +578,8 @@ async def get_benchmark_comparison(
             "information_ratio": comparison.information_ratio,
             "status": comparison.win_rate_vs_market,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/benchmark/all")
-async def get_all_benchmarks(
-    days: int = Query(90, ge=7, le=365),
-    x_api_key: Optional[str] = Header(None)
-):
-    """Compare to all major benchmarks."""
-    if not _verify_api_key(x_api_key):
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
-    try:
-        from benchmark_compare import compare_to_all_benchmarks
-        return await compare_to_all_benchmarks(days)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
