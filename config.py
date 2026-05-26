@@ -89,19 +89,34 @@ class Settings:
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
 
-    # Budget
+    # Budget & Position Sizing (calibrated from live trade data)
     MAX_BUDGET: float = float(os.getenv("MAX_BUDGET", "10000"))
-    MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "15"))   # reduced 20→15
+    MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "15"))   # max 15% per trade
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "2.0"))
     STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "3.5"))
     TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "15.0"))
-    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "6"))
+    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))  # reduced 6→4: focus on best
 
-    # Entry quality filters (lesson from 33% win rate analysis)
-    MIN_BUY_SCORE: int = int(os.getenv("MIN_BUY_SCORE", "65"))           # raised 51→65
+    # Time management (calibrated: >48h = 27% WR, 2-12h = 50% WR)
+    MAX_HOLD_HOURS: float = float(os.getenv("MAX_HOLD_HOURS", "24.0"))      # exit after 24h max
+    MIN_HOLD_MINUTES: int = int(os.getenv("MIN_HOLD_MINUTES", "20"))        # never sell in first 20 min
+
+    # Entry quality filters (calibrated from 33% → target 55% win rate)
+    MIN_BUY_SCORE: int = int(os.getenv("MIN_BUY_SCORE", "65"))              # raised 51→65
     MIN_VOLUME_RATIO: float = float(os.getenv("MIN_VOLUME_RATIO", "0.75"))  # raised 0.5→0.75
     REQUIRE_ABOVE_SMA50: bool = os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() in ("true", "1", "yes")
-    MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))  # circuit break after N consecutive losses
+    MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))
+
+    # Profit protection (lesson: let profits go to stop instead of riding to zero)
+    BREAKEVEN_TRIGGER_PCT: float = float(os.getenv("BREAKEVEN_TRIGGER_PCT", "0.5"))
+    PROFIT_PROTECT_ENABLED: bool = os.getenv("PROFIT_PROTECT_ENABLED", "true").lower() in ("true","1","yes")
+    PROFIT_PROTECT_PEAK_PCT: float = float(os.getenv("PROFIT_PROTECT_PEAK_PCT", "1.5"))
+    PROFIT_PROTECT_FLOOR_PCT: float = float(os.getenv("PROFIT_PROTECT_FLOOR_PCT", "0.2"))
+
+    # Drawdown control (professional trading rules)
+    MAX_DAILY_LOSS_PCT: float = float(os.getenv("MAX_DAILY_LOSS_PCT", "2.0"))   # stop after 2% daily loss
+    MAX_WEEKLY_LOSS_PCT: float = float(os.getenv("MAX_WEEKLY_LOSS_PCT", "5.0")) # stop after 5% weekly
+    MAX_CONSECUTIVE_LOSSES: int = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "3")) # pause after 3 losses
 
     # Tax
     TAX_RATE: float = float(os.getenv("TAX_RATE", "0.25"))

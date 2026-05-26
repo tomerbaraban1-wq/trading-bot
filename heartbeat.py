@@ -2387,18 +2387,30 @@ async def earnings_monitor_loop():
 
 async def adaptive_threshold_loop():
     """
-    סף קנייה אדפטיבי — אם אין עסקאות 3 ימים, מוריד את הסף זמנית.
-    בכל קנייה חדשה → סף חוזר לרגיל.
+    סף קנייה אדפטיבי — מתאים פרמטרים לפי ביצועים אחרונים.
 
-    מטרה: הבוט לא יהיה תקוע מדי בלי לחרוג מהאיכות.
+    כולל auto_optimizer: מעלה/מוריד MIN_BUY_SCORE לפי win rate שבועי.
     """
     await asyncio.sleep(60 * 60)  # 1 hour after startup
+
+    # Run auto-optimizer every 2 hours
+    _last_optimizer_run = 0
     _original_score: int | None = None
 
     while True:
         try:
             import os as _os_at
             import datetime as _dt_at
+
+            # ── Run auto-optimizer every 2 hours ─────────────────────
+            import time as _time_ao
+            if _time_ao.time() - _last_optimizer_run > 2 * 3600:
+                try:
+                    from auto_optimizer import run_auto_optimizer
+                    await asyncio.wait_for(run_auto_optimizer(), timeout=30)
+                    _last_optimizer_run = _time_ao.time()
+                except Exception as _ao_err:
+                    logger.debug(f"Auto optimizer failed: {_ao_err}")
 
             # Get most recent trade
             history = await asyncio.to_thread(database.get_trade_history, limit=10)

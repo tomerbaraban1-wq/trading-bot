@@ -83,6 +83,15 @@ async def lifespan(app: FastAPI):
     logger.info("=== Trading Bot Started ===")
     _broker_info = settings.ACTIVE_BROKER if settings.ACTIVE_BROKER else settings.ALPACA_BASE_URL
     logger.info(f"Budget: ${settings.MAX_BUDGET:,.2f} | Broker: {_broker_info} | DB Mode: {durability_mode}")
+    logger.info(f"Config: MIN_BUY_SCORE={settings.MIN_BUY_SCORE} | MAX_POSITIONS={settings.MAX_OPEN_POSITIONS} | MAX_HOLD={settings.MAX_HOLD_HOURS}h")
+
+    # Send startup configuration report to Telegram
+    try:
+        from startup_validator import send_startup_report as _startup_report
+        import asyncio as _asyncio_sr
+        _asyncio_sr.create_task(_startup_report())
+    except Exception:
+        pass
 
     # ── Auto-register Telegram webhook + command menu ─────────────────────────
     try:
