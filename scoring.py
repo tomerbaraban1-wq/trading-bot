@@ -299,11 +299,14 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     rsi = _safe(indicators.get("rsi"))
     max_score += 15
     if rsi is not None:
-        if 35 <= rsi <= 55:      score += 15; breakdown["rsi"] = f"✅ Ideal zone ({rsi:.1f})"
-        elif 55 < rsi <= 65:     score += 12; breakdown["rsi"] = f"✅ Healthy uptrend ({rsi:.1f})"
-        elif 25 <= rsi < 35:     score += 10; breakdown["rsi"] = f"✅ Oversold ({rsi:.1f})"
+        # Re-calibrated based on live trade data:
+        # RSI 30-40 = 100% WR in our trades | RSI 40-50 = 0% WR!
+        if 30 <= rsi <= 42:      score += 15; breakdown["rsi"] = f"✅ Oversold reversal zone ({rsi:.1f}) — best WR"
+        elif 55 < rsi <= 65:     score += 13; breakdown["rsi"] = f"✅ Momentum zone ({rsi:.1f})"
+        elif 42 < rsi <= 55:     score += 6;  breakdown["rsi"] = f"⚠️ Neutral zone ({rsi:.1f}) — low WR historically"
         elif 65 < rsi <= 72:     score += 7;  breakdown["rsi"] = f"⚠️ Extended ({rsi:.1f})"
-        elif rsi < 25:           score += 4;  breakdown["rsi"] = f"⚠️ Very oversold ({rsi:.1f})"
+        elif 20 <= rsi < 30:     score += 12; breakdown["rsi"] = f"✅ Deep oversold ({rsi:.1f})"
+        elif rsi < 20:           score += 4;  breakdown["rsi"] = f"⚠️ Extreme oversold ({rsi:.1f})"
         else:                    score += 0;  breakdown["rsi"] = f"❌ Overbought ({rsi:.1f})"
     else:
         breakdown["rsi"] = "⚪ N/A"

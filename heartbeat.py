@@ -1615,6 +1615,35 @@ async def auto_invest_loop():
                         except Exception:
                             pass  # fail-open — don't block on price fetch error
 
+                        # ── Pre-Buy Checklist — 7 final quality gates ─────────
+                        try:
+                            from pre_buy_checklist import run_pre_buy_checklist
+                            _ind3 = composite.get("indicators", {})
+                            _open_count = len(database.get_open_trades() or [])
+                            _checklist = await _asyncio.wait_for(
+                                run_pre_buy_checklist(
+                                    ticker=ticker,
+                                    score=score,
+                                    rsi=_ind3.get("rsi", 50),
+                                    volume_ratio=_ind3.get("volume_ratio", 1.0),
+                                    above_sma50=_ind3.get("above_sma50", True),
+                                    above_sma200=_ind3.get("above_sma200", True),
+                                    open_positions_count=_open_count,
+                                ),
+                                timeout=20,
+                            )
+                            if not _checklist.get("pass"):
+                                _failed = ", ".join(_checklist.get("failed_checks", []))[:100]
+                                logger.info(f"AUTO-INVEST: {ticker} BLOCKED by checklist — {_failed}")
+                                continue
+                            # Apply confidence boost to score
+                            _boost = _checklist.get("confidence_boost", 0)
+                            if _boost > 0:
+                                score = min(100, score + _boost)
+                                logger.info(f"AUTO-INVEST: {ticker} checklist boost +{_boost} → score={score:.1f}")
+                        except (_asyncio.TimeoutError, Exception) as _cl_err:
+                            logger.debug(f"AUTO-INVEST: {ticker} checklist skipped ({type(_cl_err).__name__})")
+
                         # Learning check — wrap with timeout to prevent yfinance hangs
                         try:
                             from learning import should_override_buy as _sob
@@ -1884,27 +1913,30 @@ async def auto_invest_loop():
                     try:
                         from config import settings as _cfg
                         from telegram_chat import _fmt_price as _fp
+                        from telegram_bot import _build_progress_bar
                         n = len(_bought_list)
                         lines = [
-                            f"🛒 <b>קנינו {n} {'מניה' if n==1 else 'מניות'}! 🎉</b>",
+                            f"🛒 <b>קנינו {n} {'מניה' if n==1 else 'מניות'}!</b>",
                             "━━━━━━━━━━━━━━━━"
                         ]
                         for _b in _bought_list:
                             _p   = _b["price"]
+                            _sc  = _b.get("score", 0)
                             _sl  = round(_p * (1 - _cfg.STOP_LOSS_PCT  / 100), 2)
                             _tp  = round(_p * (1 + _cfg.TAKE_PROFIT_PCT / 100), 2)
                             _qty = f"{_b['qty']:.4f}".rstrip('0').rstrip('.')
                             _notional = _p * _b["qty"]
-                            lines.append(f"🏷️ מניה:          <b>{_b['ticker']}</b>")
-                            lines.append(f"🔢 כמות:          {_qty} מניות")
-                            lines.append(f"💵 מחיר קנייה:   {_fp(_p)}")
-                            lines.append(f"💸 הושקע:         {_fp(_notional)}")
-                            lines.append(f"✅ יצא ברווח:    {_fp(_tp)} (+{_cfg.TAKE_PROFIT_PCT:.0f}%)")
-                            lines.append(f"❌ יצא בהפסד:   {_fp(_sl)} (-{_cfg.STOP_LOSS_PCT:.0f}%)")
+                            _rr = _cfg.TAKE_PROFIT_PCT / _cfg.STOP_LOSS_PCT
+                            _bar = _build_progress_bar(_sc, fill="🟩", empty="⬜")
+                            lines.append(
+                                f"  <b>{_b['ticker']}</b>  {_qty}×{_fp(_p)}  "
+                                f"→TP:{_fp(_tp)} / SL:{_fp(_sl)}  R/R:1:{_rr:.1f}\n"
+                                f"  {_bar} {_sc:.0f}/100"
+                            )
                             if _b != _bought_list[-1]:
                                 lines.append("━━━━━━━━━━━━━━━━")
                         lines.append("━━━━━━━━━━━━━━━━")
-                        lines.append(f"💰 מזומן נותר:   {_fp(remaining)}")
+                        lines.append(f"💰 מזומן נותר: {_fp(remaining)}  |  פוזיציות: {_open_count+n}")
                         _create_background_task(send_message("\n".join(lines)))
                     except Exception as _te:
                         logger.warning(f"[NOTIFY] combined buy message failed: {_te}")
