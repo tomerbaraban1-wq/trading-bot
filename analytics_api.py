@@ -423,6 +423,264 @@ async def get_learning_insights(x_api_key: Optional[str] = Header(None)):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAIRS TRADING & HEDGING
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/pairs/opportunities")
+async def get_pairs_opportunities(x_api_key: Optional[str] = Header(None)):
+    """Get pairs trading opportunities."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from pairs_trading import scan_pairs_opportunities
+        opportunities = await scan_pairs_opportunities()
+        return {"opportunities": opportunities, "count": len(opportunities)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pairs/{ticker1}/{ticker2}")
+async def analyze_pair(ticker1: str, ticker2: str, x_api_key: Optional[str] = Header(None)):
+    """Analyze a specific pair."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from pairs_trading import generate_pairs_signal
+        pair = await generate_pairs_signal(ticker1.upper(), ticker2.upper())
+        return {
+            "ticker1": pair.ticker1,
+            "ticker2": pair.ticker2,
+            "correlation": pair.correlation,
+            "z_score": pair.z_score,
+            "signal": pair.signal,
+            "confidence": pair.confidence,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/portfolio/beta")
+async def get_portfolio_beta(x_api_key: Optional[str] = Header(None)):
+    """Get portfolio beta vs SPY."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from pairs_trading import calculate_portfolio_beta
+        return await calculate_portfolio_beta()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPOUND GROWTH
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/compound/strategy")
+async def get_compound_strategy(x_api_key: Optional[str] = Header(None)):
+    """Get personalized compounding strategy."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from compound_engine import get_compounding_strategy
+        return await get_compounding_strategy()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/compound/project")
+async def project_compound_growth(
+    initial: float = Query(10000),
+    monthly: float = Query(500),
+    annual_return: float = Query(15),
+    years: int = Query(10, ge=1, le=50),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Project compound growth with given parameters."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from compound_engine import calculate_compound_growth, compare_growth_scenarios
+
+        projection = calculate_compound_growth(initial, monthly, annual_return, years)
+        scenarios = compare_growth_scenarios(initial, monthly, years)
+
+        return {
+            "projection": {
+                "initial": projection.initial_amount,
+                "monthly": projection.monthly_contribution,
+                "annual_return": projection.annual_return_pct,
+                "years": projection.years,
+                "final_amount": projection.final_amount,
+                "total_contributions": projection.total_contributions,
+                "total_growth": projection.total_growth,
+                "growth_pct": projection.growth_pct,
+            },
+            "scenarios": scenarios,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BENCHMARK COMPARISON
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/benchmark/{ticker}")
+async def get_benchmark_comparison(
+    ticker: str,
+    days: int = Query(90, ge=7, le=365),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Compare bot performance to a specific benchmark."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from benchmark_compare import compare_to_benchmark
+        comparison = await compare_to_benchmark(ticker.upper(), days)
+        return {
+            "benchmark_ticker": comparison.benchmark_ticker,
+            "benchmark_name": comparison.benchmark_name,
+            "period_days": days,
+            "bot_return_pct": comparison.bot_return_pct,
+            "benchmark_return_pct": comparison.benchmark_return_pct,
+            "alpha_pct": comparison.alpha_pct,
+            "beta": comparison.beta,
+            "correlation": comparison.correlation,
+            "sharpe_difference": comparison.sharpe_difference,
+            "information_ratio": comparison.information_ratio,
+            "status": comparison.win_rate_vs_market,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/benchmark/all")
+async def get_all_benchmarks(
+    days: int = Query(90, ge=7, le=365),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Compare to all major benchmarks."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from benchmark_compare import compare_to_all_benchmarks
+        return await compare_to_all_benchmarks(days)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SOCIAL SENTIMENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/sentiment/{ticker}")
+async def get_unified_sentiment_endpoint(ticker: str, x_api_key: Optional[str] = Header(None)):
+    """Get unified sentiment for a ticker."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from social_sentiment import get_unified_sentiment
+        sentiment = await get_unified_sentiment(ticker.upper())
+        return {
+            "ticker": sentiment.ticker,
+            "overall_score": sentiment.overall_score,
+            "overall_label": sentiment.overall_label,
+            "confidence": sentiment.confidence,
+            "source_agreement": sentiment.source_agreement,
+            "total_mentions": sentiment.total_mentions,
+            "interpretation": sentiment.interpretation,
+            "actionable": sentiment.actionable,
+            "sources": [
+                {
+                    "source": s.source,
+                    "score": s.score,
+                    "mentions": s.mention_count,
+                    "confidence": s.confidence,
+                }
+                for s in sentiment.sources
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADE JOURNAL
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/journal/recent")
+async def get_recent_journal(
+    days: int = Query(7, ge=1, le=90),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Get recent trade reviews."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from trade_journal import review_recent_trades
+        reviews = await review_recent_trades(days)
+        return {
+            "period_days": days,
+            "count": len(reviews),
+            "reviews": [
+                {
+                    "trade_id": r.trade_id,
+                    "ticker": r.ticker,
+                    "entry_date": r.entry_date,
+                    "exit_date": r.exit_date,
+                    "pnl": r.pnl,
+                    "pnl_pct": r.pnl_pct,
+                    "outcome": r.outcome,
+                    "overall_grade": r.overall_grade,
+                    "entry_grade": r.entry_grade,
+                    "exit_grade": r.exit_grade,
+                    "quality_score": r.quality_score,
+                    "lessons": r.lessons_learned,
+                    "mistakes": r.mistakes_made,
+                }
+                for r in reviews
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/journal/summary")
+async def get_journal_summary(
+    days: int = Query(30, ge=1, le=365),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Get journal summary statistics."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from trade_journal import generate_journal_summary
+        summary = await generate_journal_summary(days)
+        return {
+            "period_days": summary.period_days,
+            "total_trades_reviewed": summary.total_trades_reviewed,
+            "avg_quality_score": summary.avg_quality_score,
+            "grade_distribution": summary.grade_distribution,
+            "most_common_mistakes": summary.most_common_mistakes,
+            "most_repeated_patterns": summary.most_repeated_patterns,
+            "improvement_areas": summary.improvement_areas,
+            "strengths": summary.strengths,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UNIFIED DASHBOARD DATA
 # ─────────────────────────────────────────────────────────────────────────────
 

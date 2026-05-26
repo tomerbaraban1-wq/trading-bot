@@ -4127,6 +4127,151 @@ async def news_catalyst_loop():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAIRS TRADING SCANNER LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def pairs_trading_loop():
+    """
+    Scan for pairs trading opportunities every 4 hours during market hours.
+    """
+    await asyncio.sleep(25 * 60)  # wait 25 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from pairs_trading import scan_pairs_opportunities
+                opportunities = await asyncio.wait_for(
+                    scan_pairs_opportunities(),
+                    timeout=180,
+                )
+
+                if opportunities:
+                    lines = ["🔀 <b>Pairs Trading Opportunities</b>", "━━━━━━━━━━━━━━━━━"]
+                    for opp in opportunities[:3]:
+                        lines.append(
+                            f"  • {opp['ticker1']}/{opp['ticker2']}: z={opp['z_score']:.2f}, conf={opp['confidence']:.0%}"
+                        )
+                        lines.append(f"    → {opp['expected_action']}")
+
+                    from smart_notifications import notify_medium
+                    await notify_medium(
+                        title="Pairs Trading Opportunities",
+                        message="\n".join(lines),
+                        category="market",
+                    )
+
+                logger.info(f"[PAIRS] Found {len(opportunities)} opportunities")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Pairs trading loop error: {e}")
+
+        await asyncio.sleep(4 * 60 * 60)   # every 4 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BENCHMARK COMPARISON LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def benchmark_comparison_loop():
+    """
+    Compare bot performance vs benchmarks daily.
+    """
+    await asyncio.sleep(35 * 60)  # wait 35 min after startup
+    while True:
+        try:
+            from benchmark_compare import compare_to_benchmark
+
+            spy_comparison = await compare_to_benchmark("SPY", days=30)
+
+            if spy_comparison.bot_return_pct != 0 or spy_comparison.benchmark_return_pct != 0:
+                lines = [
+                    "📊 <b>Performance vs S&P 500 (30d)</b>",
+                    "━━━━━━━━━━━━━━━━━━",
+                    f"🤖 Bot Return: {spy_comparison.bot_return_pct:+.2f}%",
+                    f"📈 SPY Return: {spy_comparison.benchmark_return_pct:+.2f}%",
+                    f"⚡ Alpha: {spy_comparison.alpha_pct:+.2f}%",
+                    f"📌 Status: {spy_comparison.win_rate_vs_market}",
+                ]
+
+                from smart_notifications import notify_medium
+                await notify_medium(
+                    title="Benchmark Comparison",
+                    message="\n".join(lines),
+                    category="learning",
+                )
+
+                logger.info(f"[BENCHMARK] Alpha vs SPY: {spy_comparison.alpha_pct:+.2f}%")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Benchmark loop error: {e}")
+
+        await asyncio.sleep(24 * 60 * 60)   # daily
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADE JOURNAL LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def trade_journal_loop():
+    """
+    Generate trade journal reviews daily.
+    """
+    await asyncio.sleep(45 * 60)  # wait 45 min after startup
+    while True:
+        try:
+            from trade_journal import generate_journal_summary
+
+            summary = await generate_journal_summary(days=7)
+
+            if summary.total_trades_reviewed > 0:
+                lines = [
+                    "📓 <b>Trade Journal (7 days)</b>",
+                    "━━━━━━━━━━━━━━━━",
+                    f"📊 Trades reviewed: {summary.total_trades_reviewed}",
+                    f"⭐ Average grade: {summary.avg_quality_score:.0f}/100",
+                    "",
+                ]
+
+                # Grade distribution
+                dist = summary.grade_distribution
+                lines.append(f"📋 Grades: A:{dist.get('A',0)} B:{dist.get('B',0)} C:{dist.get('C',0)} D:{dist.get('D',0)} F:{dist.get('F',0)}")
+
+                # Strengths
+                if summary.strengths:
+                    lines.extend(["", "<b>💪 Strengths:</b>"])
+                    for s in summary.strengths[:3]:
+                        lines.append(f"  • {s}")
+
+                # Improvement areas
+                if summary.improvement_areas:
+                    lines.extend(["", "<b>📈 To Improve:</b>"])
+                    for i in summary.improvement_areas[:3]:
+                        lines.append(f"  • {i}")
+
+                from smart_notifications import notify_medium
+                await notify_medium(
+                    title="Trade Journal Review",
+                    message="\n".join(lines),
+                    category="learning",
+                )
+
+                logger.info(f"[JOURNAL] Reviewed {summary.total_trades_reviewed} trades")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Trade journal loop error: {e}")
+
+        await asyncio.sleep(24 * 60 * 60)   # daily
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AI DECISION ENGINE LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 

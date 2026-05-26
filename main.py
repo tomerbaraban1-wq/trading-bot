@@ -302,7 +302,8 @@ async def lifespan(app: FastAPI):
                            detailed_analytics_loop, ai_decision_loop,
                            attribution_loop, notification_digest_loop,
                            multi_timeframe_loop, health_monitoring_loop,
-                           news_catalyst_loop)
+                           news_catalyst_loop, pairs_trading_loop,
+                           benchmark_comparison_loop, trade_journal_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -333,6 +334,9 @@ async def lifespan(app: FastAPI):
     mtf_task               = asyncio.create_task(multi_timeframe_loop())   # multi-timeframe
     health_task            = asyncio.create_task(health_monitoring_loop()) # ניטור בריאות
     news_catalyst_task     = asyncio.create_task(news_catalyst_loop())     # אירועי חדשות
+    pairs_task             = asyncio.create_task(pairs_trading_loop())     # pairs trading
+    benchmark_task         = asyncio.create_task(benchmark_comparison_loop()) # השוואה לבנצ׳מרק
+    journal_task           = asyncio.create_task(trade_journal_loop())     # יומן עסקאות
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
     golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
     reentry_task           = asyncio.create_task(smart_reentry_loop())     # חזרה למניות שעלו אחרי מכירה
@@ -366,7 +370,8 @@ async def lifespan(app: FastAPI):
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
         earnings_monitor_task, market_pulse_task, goal_progress_task, learning_task, adaptive_params_task,
         correlation_task, market_intel_task, analytics_task, ai_decision_task,
-        attribution_task, digest_task, mtf_task, health_task, news_catalyst_task, webhook_keeper_task,
+        attribution_task, digest_task, mtf_task, health_task, news_catalyst_task,
+        pairs_task, benchmark_task, journal_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
         drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task,
