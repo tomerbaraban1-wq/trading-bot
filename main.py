@@ -440,6 +440,14 @@ try:
 except Exception as _rental_err:
     logger.warning(f"Rental admin endpoints not available: {_rental_err}")
 
+# Analytics API endpoints (rich data access for dashboards)
+try:
+    from analytics_api import router as analytics_router
+    app.include_router(analytics_router)
+    logger.info("Analytics API endpoints registered at /api/v1/*")
+except Exception as _analytics_err:
+    logger.warning(f"Analytics API not available: {_analytics_err}")
+
 
 @app.get("/ping")
 async def ping():
