@@ -491,6 +491,20 @@ async def health_dashboard():
         )
 
 
+@app.get("/dashboard/advanced", response_class=HTMLResponse)
+async def advanced_dashboard():
+    """Beautiful real-time trading dashboard with all metrics."""
+    try:
+        from advanced_dashboard import generate_advanced_dashboard_html
+        html = await generate_advanced_dashboard_html()
+        return HTMLResponse(content=html)
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<html><body><h1>Dashboard Error</h1><p>{e}</p></body></html>",
+            status_code=500
+        )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     import asyncio as _aio
