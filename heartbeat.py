@@ -4022,3 +4022,181 @@ async def detailed_analytics_loop():
             logger.error(f"Detailed analytics loop error: {e}")
 
         await asyncio.sleep(2 * 60 * 60)   # run every 2 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI DECISION ENGINE LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def ai_decision_loop():
+    """
+    Use AI Decision Engine to evaluate current positions every hour.
+    Combines all intelligence modules into unified decisions.
+    """
+    await asyncio.sleep(12 * 60)  # wait 12 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from ai_decision_engine import make_trading_decision
+                positions = await asyncio.to_thread(broker.get_positions)
+
+                if positions:
+                    high_risk_positions = []
+                    for p in positions[:5]:  # Limit to 5 to avoid rate limits
+                        try:
+                            decision = await asyncio.wait_for(
+                                make_trading_decision(
+                                    ticker=p.symbol,
+                                    current_price=float(p.current_price),
+                                ),
+                                timeout=30,
+                            )
+
+                            if decision.action in ("SELL", "STRONG_SELL"):
+                                high_risk_positions.append((p.symbol, decision))
+
+                        except Exception as e:
+                            logger.debug(f"AI decision for {p.symbol} failed: {e}")
+
+                    # Alert if any positions flagged for exit
+                    if high_risk_positions:
+                        from smart_notifications import notify_high
+                        for ticker, decision in high_risk_positions:
+                            await notify_high(
+                                title=f"🔴 AI: Consider closing {ticker}",
+                                message=f"{decision.final_explanation}\nRisk: {decision.risk_score:.0f}/100",
+                                category="trade",
+                                subkey=ticker,
+                            )
+
+                logger.info("[AI DECISION] Cycle complete")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"AI decision loop error: {e}")
+
+        await asyncio.sleep(60 * 60)   # run every hour
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERFORMANCE ATTRIBUTION LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def attribution_loop():
+    """
+    Generate performance attribution insights daily.
+    Tells trader exactly what's working and what isn't.
+    """
+    await asyncio.sleep(15 * 60)  # wait 15 min after startup
+    while True:
+        try:
+            from performance_attribution import get_actionable_insights
+            insights = await get_actionable_insights()
+
+            if insights:
+                lines = [
+                    "📊 <b>תובנות ביצועים מהשבוע האחרון</b>",
+                    "━━━━━━━━━━━━━━━━━━━",
+                ]
+                lines.extend([f"  {insight}" for insight in insights])
+
+                from smart_notifications import notify_medium
+                await notify_medium(
+                    title="Performance Insights",
+                    message="\n".join(lines),
+                    category="learning",
+                )
+
+                logger.info(f"[ATTRIBUTION] Sent {len(insights)} insights")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Attribution loop error: {e}")
+
+        await asyncio.sleep(24 * 60 * 60)   # run daily
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTIFICATION DIGEST LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def notification_digest_loop():
+    """
+    Send batched notifications periodically (hourly digest + daily summary).
+    """
+    await asyncio.sleep(30 * 60)  # wait 30 min for batches to accumulate
+    while True:
+        try:
+            from smart_notifications import send_hourly_digest, send_daily_digest
+
+            now = datetime.now(timezone.utc)
+
+            # Send daily digest at end of trading day (after EOD)
+            if now.hour == 21:  # 4PM EST = 9PM UTC
+                await send_daily_digest()
+            else:
+                # Hourly digest of low/medium priority items
+                await send_hourly_digest()
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Notification digest error: {e}")
+
+        await asyncio.sleep(60 * 60)   # run every hour
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MULTI-TIMEFRAME ANALYSIS LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def multi_timeframe_loop():
+    """
+    Find high-confidence trading opportunities using multi-timeframe alignment.
+    Runs every 2 hours during market hours.
+    """
+    await asyncio.sleep(18 * 60)  # wait 18 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from multi_timeframe import find_confluence_opportunities
+
+                # Check current positions for confluence
+                positions = await asyncio.to_thread(broker.get_positions)
+                if positions:
+                    tickers = [p.symbol for p in positions[:5]]
+                    opportunities = await asyncio.wait_for(
+                        find_confluence_opportunities(tickers),
+                        timeout=120,
+                    )
+
+                    if opportunities:
+                        lines = ["🎯 <b>Multi-Timeframe Confluence</b>", "━━━━━━━━━━━━━━━"]
+                        for opp in opportunities[:3]:
+                            lines.append(
+                                f"  • {opp['ticker']}: {opp['alignment_score']:.0%} alignment | {opp['recommendation']}"
+                            )
+
+                        from smart_notifications import notify_medium
+                        await notify_medium(
+                            title="MTF Analysis",
+                            message="\n".join(lines),
+                            category="market",
+                        )
+
+                logger.info("[MTF] Confluence analysis complete")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Multi-timeframe loop error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # run every 2 hours

@@ -299,7 +299,9 @@ async def lifespan(app: FastAPI):
                            adaptive_threshold_loop, daily_goal_progress_loop,
                            continuous_learning_loop, adaptive_parameters_monitor_loop,
                            correlation_monitor_loop, market_intelligence_loop,
-                           detailed_analytics_loop)
+                           detailed_analytics_loop, ai_decision_loop,
+                           attribution_loop, notification_digest_loop,
+                           multi_timeframe_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -324,6 +326,10 @@ async def lifespan(app: FastAPI):
     correlation_task       = asyncio.create_task(correlation_monitor_loop())# מעקב קורלציות
     market_intel_task      = asyncio.create_task(market_intelligence_loop())# בינה שוק
     analytics_task         = asyncio.create_task(detailed_analytics_loop())# אנליטיקה מפורטת
+    ai_decision_task       = asyncio.create_task(ai_decision_loop())       # AI decision engine
+    attribution_task       = asyncio.create_task(attribution_loop())       # תובנות ביצועים
+    digest_task            = asyncio.create_task(notification_digest_loop())# digest חכם
+    mtf_task               = asyncio.create_task(multi_timeframe_loop())   # multi-timeframe
     webhook_keeper_task    = asyncio.create_task(webhook_keeper_loop())    # שומר על webhook
     golden_opp_task        = asyncio.create_task(golden_opportunity_loop())# הזדמנויות זהב
     reentry_task           = asyncio.create_task(smart_reentry_loop())     # חזרה למניות שעלו אחרי מכירה
@@ -356,7 +362,8 @@ async def lifespan(app: FastAPI):
         portfolio_update_task, news_refresh_task, news_monitor_task, morning_briefing_task,
         position_alert_task, backtest_task, training_task, eod_sweep_task, price_alert_task,
         earnings_monitor_task, market_pulse_task, goal_progress_task, learning_task, adaptive_params_task,
-        correlation_task, market_intel_task, analytics_task, webhook_keeper_task,
+        correlation_task, market_intel_task, analytics_task, ai_decision_task,
+        attribution_task, digest_task, mtf_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
         drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task,
