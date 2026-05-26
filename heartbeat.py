@@ -1755,17 +1755,20 @@ async def auto_invest_loop():
                         except _asyncio.TimeoutError:
                             logger.warning(f"[CORR] {ticker} check timed out — proceeding (fail-open)")
 
-                        # Sector diversification — skip if already holding a stock from same sector
-                        # Also skip defensive/commodity sectors in bull market (SPY above SMA50)
+                        # Sector diversification — max 2 stocks per sector
                         try:
-                            from sector_rotation import get_sector_for_ticker as _sector_of, get_leading_sectors as _gls
-                            _new_sector = _sector_of(ticker)
-                            if _new_sector:
-                                _open_trades = database.get_open_trades()
-                                _open_sectors = [_sector_of(_ot["ticker"]) for _ot in _open_trades]
-                                # No per-sector limit — budget is the only constraint
-                                # (removed sector cap: user wants to buy all good stocks)
-                                pass
+                            from sector_guard import check_sector_concentration as _sector_check
+                            _open_trades_now = database.get_open_trades() or []
+                            _open_tickers_now = [_ot["ticker"] for _ot in _open_trades_now]
+                            _sector_result = _sector_check(ticker, _open_tickers_now)
+                            if not _sector_result["allowed"]:
+                                logger.info(f"AUTO-INVEST: {ticker} SECTOR BLOCKED — {_sector_result['reason']}")
+                                continue
+                        except Exception:
+                            pass  # fail-open
+
+                        try:
+                            from sector_rotation import get_sector_for_ticker as _sector_of
 
                             # Avoid defensive/commodity sectors in bull market
                             _WEAK_SECTORS_IN_BULL = {
@@ -1787,6 +1790,24 @@ async def auto_invest_loop():
                                 continue
                         except Exception:
                             pass  # fail-open: proceed if sector check fails
+
+                        # Smart position sizing — scale by score + market conditions
+                        try:
+                            from smart_position_sizing import (
+                                get_consecutive_losses as _get_consec,
+                                get_today_pnl_pct as _get_pnl_pct,
+                            )
+                            _consec = _get_consec()
+                            _pnl_pct_today = _get_pnl_pct()
+                            if _consec >= 2 or _pnl_pct_today < -2:
+                                # Struggling day: reduce conviction for sizing
+                                _conviction = max(50, _conviction - 10)
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} sizing reduced — "
+                                    f"consec={_consec} pnl={_pnl_pct_today:.1f}%"
+                                )
+                        except Exception:
+                            pass
 
                         # Risk-based position sizing — adjusted by Buffett quality AND market volatility
                         _conviction = score

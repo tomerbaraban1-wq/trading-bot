@@ -241,16 +241,20 @@ def compute_position_size(
 
     # ── Step 4: Hard cap — scales with conviction ────────────────────────────
     # Optimized for small accounts ($1K): higher pct per trade to generate meaningful profits
-    if conviction_score >= 80:
-        effective_pct = min(60.0, settings.MAX_POSITION_PCT * 2.5)   # 60% — very high conviction
+    # Capped to MAX_POSITION_PCT so no single position exceeds the user's safety limit
+    # Previous version allowed 60% per position — too risky; now max 1× MAX_POSITION_PCT
+    if conviction_score >= 90:
+        effective_pct = settings.MAX_POSITION_PCT          # 15% (max allowed)
+    elif conviction_score >= 80:
+        effective_pct = settings.MAX_POSITION_PCT * 0.90  # ~13.5%
     elif conviction_score >= 75:
-        effective_pct = min(50.0, settings.MAX_POSITION_PCT * 2.0)   # 50% — high conviction
+        effective_pct = settings.MAX_POSITION_PCT * 0.75  # ~11.25%
     elif conviction_score >= 70:
-        effective_pct = min(40.0, settings.MAX_POSITION_PCT * 1.75)  # 40%
+        effective_pct = settings.MAX_POSITION_PCT * 0.60  # ~9%
     elif conviction_score >= 65:
-        effective_pct = min(30.0, settings.MAX_POSITION_PCT * 1.5)   # 30%
+        effective_pct = settings.MAX_POSITION_PCT * 0.50  # ~7.5%
     else:
-        effective_pct = settings.MAX_POSITION_PCT                    # normal (default 20%)
+        effective_pct = settings.MAX_POSITION_PCT * 0.40  # ~6% (minimum)
     max_notional   = equity * (effective_pct / 100)   # use EQUITY not MAX_BUDGET
     notional_qty   = max_notional / entry_price
 
