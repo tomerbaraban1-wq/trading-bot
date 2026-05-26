@@ -673,6 +673,7 @@ def _handle_command(text: str, context: dict) -> str | None:
     # ── Advanced commands via telegram_commands.py ────────────────────────
     # Map /command → handler  (lazy loaded to avoid circular import)
     advanced_commands = {
+        # English commands
         "/health": "health",
         "/performance": "performance",
         "/news": "news",
@@ -683,6 +684,27 @@ def _handle_command(text: str, context: dict) -> str | None:
         "/ai": "ai_decision",
         "/backtest": "backtest",
         "/bt": "backtest",
+        "/doctor": "doctor",
+        "/anomalies": "anomalies",
+        # Hebrew aliases (use English in commands - Telegram requirement)
+        "/briut": "health",         # בריאות
+        "/betzuim": "performance",  # ביצועים
+        "/hadashot": "news",        # חדשות
+        "/sikun": "risk",           # סיכון
+        "/tachzit": "forecast",     # תחזית
+        "/khlita": "ai_decision",   # החלטה
+        "/bdika": "backtest",       # בדיקה
+        "/rofeh": "doctor",         # רופא
+        "/anomaliot": "anomalies",  # אנומליות
+        # Hebrew text shortcuts (when user types Hebrew without /)
+        "בריאות": "health",
+        "ביצועים": "performance",
+        "חדשות": "news",
+        "סיכון": "risk",
+        "תחזית": "forecast",
+        "רופא": "doctor",
+        "אנומליות": "anomalies",
+        "בדיקה מקיפה": "doctor",
     }
 
     if cmd in advanced_commands:

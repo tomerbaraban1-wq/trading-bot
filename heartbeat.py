@@ -4034,6 +4034,55 @@ async def detailed_analytics_loop():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ANOMALY DETECTION LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def anomaly_detection_loop():
+    """
+    Scan portfolio for anomalies every 2 hours during market hours.
+    Detects unusual price/volume movements and performance anomalies.
+    """
+    await asyncio.sleep(22 * 60)  # wait 22 min after startup
+    while True:
+        try:
+            market_open = await asyncio.wait_for(
+                asyncio.to_thread(broker.is_market_open), timeout=10
+            )
+            if market_open:
+                from anomaly_detector import scan_portfolio_anomalies
+                results = await asyncio.wait_for(
+                    scan_portfolio_anomalies(), timeout=120
+                )
+
+                if results.get("critical_count", 0) > 0 or results.get("high_count", 0) > 0:
+                    # Send alert
+                    lines = ["🚨 <b>Anomaly Detected</b>", "━━━━━━━━━━━━━━━"]
+
+                    critical = [a for a in results.get("anomalies", []) if a["severity"] == "critical"]
+                    high = [a for a in results.get("anomalies", []) if a["severity"] == "high"]
+
+                    for anomaly in (critical + high)[:5]:
+                        emoji = "🔴" if anomaly["severity"] == "critical" else "🟠"
+                        lines.append(f"{emoji} {anomaly['ticker']}: {anomaly['description']}")
+
+                    from smart_notifications import notify_high
+                    await notify_high(
+                        title="Market Anomaly Detected",
+                        message="\n".join(lines),
+                        category="market",
+                    )
+
+                logger.info(f"[ANOMALY] Scanned: {results.get('count', 0)} anomalies found")
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"Anomaly detection loop error: {e}")
+
+        await asyncio.sleep(2 * 60 * 60)   # every 2 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # HEALTH MONITORING LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 

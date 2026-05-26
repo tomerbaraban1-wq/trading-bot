@@ -874,3 +874,66 @@ async def toggle_translation(request: Request, x_api_key: Optional[str] = Header
         return {"enabled": enabled}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANOMALY DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/anomalies/scan")
+async def scan_anomalies(x_api_key: Optional[str] = Header(None)):
+    """Scan portfolio for anomalies."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from anomaly_detector import scan_portfolio_anomalies
+        return await scan_portfolio_anomalies()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/anomalies/{ticker}")
+async def detect_ticker_anomaly(
+    ticker: str,
+    anomaly_type: str = Query("price", regex="^(price|volume|both)$"),
+    x_api_key: Optional[str] = Header(None)
+):
+    """Detect anomalies for a specific ticker."""
+    if not _verify_api_key(x_api_key):
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    try:
+        from anomaly_detector import detect_price_anomaly, detect_volume_anomaly
+
+        results = {}
+        if anomaly_type in ("price", "both"):
+            price_anomaly = await detect_price_anomaly(ticker.upper())
+            results["price"] = (
+                {
+                    "severity": price_anomaly.severity,
+                    "z_score": price_anomaly.z_score,
+                    "deviation_pct": price_anomaly.deviation_pct,
+                    "description": price_anomaly.description,
+                } if price_anomaly else None
+            )
+
+        if anomaly_type in ("volume", "both"):
+            volume_anomaly = await detect_volume_anomaly(ticker.upper())
+            results["volume"] = (
+                {
+                    "severity": volume_anomaly.severity,
+                    "z_score": volume_anomaly.z_score,
+                    "deviation_pct": volume_anomaly.deviation_pct,
+                    "description": volume_anomaly.description,
+                } if volume_anomaly else None
+            )
+
+        return {
+            "ticker": ticker.upper(),
+            "anomalies_detected": any(results.values()),
+            **results,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

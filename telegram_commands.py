@@ -391,6 +391,129 @@ async def handle_forecast_command() -> str:
 # COMMAND ROUTER
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def handle_doctor_command() -> str:
+    """
+    Full system diagnostic - checks ALL bot subsystems.
+    """
+    try:
+        lines = [
+            "🩺 <b>בדיקה מקיפה של הבוט</b>",
+            "━━━━━━━━━━━━━━━━━━",
+        ]
+
+        # 1. System health
+        try:
+            from health_monitor import run_health_check
+            health = await run_health_check()
+
+            emoji = {"healthy": "🟢", "degraded": "🟡", "critical": "🔴"}.get(health.overall_status, "⚪")
+            lines.append(f"\n{emoji} <b>System:</b> {health.overall_status}")
+
+            if health.issues:
+                for issue in health.issues[:3]:
+                    lines.append(f"  • {issue}")
+        except Exception as e:
+            lines.append(f"\n❌ <b>System:</b> Error - {e}")
+
+        # 2. Portfolio risk
+        try:
+            from risk_engine import analyze_portfolio_risk
+            risk = await analyze_portfolio_risk()
+            if "error" not in risk:
+                metrics = risk.get("risk_metrics", {})
+                lines.append(f"\n⚖️ <b>Risk Score:</b> {metrics.get('risk_score', 0):.0f}/100")
+                lines.append(f"  Sharpe: {metrics.get('sharpe_ratio', 0):.2f}")
+                lines.append(f"  Win Rate: {metrics.get('win_rate', 0):.1f}%")
+        except Exception as e:
+            lines.append(f"\n❌ <b>Risk:</b> Error - {e}")
+
+        # 3. Today's performance
+        try:
+            from continuous_learner import track_live_performance
+            import asyncio
+            perf = await asyncio.to_thread(track_live_performance)
+            lines.append(f"\n📊 <b>Today:</b> {perf.total_trades_today} trades, {perf.win_rate_today:.0f}% win rate")
+        except Exception as e:
+            lines.append(f"\n❌ <b>Today:</b> Error")
+
+        # 4. Anomalies
+        try:
+            from anomaly_detector import scan_portfolio_anomalies
+            anomalies = await scan_portfolio_anomalies()
+            critical = anomalies.get("critical_count", 0)
+            high = anomalies.get("high_count", 0)
+
+            if critical > 0:
+                lines.append(f"\n🚨 <b>Anomalies:</b> {critical} critical, {high} high")
+            elif high > 0:
+                lines.append(f"\n⚠️ <b>Anomalies:</b> {high} high severity")
+            else:
+                lines.append(f"\n✅ <b>Anomalies:</b> None detected")
+        except Exception as e:
+            lines.append(f"\n❌ <b>Anomalies:</b> Error")
+
+        # 5. Translation cache
+        try:
+            from translation_service import get_translation_stats
+            stats = get_translation_stats()
+            cache = stats.get("cache_stats", {})
+            lines.append(f"\n🌐 <b>Translation:</b> {'ON' if stats.get('enabled') else 'OFF'}")
+            lines.append(f"  Cache: {cache.get('db_entries', 0)} entries, {cache.get('total_hits', 0)} hits")
+        except Exception as e:
+            lines.append(f"\n❌ <b>Translation:</b> Error")
+
+        # 6. Security status
+        try:
+            from security_manager import get_security_status
+            sec = get_security_status()
+            score = sec.get("security_score", 0)
+            lines.append(f"\n🛡️ <b>Security:</b> {score:.0f}/100")
+            critical_events = len(sec.get("critical_events_7d", []))
+            if critical_events > 0:
+                lines.append(f"  ⚠️ {critical_events} critical events (7d)")
+        except Exception as e:
+            lines.append(f"\n❌ <b>Security:</b> Error")
+
+        lines.append("\n━━━━━━━━━━━━━━━━━━")
+        lines.append("✅ סריקה מלאה הושלמה")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"❌ Doctor command error: {e}"
+
+
+async def handle_anomalies_command() -> str:
+    """Handle /anomalies command."""
+    try:
+        from anomaly_detector import scan_portfolio_anomalies
+        result = await scan_portfolio_anomalies()
+
+        lines = [
+            "🚨 <b>Anomaly Detection</b>",
+            "━━━━━━━━━━━━━━━━",
+            f"Scanned: {result.get('total_scanned', 0)} positions",
+            f"Found: {result.get('count', 0)} anomalies",
+            "",
+        ]
+
+        anomalies = result.get("anomalies", [])
+        if not anomalies:
+            lines.append("✅ No anomalies detected")
+            return "\n".join(lines)
+
+        for a in anomalies[:5]:
+            sev_emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(a["severity"], "⚪")
+            lines.append(f"{sev_emoji} <b>{a['ticker']}</b> ({a['type']})")
+            lines.append(f"  {a['description']}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"❌ Anomalies error: {e}"
+
+
 COMMAND_HANDLERS = {
     "health": handle_health_command,
     "performance": handle_performance_command,
@@ -398,6 +521,8 @@ COMMAND_HANDLERS = {
     "risk": handle_risk_command,
     "confluence": handle_confluence_command,
     "forecast": handle_forecast_command,
+    "doctor": handle_doctor_command,
+    "anomalies": handle_anomalies_command,
 }
 
 COMMAND_HANDLERS_WITH_ARG = {
