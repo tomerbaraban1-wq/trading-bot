@@ -200,6 +200,15 @@ async def heartbeat_cleanup_loop():
             except Exception:
                 pass
 
+            # ── Translation cache cleanup ─────────────────────────────────
+            try:
+                from translation_service import _cache as _trans_cache
+                deleted = await asyncio.to_thread(_trans_cache.cleanup_expired)
+                if deleted > 0:
+                    logger.debug(f"Translation cache: deleted {deleted} expired entries")
+            except Exception as e:
+                logger.debug(f"Translation cache cleanup failed: {e}")
+
             # _price_alerts_fired: cap at 500 entries (old alerts don't matter)
             if len(_price_alerts_fired) > 500:
                 old_count = len(_price_alerts_fired)

@@ -47,17 +47,20 @@ MAX_CACHE_ENTRIES = 10000
 
 # Patterns that should NOT be translated
 PRESERVE_PATTERNS = [
-    re.compile(r'\$[A-Z]{1,5}(-[A-Z])?'),       # Stock tickers ($AAPL, $TSLA)
-    re.compile(r'\b[A-Z]{2,5}\b'),               # All-caps tickers/acronyms (AAPL, NASDAQ)
+    re.compile(r'\$[A-Z]{1,6}(-[A-Z])?'),        # Stock tickers ($AAPL, $TSLA, $NASDAQ)
+    re.compile(r'\b[A-Z]{2,7}\b'),               # All-caps tickers/acronyms (AAPL, NASDAQ, BERKB)
     re.compile(r'\b\d+(\.\d+)?[%$]?\b'),         # Numbers, percentages, dollar amounts
     re.compile(r'<[^>]+>'),                      # HTML tags
     re.compile(r'<code>.*?</code>', re.DOTALL),  # Code blocks
     re.compile(r'<pre>.*?</pre>', re.DOTALL),    # Pre blocks
     re.compile(r'https?://\S+'),                 # URLs
-    re.compile(r'/\w+'),                         # Commands
-    re.compile(r'@\w+'),                         # Mentions
-    re.compile(r'#\w+'),                         # Hashtags
-    re.compile(r'━+'),                           # Separators
+    re.compile(r'/\w+'),                         # Commands (/help, /backtest)
+    re.compile(r'@\w+'),                         # Mentions (@user)
+    re.compile(r'#\w+'),                         # Hashtags (#tag)
+    re.compile(r'━+'),                           # Hebrew separators
+    re.compile(r'─+'),                           # Other separators
+    re.compile(r'═+'),                           # Double separators
+    re.compile(r'-{3,}'),                        # Hyphen separators
 ]
 
 
@@ -73,17 +76,22 @@ def is_hebrew(text: str) -> bool:
     return (hebrew_chars / total_alpha) > 0.3
 
 
-def needs_translation(text: str) -> bool:
+def needs_translation(text) -> bool:
     """
     Determine if text needs translation.
 
     Skip if:
+    - None or empty
     - Already Hebrew
     - Only emojis/symbols
     - Only numbers/tickers
-    - Empty
     """
-    if not text or not text.strip():
+    # Defensive: handle None and non-string types
+    if text is None:
+        return False
+    if not isinstance(text, str):
+        return False
+    if not text.strip():
         return False
 
     # Skip if already Hebrew
@@ -96,12 +104,13 @@ def needs_translation(text: str) -> bool:
     for pattern in PRESERVE_PATTERNS:
         cleaned = pattern.sub('', cleaned)
 
-    # Remove emojis
-    cleaned = re.sub(r'[\U0001F300-\U0001F9FF]', '', cleaned)
+    # Remove emojis (broad range)
+    cleaned = re.sub(r'[\U0001F300-\U0001FAFF]', '', cleaned)
     cleaned = re.sub(r'[☀-➿]', '', cleaned)
+    cleaned = re.sub(r'[⌀-⏿]', '', cleaned)
 
-    # Check if there are English words left
-    english_words = re.findall(r'[a-zA-Z]{2,}', cleaned)
+    # Check if there are English words left (need at least one with 3+ chars)
+    english_words = re.findall(r'[a-zA-Z]{3,}', cleaned)
     return len(english_words) >= 1
 
 
@@ -157,18 +166,31 @@ class TranslationCache:
             self.access_times[key] = time.time()
             return self.memory_cache[key]
 
-        # Check DB cache
+        # Check DB cache (with TTL enforcement)
         try:
             self._ensure_db()
             import database
             conn = database.get_connection()
+
+            # Only fetch entries newer than TTL
             row = conn.execute("""
-                SELECT translated_text FROM translation_cache
+                SELECT translated_text, strftime('%s', 'now') - strftime('%s', cached_at) as age_seconds
+                FROM translation_cache
                 WHERE text_hash = ? AND target_lang = ?
             """, (key, target_lang)).fetchone()
 
             if row:
                 translated = row[0]
+                age = row[1] or 0
+
+                # Check TTL - if expired, delete and return None
+                if age > CACHE_TTL_SECONDS:
+                    conn.execute("""
+                        DELETE FROM translation_cache WHERE text_hash = ?
+                    """, (key,))
+                    conn.commit()
+                    return None
+
                 # Load into memory cache
                 self.memory_cache[key] = translated
                 self.access_times[key] = time.time()
@@ -232,8 +254,29 @@ class TranslationCache:
                 "db_entries": row[0] if row else 0,
                 "total_hits": row[1] if row else 0,
             }
-        except:
+        except Exception as e:
+            logger.debug(f"Cache stats failed: {e}")
             return {"memory_entries": len(self.memory_cache), "db_entries": 0, "total_hits": 0}
+
+    def cleanup_expired(self) -> int:
+        """
+        Remove expired cache entries (older than CACHE_TTL_SECONDS).
+        Returns count of deleted entries.
+        """
+        try:
+            self._ensure_db()
+            import database
+            conn = database.get_connection()
+            cursor = conn.execute("""
+                DELETE FROM translation_cache
+                WHERE strftime('%s', 'now') - strftime('%s', cached_at) > ?
+            """, (CACHE_TTL_SECONDS,))
+            deleted = cursor.rowcount
+            conn.commit()
+            return deleted
+        except Exception as e:
+            logger.debug(f"Cache cleanup failed: {e}")
+            return 0
 
 
 _cache = TranslationCache()
