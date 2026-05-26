@@ -465,12 +465,15 @@ async def translate_preserving_html(html_text: str) -> str:
 
 async def translate_message(message: str) -> str:
     """
-    Smart message translation for Telegram messages.
+    Smart message translation for Telegram messages — LINE BY LINE.
 
-    Translates each line separately to:
-    1. Preserve formatting (separators, line breaks)
-    2. Skip lines that don't need translation
-    3. Handle mixed-language content
+    Each line is checked independently:
+    - Hebrew line → keep as-is
+    - English line → translate
+    - Mixed line → translate (the Hebrew words are preserved)
+
+    FIXED: Removed whole-message is_hebrew() check that caused
+    English lines inside Hebrew messages to be skipped.
     """
     if not TRANSLATION_ENABLED:
         return message
@@ -478,9 +481,8 @@ async def translate_message(message: str) -> str:
     if not message:
         return message
 
-    # Quick check: skip if already mostly Hebrew
-    if is_hebrew(message):
-        return message
+    # NOTE: Removed is_hebrew(message) whole-message check here.
+    # Each LINE is now checked independently below.
 
     lines = message.split('\n')
     translated_lines = []
@@ -689,6 +691,96 @@ FINANCIAL_TERMS = {
     "Please wait": "נא להמתין",
     "Try again": "נסה שוב",
     "No data": "אין נתונים",
+
+    # Additional missing terms (cause English in Telegram)
+    "Win Rate": "אחוז הצלחה",
+    "Avg Return": "תשואה ממוצעת",
+    "Avg Win": "זכייה ממוצעת",
+    "Avg Loss": "הפסד ממוצע",
+    "Total Return": "תשואה כוללת",
+    "Total Trades": "עסקאות כולל",
+    "Confidence": "ביטחון",
+    "Expected Return": "תשואה צפויה",
+    "AI Decision": "החלטת AI",
+    "STRONG_BUY": "קנייה חזקה",
+    "STRONG_SELL": "מכירה חזקה",
+    "Risk Score": "ציון סיכון",
+    "Score": "ציון",
+    "Above average": "מעל הממוצע",
+    "Below average": "מתחת לממוצע",
+    "Normal volume": "נפח רגיל",
+    "High volume": "נפח גבוה",
+    "Low volume": "נפח נמוך",
+    "Alignment": "יישור",
+    "Confluence": "הצטלבות",
+    "All timeframes": "כל הtimeframes",
+    "Bullish setup": "הזדמנות שורית",
+    "Bearish setup": "הזדמנות דובית",
+    "Breaking news": "חדשות שוברות",
+    "Catalyst": "קטליזטור",
+    "Sentiment": "סנטימנט",
+    "Neutral": "ניטרלי",
+    "Strong bullish": "שורי חזק",
+    "Strong bearish": "דובי חזק",
+    "Market is": "השוק",
+    "Market open": "שוק פתוח",
+    "Market closed": "שוק סגור",
+    "Overall status": "סטטוס כולל",
+    "healthy": "תקין",
+    "degraded": "פגוע",
+    "critical": "קריטי",
+    "Passed": "עבר",
+    "Failed": "נכשל",
+    "Blocked": "חסום",
+    "Allowed": "מותר",
+    "Sector": "סקטור",
+    "Position": "פוזיציה",
+    "Positions": "פוזיציות",
+    "Portfolio": "תיק",
+    "Budget": "תקציב",
+    "Cash": "מזומן",
+    "Equity": "הון עצמי",
+    "Today": "היום",
+    "Yesterday": "אתמול",
+    "This week": "השבוע",
+    "All time": "כל הזמן",
+    "Consecutive losses": "הפסדים רצופים",
+    "Recovery mode": "מצב התאוששות",
+    "Normal mode": "מצב רגיל",
+    "Warning": "אזהרה",
+    "Alert": "התראה",
+    "Momentum": "מומנטום",
+    "Oversold": "מכירתי-יתר",
+    "Overbought": "קנייתי-יתר",
+    "Support": "תמיכה",
+    "Resistance": "התנגדות",
+    "Breakout": "פריצה",
+    "Breakdown": "שבירה",
+    "Trend reversal": "היפוך מגמה",
+    "Uptrend": "מגמה עולה",
+    "Downtrend": "מגמה יורדת",
+    "Sideways": "רוחבי",
+    "Volume spike": "פיק נפח",
+    "Error": "שגיאה",
+    "Success": "הצלחה",
+    "Scanning": "סורק",
+    "Analyzing": "מנתח",
+    "Checking": "בודק",
+    "No positions": "אין פוזיציות",
+    "Open positions": "פוזיציות פתוחות",
+    "Closed positions": "פוזיציות סגורות",
+    "Pattern detected": "תבנית זוהתה",
+    "Signal": "איתות",
+    "Strong signal": "איתות חזק",
+    "Weak signal": "איתות חלש",
+    "Mixed signals": "איתותים מעורבים",
+    "Insight": "תובנה",
+    "Recommendation": "המלצה",
+    "Opportunities": "הזדמנויות",
+    "Anomaly detected": "אנומליה זוהתה",
+    "High risk": "סיכון גבוה",
+    "Low risk": "סיכון נמוך",
+    "Moderate risk": "סיכון בינוני",
 }
 
 
@@ -717,23 +809,30 @@ async def translate_message_smart(message: str) -> str:
     """
     Smart translation with financial glossary applied first.
 
+    FIXED: Previously skipped entire messages that were ≥30% Hebrew.
+    This caused English lines inside Hebrew messages to stay untranslated.
+    Now processes LINE-BY-LINE so Hebrew lines are kept and English lines
+    are translated.
+
     Process:
-    1. Apply financial glossary (fast, accurate for known terms)
-    2. Translate remaining English via API
+    1. Apply financial glossary line-by-line (fast, accurate)
+    2. Translate remaining English lines via API
     3. Cache result
     """
     if not TRANSLATION_ENABLED or not message:
         return message
 
-    if is_hebrew(message):
-        return message
+    # REMOVED: is_hebrew(message) whole-message check
+    # Reason: messages like "🌙 סיכום יומי\nWin Rate: 75%\nAvg Return: +2.1%"
+    # are 36% Hebrew overall → were skipped entirely → English lines stayed English.
+    # Fix: apply glossary then translate line-by-line.
 
-    # Step 1: Apply financial glossary first
-    text = apply_financial_glossary(message)
+    # Step 1: Apply financial glossary to every line
+    lines = message.split('\n')
+    glossary_lines = []
+    for line in lines:
+        glossary_lines.append(apply_financial_glossary(line))
+    text = '\n'.join(glossary_lines)
 
-    # Step 2: Check if any English remains
-    if not needs_translation(text):
-        return text
-
-    # Step 3: Translate remaining English text
+    # Step 2: Translate line-by-line (each line checked independently)
     return await translate_message(text)
