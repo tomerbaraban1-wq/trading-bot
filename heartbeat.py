@@ -2886,13 +2886,15 @@ async def adaptive_threshold_loop():
             except Exception as _wr_err:
                 logger.debug(f"[ADAPTIVE] Win rate check failed: {_wr_err}")
 
-            if days_since >= 3 and current_min > 55:
-                # No trades for 3+ days — lower threshold temporarily
+            if days_since >= 2 and current_min > 55:
+                # No trades for 2+ days — lower threshold more aggressively
                 if _original_score is None:
                     _original_score = current_min
-                new_min = max(55, current_min - 3)
+                # Faster decay: -3/check for 2-5 days, -5/check for 5+ days
+                step = 5 if days_since >= 5 else 3
+                new_min = max(55, current_min - step)
                 _os_at.environ["MIN_BUY_SCORE"] = str(new_min)
-                logger.info(f"[ADAPTIVE] {days_since}d no trades — lowering MIN_BUY_SCORE: {current_min} → {new_min}")
+                logger.info(f"[ADAPTIVE] {days_since}d no trades — lowering MIN_BUY_SCORE: {current_min} → {new_min} (step={step})")
                 _create_background_task(send_message(
                     f"📉 <b>הקלת סף זמנית</b>\n"
                     f"━━━━━━━━━━━━━━━━\n"

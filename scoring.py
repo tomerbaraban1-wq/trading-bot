@@ -190,8 +190,12 @@ def get_fundamental_score(ticker: str) -> float:
 
     try:
         info = yf.Ticker(ticker).info
-        if not info or len(info) < 5:
-            raise ValueError("Empty info response")
+        # Guard against None, non-dict, or too-sparse results
+        if not isinstance(info, dict) or len(info) < 5:
+            raise ValueError("Empty or invalid info response")
+        # Normalise: replace any None values with safe defaults to avoid
+        # 'argument of type NoneType is not iterable' errors downstream
+        info = {k: v for k, v in info.items() if v is not None}
 
         score = 0.0
 
