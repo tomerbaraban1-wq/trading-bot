@@ -1454,6 +1454,13 @@ async def auto_invest_loop():
             hours_ok, hours_reason = is_ok_to_trade()
             if not hours_ok:
                 logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
+                # Live reporter — שוק סגור
+                try:
+                    from live_reporter import send_scan_report as _sr3, send_hourly_pulse
+                    await send_hourly_pulse()   # עדיין שולח pulse שעתי גם כשהשוק סגור
+                    await _sr3(0, None, 0, hours_reason, 0, 0)
+                except Exception:
+                    pass
                 await asyncio.sleep(5 * 60)
                 continue
 
@@ -1487,6 +1494,14 @@ async def auto_invest_loop():
 
             logger.info("AUTO-INVEST: Starting scheduled scan with composite scoring...")
 
+            # ── Live Reporter — שעתי ──────────────────────────────────────────
+            try:
+                from live_reporter import send_hourly_pulse, check_and_report_market_change
+                await check_and_report_market_change()
+                await send_hourly_pulse()
+            except Exception:
+                pass
+
             try:
                 status = await _asyncio.wait_for(
                     _asyncio.to_thread(get_budget_status), timeout=20
@@ -1499,6 +1514,11 @@ async def auto_invest_loop():
 
             if remaining < 10:
                 logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
+                try:
+                    from live_reporter import send_scan_report as _sr2
+                    await _sr2(0, None, 0, f"אין מזומן (${remaining:.0f})", 0, remaining)
+                except Exception:
+                    pass
             else:
                 # Step 1: Shuffle watchlist for diversification — different stocks each scan
                 shuffled = WATCHLIST.copy()
@@ -2017,6 +2037,23 @@ async def auto_invest_loop():
                 _scored_candidates.sort(key=lambda x: x[1], reverse=True)
                 logger.info(f"AUTO-INVEST: {len(_scored_candidates)} candidates above threshold, best-first: "
                             + ", ".join(f"{t}=ציון{s:.0f}(באפט{b:.0f})" for t, s, _, _, b in _scored_candidates[:3]))
+
+                # ── Live Reporter — דוח סריקה ─────────────────────────────────
+                try:
+                    from live_reporter import send_scan_report as _sr
+                    _best_t = _scored_candidates[0][0] if _scored_candidates else None
+                    _best_s = _scored_candidates[0][1] if _scored_candidates else 0
+                    _no_buy = "" if _scored_candidates else "ציון נמוך לכל המניות"
+                    await _sr(
+                        scanned=len(candidates),
+                        best_ticker=_best_t,
+                        best_score=_best_s,
+                        no_buy_reason=_no_buy,
+                        candidates_found=len(_scored_candidates),
+                        cash=remaining,
+                    )
+                except Exception:
+                    pass
 
                 # ── שלב 2: בדיקות מלאות וקנייה — לפי סדר ציון יורד ────────────
                 for ticker, score, composite, sentiment, _buffett_score in _scored_candidates:
