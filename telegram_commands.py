@@ -1205,6 +1205,48 @@ COMMAND_HANDLERS["rotation"] = handle_rotate_command
 COMMAND_HANDLERS["partial"] = handle_partial_command
 COMMAND_HANDLERS["exits"] = handle_partial_command
 
+
+async def handle_surge_command(args: str = "") -> str:
+    """/surge — scan for unusual volume spikes right now."""
+    try:
+        from scanner import get_watchlist
+        from volume_surge import check_volume_surges
+
+        await send_message_helper("🔍 סורק נפחים חריגים... רגע")
+
+        wl = await asyncio.to_thread(get_watchlist)
+        surges = await check_volume_surges(wl[:80], top_n=8)
+
+        if not surges:
+            return "📊 <b>Volume Surge Scanner</b>\n━━━━━━━━━━━━━━━━\n✅ אין נפחים חריגים כרגע"
+
+        lines = ["📊 <b>Volume Surge Scanner</b>", "━━━━━━━━━━━━━━━━", ""]
+        for s in surges:
+            emoji = "🚨" if s["level"] == "extreme" else "🔴" if s["level"] == "major" else "🟡"
+            tv_url = f"https://www.tradingview.com/chart/?symbol={s['ticker']}"
+            lines.append(
+                f"{emoji} <a href=\"{tv_url}\"><b>{s['ticker']}</b></a>  "
+                f"<b>{s['ratio']:.1f}×</b> נפח רגיל  "
+                f"({s['today_vol']/1e6:.1f}M)"
+            )
+
+        lines.extend(["", "💡 לחץ על שם המניה → TradingView"])
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Surge scan error: {e}"
+
+
+async def send_message_helper(text: str):
+    try:
+        from telegram_bot import send_message
+        await send_message(text)
+    except Exception:
+        pass
+
+
+COMMAND_HANDLERS["surge"] = handle_surge_command
+COMMAND_HANDLERS["volume"] = handle_surge_command
+
 # ── מינוציות מסחר — TradingView watchlist ────────────────────────────────────
 COMMAND_HANDLERS["tv_watchlist"] = handle_tv_watchlist_command
 COMMAND_HANDLERS["watchlist"]    = handle_tv_watchlist_command

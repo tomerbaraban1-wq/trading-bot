@@ -1620,10 +1620,190 @@ async def auto_invest_loop():
                 bought = 0
                 _bought_list: list[dict] = []   # collect all buys for one combined Telegram message
 
-                # ── שלב 1: ציון מהיר לכל המועמדים ────────────────────────────
-                # סורקים את כולם ואז קונים רק את הציון הגבוה ביותר
+                # ── SPY Gate — לא קונים כשהשוק יורד ────────────────────────────
+                # אם SPY ירד >1% היום → לא קונים כלום
+                try:
+                    import yfinance as _yf_spy
+                    _spy_hist = await _asyncio.wait_for(
+                        _asyncio.to_thread(
+                            lambda: _yf_spy.Ticker("SPY").history(period="2d", interval="1d")
+                        ), timeout=10
+                    )
+                    if _spy_hist is not None and len(_spy_hist) >= 2:
+                        _spy_chg = float(
+                            (_spy_hist["Close"].iloc[-1] - _spy_hist["Close"].iloc[-2])
+                            / _spy_hist["Close"].iloc[-2] * 100
+                        )
+                        if _spy_chg < -1.0:
+                            logger.warning(
+                                f"AUTO-INVEST: SPY down {_spy_chg:.2f}% today — "
+                                "skipping all buys (market gate)"
+                            )
+                            _create_background_task(send_message(
+                                f"🛡️ <b>SPY Gate פעיל</b>\n"
+                                f"📉 S&P500 ירד <b>{_spy_chg:.1f}%</b> היום\n"
+                                f"⛔ הבוט לא יקנה — ממתין לשוק טוב יותר\n"
+                                f"✅ פוזיציות קיימות מוגנות עם Stop Loss"
+                            ))
+                            await _asyncio.sleep(5 * 60)
+                            continue
+                        elif _spy_chg < -0.5:
+                            logger.info(f"AUTO-INVEST: SPY {_spy_chg:.2f}% — caution mode (smaller positions)")
+                except Exception:
+                    pass  # fail-open
+
+                # ── שלב 1: ציון מקבילי לכל המועמדים (PARALLEL) ──────────────
+                # סורקים את כולם בו-זמנית → הרבה יותר מהיר
                 _scored_candidates: list[tuple[str, float, object, object]] = []  # (ticker, score, composite, sentiment)
-                for ticker in candidates:
+
+                async def _score_candidate(ticker: str):
+                    """Score a single candidate — runs in parallel."""
+                    try:
+                        # Earnings blackout check
+                        try:
+                            from earnings import check_earnings_risk
+                            earn_risky, earn_reason, earn_days = await _asyncio.wait_for(
+                                _asyncio.to_thread(check_earnings_risk, ticker), timeout=10
+                            )
+                            if earn_risky:
+                                logger.info(f"AUTO-INVEST: {ticker} EARNINGS BLACKOUT — {earn_reason}")
+                                return None
+                        except Exception:
+                            pass
+
+                        sentiment = await _asyncio.wait_for(
+                            _asyncio.to_thread(score_sentiment, ticker), timeout=60
+                        )
+                        composite = await _asyncio.wait_for(
+                            _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=60
+                        )
+                        score = composite["composite_score"]
+                        logger.info(f"AUTO-INVEST: {ticker} → {score}/100 ({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})")
+
+                        if not composite["should_buy"]:
+                            return None
+
+                        # AI Score Enhancement
+                        try:
+                            from score_enhancer import enhance_score as _enhance_score
+                            _ind = composite.get("indicators", {})
+                            _enhancement = await _asyncio.wait_for(
+                                _enhance_score(
+                                    ticker=ticker,
+                                    base_score=score,
+                                    rsi=_ind.get("rsi", 50.0),
+                                    macd=_ind.get("macd", 0.0),
+                                    volume_ratio=_ind.get("volume_ratio", 1.0),
+                                    sentiment_score=sentiment.score if hasattr(sentiment, "score") else 5.0,
+                                ),
+                                timeout=45,
+                            )
+                            if _enhancement.get("skip_trade"):
+                                logger.info(f"AUTO-INVEST: {ticker} AI skip — {_enhancement['skip_reason']}")
+                                return None
+                            score = _enhancement.get("enhanced_score", score)
+                        except Exception:
+                            pass
+
+                        # Buffett Quality Filter
+                        _buffett_score = 50
+                        try:
+                            from buffett_analysis import get_buffett_analysis as _bff
+                            _buf = await _asyncio.wait_for(
+                                _asyncio.to_thread(_bff, ticker), timeout=15
+                            )
+                            _buffett_score = _buf.get("score", 50)
+                            if _buffett_score < 50:
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar — skip")
+                                return None
+                        except Exception:
+                            pass
+
+                        # News boost
+                        _news_boost = 0
+                        if hasattr(sentiment, 'score') and sentiment.score >= 9:
+                            _news_boost = 8
+                        elif hasattr(sentiment, 'score') and sentiment.score >= 8:
+                            _news_boost = 5
+                        _effective_score = score + _news_boost
+                        if _effective_score < 60:
+                            return None
+
+                        # Intraday momentum — don't buy falling knife
+                        try:
+                            _intra = await _asyncio.wait_for(
+                                _asyncio.to_thread(broker.get_price, ticker), timeout=10
+                            )
+                            if _intra:
+                                _intra_ind = composite.get("indicators", {})
+                                _prev_close = _intra_ind.get("prev_close") or _intra_ind.get("close")
+                                if _prev_close and _prev_close > 0:
+                                    _day_chg = (_intra - _prev_close) / _prev_close * 100
+                                    if _day_chg < -1.5:
+                                        logger.info(f"AUTO-INVEST: {ticker} down {_day_chg:.1f}% — knife falling, skip")
+                                        return None
+                        except Exception:
+                            pass
+
+                        # Pro Entry gate
+                        try:
+                            from pro_entry_system import pro_entry_gate as _pro_gate
+                            _pro_result = await _asyncio.wait_for(_pro_gate(ticker, score), timeout=30)
+                            if not _pro_result.get("should_enter", True):
+                                logger.info(f"AUTO-INVEST: {ticker} PRO BLOCKED — {_pro_result.get('skip_reason')}")
+                                return None
+                            score = max(0, min(100, score + _pro_result.get("score_adjustment", 0)))
+                        except Exception:
+                            pass
+
+                        # Pre-buy checklist
+                        try:
+                            from pre_buy_checklist import run_pre_buy_checklist
+                            _ind3 = composite.get("indicators", {})
+                            _checklist = await _asyncio.wait_for(
+                                run_pre_buy_checklist(
+                                    ticker=ticker, score=score,
+                                    rsi=_ind3.get("rsi", 50),
+                                    volume_ratio=_ind3.get("volume_ratio", 1.0),
+                                    above_sma50=_ind3.get("above_sma50", True),
+                                    above_sma200=_ind3.get("above_sma200", True),
+                                    open_positions_count=len(database.get_open_trades() or []),
+                                ), timeout=20,
+                            )
+                            if not _checklist.get("pass"):
+                                return None
+                            score = min(100, score + _checklist.get("confidence_boost", 0))
+                        except Exception:
+                            pass
+
+                        # Learning block check
+                        try:
+                            from learning import should_override_buy as _sob
+                            from indicators import get_current_indicators as _gci
+                            _ind4 = await _asyncio.wait_for(_asyncio.to_thread(_gci, ticker), timeout=15) or {}
+                            _block, _block_reason = _sob(ticker, _ind4)
+                            if _block:
+                                logger.info(f"AUTO-INVEST: {ticker} blocked by learning — {_block_reason}")
+                                return None
+                        except Exception:
+                            pass
+
+                        _combined = score * 0.6 + _buffett_score * 0.4
+                        return (ticker, _combined, composite, sentiment, _buffett_score)
+
+                    except Exception as _err:
+                        logger.debug(f"AUTO-INVEST: {ticker} parallel score failed — {type(_err).__name__}")
+                        return None
+
+                # ── סריקה מקבילית — כל המועמדים בו-זמנית ──────────────────────
+                _parallel_results = await _asyncio.gather(
+                    *[_score_candidate(t) for t in candidates],
+                    return_exceptions=False
+                )
+                _scored_candidates = [r for r in _parallel_results if r is not None]
+
+                # (keep old sequential loop as dead code marker — replaced by parallel above)
+                for ticker in []:
                     if remaining < 10:
                         break
                     try:
@@ -2669,6 +2849,26 @@ async def drawdown_protection_loop():
             logger.debug(f"drawdown_protection error: {e}")
 
         await asyncio.sleep(30 * 60)   # every 30 min
+
+
+async def volume_surge_loop():
+    """
+    🔴 Volume Surge Detector — כל 15 דקות.
+    מזהה מניות עם נפח 3×+ מהנורמלי ושולח התראה בטלגרם.
+    """
+    await asyncio.sleep(5 * 60)   # warm-up 5 minutes
+    while True:
+        try:
+            from trading_hours import is_ok_to_trade as _iot
+            _ok, _ = _iot()
+            if _ok:
+                from scanner import get_watchlist as _gwl
+                from volume_surge import run_volume_surge_alert as _vsa
+                _wl = _gwl()
+                await asyncio.wait_for(_vsa(_wl), timeout=60)
+        except Exception as _ve:
+            logger.debug(f"volume_surge_loop: {_ve}")
+        await asyncio.sleep(15 * 60)   # every 15 minutes
 
 
 async def rapid_move_alert_loop():

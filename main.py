@@ -314,7 +314,7 @@ async def lifespan(app: FastAPI):
                            news_catalyst_loop, pairs_trading_loop,
                            benchmark_comparison_loop, trade_journal_loop,
                            anomaly_detection_loop, stale_position_guard_loop,
-                           fast_track_progress_loop)
+                           fast_track_progress_loop, volume_surge_loop)
     # ── Core tasks (always run) ───────────────────────────────────────
     heartbeat_task         = asyncio.create_task(heartbeat_loop())
     heartbeat_cleanup_task = asyncio.create_task(heartbeat_cleanup_loop())
@@ -361,6 +361,7 @@ async def lifespan(app: FastAPI):
     drawdown_task          = asyncio.create_task(drawdown_protection_loop())# הגנת drawdown 10%
     idle_cash_task         = asyncio.create_task(idle_cash_alert_loop())   # התראת מזומן חופשי
     adaptive_task          = asyncio.create_task(adaptive_threshold_loop())# סף אדפטיבי
+    volume_surge_task      = asyncio.create_task(volume_surge_loop())      # ⚡ נפח חריג
 
     # ── Optional tasks (disabled on free tier to save memory) ────────
     import os as _os
