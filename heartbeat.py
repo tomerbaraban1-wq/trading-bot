@@ -1533,23 +1533,25 @@ async def auto_invest_loop():
                 continue
             remaining = float(status.get("cash_available", 0))
 
-            if remaining < 10:
-                logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f}), skipping")
+            # ── תנאי עצירה: רק חוסר מזומן — לא מגבלת מספר פוזיציות ──────────────
+            # הבוט ממשיך לקנות כל עוד יש כסף בתקציב
+            _min_pos_size = float(_os.getenv("MIN_POSITION_NOTIONAL", "200"))   # מינימום $200 לפוזיציה
+            if remaining < _min_pos_size:
+                logger.info(f"AUTO-INVEST: Not enough cash (${remaining:.2f} < ${_min_pos_size:.0f} min), skipping")
                 try:
                     from live_reporter import send_scan_report as _sr2
-                    await _sr2(0, None, 0, f"אין מזומן (${remaining:.0f})", 0, remaining)
+                    await _sr2(0, None, 0, f"אין מזומן — כל התקציב מושקע! (${remaining:.0f} נותר)", 0, remaining)
                 except Exception:
                     pass
             else:
                 # Step 1: Shuffle watchlist for diversification — different stocks each scan
                 shuffled = WATCHLIST.copy()
                 random.shuffle(shuffled)
-                # Max open positions (configurable via MAX_OPEN_POSITIONS env var)
+                # מספר הפוזיציות המקסימלי — ברירת מחדל 20 (כמה שהתקציב מאפשר)
                 MAX_OPEN_POSITIONS = settings.MAX_OPEN_POSITIONS
                 open_count = len(database.get_open_trades())
                 if open_count >= MAX_OPEN_POSITIONS:
-                    # Auto-rebalance: check if any open position scores very low
-                    # If so, sell it to make room for a better opportunity
+                    # Max positions reached — try rebalance or skip
                     _rebalance_threshold = int(_os.getenv("REBALANCE_EXIT_SCORE", "30"))
                     _rebalanced = False
                     try:

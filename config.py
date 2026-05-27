@@ -95,7 +95,7 @@ class Settings:
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "2.0"))
     STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "3.5"))
     TAKE_PROFIT_PCT: float = float(os.getenv("TAKE_PROFIT_PCT", "15.0"))
-    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "4"))  # reduced 6→4: focus on best
+    MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "20"))  # כמה שהתקציב מאפשר
 
     # Time management (calibrated: >48h = 27% WR, 2-12h = 50% WR)
     MAX_HOLD_HOURS: float = float(os.getenv("MAX_HOLD_HOURS", "24.0"))      # exit after 24h max
