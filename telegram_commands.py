@@ -795,6 +795,86 @@ async def handle_validate_command(args: str = "") -> str:
 
 COMMAND_HANDLERS["validate"] = handle_validate_command
 
+
+async def handle_fasttrack_command(args: str = "") -> str:
+    """/fasttrack — show current fast-track stage and status."""
+    try:
+        from fast_track_live import get_status_report
+        return get_status_report()
+    except Exception as e:
+        return f"❌ Fast track error: {e}"
+
+
+async def handle_progress_command(args: str = "") -> str:
+    """/progress — evaluate if ready to advance stage."""
+    try:
+        from fast_track_live import evaluate_stage_performance, get_stage_config
+
+        result = await evaluate_stage_performance()
+        if "error" in result:
+            return f"❌ Error: {result['error']}"
+
+        stage = result["current_stage"]
+        config = get_stage_config(stage)
+        action_emoji = {"PROMOTE": "🚀", "DEMOTE": "⚠️", "STAY": "⏳"}.get(result["action"], "📊")
+
+        lines = [
+            f"📊 <b>Progress Report — Stage {stage}</b>",
+            "━━━━━━━━━━━━━━━━",
+            f"📝 {config.description}",
+            f"📅 ימים בשלב: {result['days_in_stage']:.1f} / {config.min_days_in_stage}",
+            "",
+            f"<b>📈 Performance:</b>",
+            f"  עסקאות: {result['total_trades']} / {config.min_trades_to_promote}",
+            f"  Win Rate: <b>{result['win_rate']:.1f}%</b> / {config.min_win_rate_to_promote:.0f}%",
+            f"  ✅ {result['wins']} | ❌ {result['losses']}",
+            f"  💰 P&L: ${result['total_pnl']:+.2f}",
+            "",
+            f"{action_emoji} <b>החלטה: {result['action']}</b>",
+            f"  {result['reason']}",
+        ]
+
+        if result["action"] == "PROMOTE":
+            lines.extend([
+                "",
+                "✨ אפשר לעבור לשלב הבא!",
+                "שלח: /advance",
+            ])
+        elif result["action"] == "DEMOTE":
+            lines.extend([
+                "",
+                "⚠️ הבוט יחזור אוטומטית לשלב בטוח יותר",
+            ])
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Progress error: {e}"
+
+
+async def handle_advance_command(args: str = "") -> str:
+    """/advance — manually advance to next stage if criteria met."""
+    try:
+        from fast_track_live import advance_stage
+        force = args.strip().lower() == "force"
+        result = await advance_stage(force=force)
+
+        if result.get("success"):
+            return (
+                f"🚀 <b>התקדמת לשלב {result['new_stage']}!</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"מעבר מ-Stage {result['old_stage']} → Stage {result['new_stage']}\n"
+                f"הגדרות חדשות הופעלו אוטומטית"
+            )
+        else:
+            return f"⏸️ {result.get('reason', 'לא אפשרי כרגע')}\n\nאם רוצה לאלץ: /advance force"
+    except Exception as e:
+        return f"❌ Advance error: {e}"
+
+
+COMMAND_HANDLERS["fasttrack"] = handle_fasttrack_command
+COMMAND_HANDLERS["progress"] = handle_progress_command
+COMMAND_HANDLERS["advance"] = handle_advance_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,

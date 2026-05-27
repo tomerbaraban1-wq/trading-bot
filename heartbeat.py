@@ -4928,3 +4928,20 @@ async def stale_position_guard_loop():
             logger.error(f"Stale position guard error: {e}")
 
         await asyncio.sleep(4 * 60 * 60)  # every 4 hours
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FAST TRACK AUTO-PROGRESSION LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def fast_track_progress_loop():
+    """
+    Auto-progress through Fast Track stages.
+    Every 4 hours checks if criteria met for promotion.
+    """
+    try:
+        from fast_track_live import auto_progress_check_loop
+        await auto_progress_check_loop()
+    except Exception as e:
+        logger.error(f"Fast track loop error: {e}")
+        await asyncio.sleep(60 * 60)
