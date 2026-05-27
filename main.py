@@ -120,6 +120,20 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # ── Start polling loop when running locally (no RENDER_EXTERNAL_URL) ──────
+    # On Render: webhook handles incoming messages (registered below).
+    # Locally:   no public URL → use getUpdates polling instead.
+    _polling_task = None
+    try:
+        from telegram_polling import is_local_mode, polling_loop as _polling_loop
+        if is_local_mode():
+            logger.info("[POLLING] Local mode — starting Telegram polling loop")
+            _polling_task = asyncio.create_task(_polling_loop())
+        else:
+            logger.info("[POLLING] Cloud mode — using webhook")
+    except Exception as _poll_err:
+        logger.warning(f"Polling setup failed (non-critical): {_poll_err}")
+
     # ── Auto-register Telegram webhook + command menu ─────────────────────────
     try:
         _render_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
@@ -417,7 +431,7 @@ async def lifespan(app: FastAPI):
         fast_track_task, webhook_keeper_task,
         golden_opp_task, reentry_task, weekend_task,
         ai_insights_task, self_improve_task, rapid_move_task,
-        drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task,
+        drawdown_task, idle_cash_task, adaptive_task, tg_warmup_task, _polling_task,
     ] if t is not None]
 
     # Cancel all background tasks
