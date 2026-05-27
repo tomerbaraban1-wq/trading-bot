@@ -111,14 +111,14 @@ async def send_menu() -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     keyboard = {
         "keyboard": [
-            # Row 1: Most-used portfolio commands
-            [{"text": "📍 פוזיציות"},       {"text": "💰 רווח/הפסד"},    {"text": "📊 ביצועים"}],
-            # Row 2: Market & analysis
-            [{"text": "🌍 מצב השוק"},       {"text": "📰 חדשות"},         {"text": "🤖 AI החלטה"}],
-            # Row 3: Advanced tools
-            [{"text": "⚠️ סיכון"},          {"text": "🩺 בדיקה"},         {"text": "🚨 אנומליות"}],
-            # Row 4: Bot control
-            [{"text": "📋 תקציר יומי"},     {"text": "💡 תובנות AI"},     {"text": "📈 גרף"}],
+            # Row 1: ⭐ Most important — positions with TV links
+            [{"text": "📈 מניות + TradingView"}, {"text": "💰 P&L מהיר"}],
+            # Row 2: Portfolio status
+            [{"text": "📍 פוזיציות"},       {"text": "📊 ביצועים"},     {"text": "⚖️ סיכון"}],
+            # Row 3: Market & analysis
+            [{"text": "🌍 שוק עכשיו"},      {"text": "📰 חדשות"},       {"text": "🤖 AI ניתוח"}],
+            # Row 4: Bot management
+            [{"text": "🩺 בדיקה מלאה"},     {"text": "🔄 סיבוב תיק"},   {"text": "💰 Exits"}],
             # Row 5: Help
             [{"text": "📋 כל הפקודות"}],
         ],
@@ -347,6 +347,35 @@ async def notify_trade_open(
         ],
     ]
 
+    # TradingView link
+    tv_url  = f"https://www.tradingview.com/chart/?symbol={ticker}"
+    tv_line = f'\n🔗 <a href="{tv_url}">פתח גרף ב-TradingView</a>'
+
+    # Partial exits plan
+    partial_plan = (
+        f"\n━━━━━━━━━━━━━━━━\n"
+        f"💰 <b>תכנית יציאות חלקיות:</b>\n"
+        f"  +5%  → מוכר 25% אוטומטית\n"
+        f"  +10% → מוכר עוד 25%\n"
+        f"  +18% → מוכר עוד 25%\n"
+        f"  🏃 25% ירוץ עם Trailing Stop"
+    )
+
+    inline_buttons = [
+        [
+            {"text": f"📊 גרף {ticker}", "url": tv_url},
+            {"text": "📍 כל הפוזיציות", "callback_data": "positions:all"},
+        ],
+        [
+            {"text": f"⚡ AI ניתוח {ticker}", "callback_data": f"ai:{ticker}"},
+            {"text": f"📰 חדשות {ticker}", "callback_data": f"news:{ticker}"},
+        ],
+        [
+            {"text": "💰 P&L מהיר", "callback_data": "pnl:quick"},
+            {"text": "⚖️ סיכון", "callback_data": "risk:check"},
+        ],
+    ]
+
     await send_message(
         f"🛒 <b>קניתי!</b>  <b>{ticker}</b>  {qty_str} מניות\n"
         f"━━━━━━━━━━━━━━━━\n"
@@ -358,7 +387,9 @@ async def notify_trade_open(
         f"⚖️  Risk/Reward:  {rr_str}\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"📊 ציון:  {_score_bar}  <b>{score:.0f}/100</b>  {q}"
-        f"{iceberg_line}{id_line}",
+        f"{iceberg_line}{id_line}"
+        f"{tv_line}"
+        f"{partial_plan}",
         reply_markup={"inline_keyboard": inline_buttons},
     )
 
@@ -430,6 +461,38 @@ async def notify_trade_close(
         "stale_restart": "🔄 Restart",
     }.get(reason, f"📌 {reason}" if reason else "")
 
+    # TradingView link on sell too
+    tv_url_sell = f"https://www.tradingview.com/chart/?symbol={ticker}"
+
+    # Win streak emoji
+    streak_line = ""
+    try:
+        import database as _dbs
+        _hist = _dbs.get_trade_history(limit=5) or []
+        _closed = [x for x in _hist if x.get("pnl_gross") is not None]
+        if len(_closed) >= 3:
+            _streak = 0
+            for _t in _closed:
+                if (float(_t.get("pnl_gross", 0)) >= 0) == win:
+                    _streak += 1
+                else:
+                    break
+            if _streak >= 3:
+                streak_line = f"\n🔥 <b>רצף {_streak} {'ניצחונות' if win else 'הפסדים'} ברצף!</b>"
+    except Exception:
+        pass
+
+    sell_buttons = [
+        [
+            {"text": f"📊 גרף {ticker}", "url": tv_url_sell},
+            {"text": "📍 פוזיציות פתוחות", "callback_data": "positions:all"},
+        ],
+        [
+            {"text": "📈 ביצועים", "callback_data": "performance:full"},
+            {"text": "🔍 סרוק הזדמנויות", "callback_data": "scan:now"},
+        ],
+    ]
+
     await send_message(
         f"{title}\n"
         f"━━━━━━━━━━━━━━━━\n"
@@ -445,6 +508,8 @@ async def notify_trade_close(
         f"⏱️  זמן:   {dur_str}"
         + (f"\n{reason_emoji}" if reason_emoji else "")
         + (f"\n🔖 עסקה #{trade_id}" if trade_id else "")
+        + streak_line,
+        reply_markup={"inline_keyboard": sell_buttons},
     )
 
     # Also send to Discord with embed formatting
@@ -588,6 +653,42 @@ async def notify_budget_warning(reason: str, cash_available: float) -> None:
         f"💸 <b>אזהרת תקציב</b>\n"
         f"💵 מזומן זמין: ${cash_available:.2f}\n"
         f"📌 {reason}"
+    )
+
+
+async def notify_stop_approaching(
+    ticker: str,
+    current_price: float,
+    stop_price: float,
+    entry_price: float,
+    stop_distance_pct: float,
+) -> None:
+    """
+    🚨 Alert when position is within 20% of stop loss distance.
+    Rate-limited: once per ticker per 30 minutes.
+    """
+    key = f"stop_approaching:{ticker}"
+    if _is_rate_limited(key):
+        return
+    _mark_sent(key)
+
+    plpc = (current_price - entry_price) / entry_price * 100
+    pnl_emoji = "🟢" if plpc >= 0 else "🔴"
+    tv_url = f"https://www.tradingview.com/chart/?symbol={ticker}"
+
+    await send_message(
+        f"⚠️ <b>סטופ לוס מתקרב — {ticker}!</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📍 מחיר עכשיו:  <b>${current_price:.2f}</b>\n"
+        f"🛑 Stop Loss:    <b>${stop_price:.2f}</b>\n"
+        f"📏 מרחק לסטופ:  <b>{stop_distance_pct:.1f}%</b> בלבד!\n"
+        f"{pnl_emoji} P&L:          <b>{plpc:+.1f}%</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f'🔗 <a href="{tv_url}">פתח גרף ב-TradingView</a>',
+        reply_markup={"inline_keyboard": [[
+            {"text": f"🚨 EXIT {ticker}", "callback_data": f"emergency:{ticker}"},
+            {"text": "📊 גרף", "url": tv_url},
+        ]]}
     )
 
 

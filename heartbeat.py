@@ -728,6 +728,19 @@ async def stop_loss_monitor():
                         atr_stop = new_stop
                         high_wm  = new_wm
 
+                    # ── 1d. Stop Approaching Alert — alert when <20% from stop ──────
+                    try:
+                        if atr_stop and atr_stop > 0 and cur_price > atr_stop:
+                            _stop_dist_pct = (cur_price - atr_stop) / cur_price * 100
+                            if _stop_dist_pct < 1.5:  # within 1.5% of stop
+                                from telegram_bot import notify_stop_approaching as _nsa
+                                await asyncio.shield(asyncio.create_task(
+                                    _nsa(ticker, cur_price, atr_stop,
+                                         trade["entry_price"], _stop_dist_pct)
+                                ))
+                    except Exception:
+                        pass
+
                     # ── 1c. Partial Take Profits ─────────────────────────────────────
                     # Sell 25% at +5%, +10%, +18% — lock in gains while letting winners run
                     _partial_enabled = _os.getenv("PARTIAL_EXITS_ENABLED", "true").lower() == "true"

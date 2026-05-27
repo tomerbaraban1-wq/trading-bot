@@ -4385,13 +4385,29 @@ async def _handle_callback_query(callback: dict) -> dict:
         from telegram_commands import route_command
 
         action_to_command = {
+            # Portfolio
             "positions":   ("positions", ""),
             "performance": ("performance", ""),
             "health":      ("health", ""),
             "anomalies":   ("anomalies", ""),
+            "risk":        ("risk", ""),
+            "rotate":      ("rotate", ""),
+            "scale":       ("scale", ""),
+            "partial":     ("partial", ""),
+            "watchlist":   ("מניות", ""),
+            # Per-ticker
             "info":        ("ai_decision", param),
             "ai":          ("ai_decision", param),
-            "news":        ("news", ""),
+            "news":        ("news", param),
+            "pro":         ("pro", param),
+            "score":       ("ai_decision", param),
+            # Quick actions
+            "pnl":         ("top", ""),
+            "sector":      ("sector", ""),
+            "doctor":      ("doctor", ""),
+            "forecast":    ("forecast", ""),
+            "scan":        ("confluence", ""),
+            "top":         ("top", ""),
         }
 
         if action in action_to_command:
@@ -4402,6 +4418,11 @@ async def _handle_callback_query(callback: dict) -> dict:
                 await send_message(reply)
                 await answer_callback_query(callback_id, "✅")
                 return {"status": "ok", "action": action}
+
+        # Special: open TradingView (url buttons handle this natively, but just in case)
+        if action == "chart" and param:
+            await answer_callback_query(callback_id, f"פותח גרף של {param}...")
+            return {"status": "ok", "action": "chart"}
 
     except Exception as e:
         logger.error(f"[CALLBACK] Error handling {data}: {e}")
@@ -4468,10 +4489,17 @@ async def handle_telegram_update(update: dict) -> dict:
         "⚠️ ניתוח סיכון":    "/risk_score",
         "📅 מה היה היום":    "/today",
         "📋 כל הפקודות":     "/help",
-        # New enhanced buttons
+        # Enhanced buttons (new keyboard layout)
+        "📈 מניות + TradingView": "/מניות",
+        "💰 P&L מהיר":       "/top",
         "📍 פוזיציות":       "/positions",
         "📊 ביצועים":        "/performance",
-        "⚠️ סיכון":          "/risk",
+        "⚖️ סיכון":          "/risk",
+        "🌍 שוק עכשיו":      "/market",
+        "🤖 AI ניתוח":       "/ai",
+        "🩺 בדיקה מלאה":     "/doctor",
+        "🔄 סיבוב תיק":      "/rotate",
+        "💰 Exits":          "/partial",
         "🩺 בדיקה":          "/doctor",
         "🚨 אנומליות":       "/anomalies",
         "💡 תובנות AI":      "/ai_insights",
