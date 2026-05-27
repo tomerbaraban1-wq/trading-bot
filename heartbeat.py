@@ -1736,6 +1736,24 @@ async def auto_invest_loop():
                 except Exception:
                     pass  # fail-open
 
+                # ── PRE-FETCH: הורד נתוני OHLCV לכל המועמדים בקריאה אחת ──────
+                # yfinance batch download is ~5x faster than N individual calls.
+                # This populates the yfinance_cache so _score_candidate() never
+                # waits for a download — it reads from in-memory cache.
+                try:
+                    from yfinance_cache import prefetch_batch as _prefetch
+                    _t_prefetch_start = _time_module.time()
+                    await _asyncio.wait_for(
+                        _asyncio.to_thread(_prefetch, candidates, "3mo"),
+                        timeout=30,
+                    )
+                    logger.info(
+                        f"AUTO-INVEST: prefetch {len(candidates)} tickers in "
+                        f"{_time_module.time()-_t_prefetch_start:.1f}s"
+                    )
+                except Exception as _pf_err:
+                    logger.debug(f"AUTO-INVEST: prefetch failed (non-critical): {_pf_err}")
+
                 # ── שלב 1: ציון מקבילי לכל המועמדים (PARALLEL) ──────────────
                 # סורקים את כולם בו-זמנית → הרבה יותר מהיר
                 _scored_candidates: list[tuple[str, float, object, object]] = []  # (ticker, score, composite, sentiment)

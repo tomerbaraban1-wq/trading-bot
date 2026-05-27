@@ -7,6 +7,20 @@ logger = logging.getLogger(__name__)
 
 
 def get_stock_data(symbol: str, period: str = "6mo") -> pd.DataFrame:
+    # Try the central cache first — avoids redundant yfinance downloads during scans
+    try:
+        from yfinance_cache import get_ohlcv as _get_cached
+        cached = _get_cached(symbol, period=period)
+        if not cached.empty:
+            # Normalise columns to lowercase (indicators.py convention)
+            cached.columns = [c.lower() for c in cached.columns]
+            required = ["open", "high", "low", "close", "volume"]
+            if all(c in cached.columns for c in required):
+                return cached[required]
+    except Exception:
+        pass
+
+    # Fallback: direct yfinance call
     try:
         ticker = yf.Ticker(symbol)
         df = ticker.history(period=period)
