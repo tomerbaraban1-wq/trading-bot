@@ -519,6 +519,27 @@ async def stop_loss_monitor():
                     cur_price = float(position.get("current_price", trade["entry_price"]))
                     plpc      = float(position.get("unrealized_plpc", 0)) * 100
 
+                    # ── PRE-CHECK NOTIFICATION — לפני בדיקת הפוזיציה ─────────────
+                    # שולח פעם ב-10 דקות לכל פוזיציה
+                    try:
+                        import time as _t2
+                        _check_key = f"pre_check_{trade['id']}"
+                        if not hasattr(send_message, '_pre_check_last'):
+                            send_message._pre_check_last = {}
+                        if _t2.time() - send_message._pre_check_last.get(_check_key, 0) > 600:
+                            send_message._pre_check_last[_check_key] = _t2.time()
+                            _tv2 = f'https://www.tradingview.com/chart/?symbol={ticker}'
+                            _atr_now = trade.get("atr_stop_price")
+                            _stop_dist = f" | 🛑 {((cur_price-float(_atr_now))/cur_price*100):.1f}% לסטופ" if _atr_now else ""
+                            _pl_now = float(position.get("unrealized_pl", 0))
+                            _em = "🟢" if plpc >= 0 else "🔴"
+                            _create_background_task(send_message(
+                                f"🔎 <b>בודק פוזיציה — <a href=\"{_tv2}\">{ticker}</a></b>\n"
+                                f"  {_em} מחיר: ${cur_price:.2f}  |  {plpc:+.1f}%  |  ${_pl_now:+.2f}{_stop_dist}"
+                            ))
+                    except Exception:
+                        pass
+
                     # ── Live position status — דיווח על מצב פוזיציה פעם ב-15 דקות ──
                     try:
                         from action_log import notify_action as _na
@@ -1475,7 +1496,7 @@ async def auto_invest_loop():
             hours_ok, hours_reason = is_ok_to_trade()
             if not hours_ok:
                 logger.info(f"AUTO-INVEST: {hours_reason} — skipping scan")
-                # Live reporter — שוק סגור
+                # ── PRE-WAIT NOTIFICATION ────────────────────────────────────
                 try:
                     from live_reporter import send_scan_report as _sr3, send_hourly_pulse
                     await send_hourly_pulse()   # עדיין שולח pulse שעתי גם כשהשוק סגור
@@ -1662,6 +1683,19 @@ async def auto_invest_loop():
 
                 bought = 0
                 _bought_list: list[dict] = []   # collect all buys for one combined Telegram message
+
+                # ── PRE-SCAN NOTIFICATION — לפני הסריקה ──────────────────────────
+                try:
+                    from datetime import datetime, timezone, timedelta as _td
+                    _now_il = datetime.now(timezone.utc) + _td(hours=3)
+                    _create_background_task(send_message(
+                        f"🔍 <b>מתחיל סריקה</b> | {_now_il.strftime('%H:%M')}\n"
+                        f"📊 בודק {len(candidates)} מניות\n"
+                        f"💵 מזומן זמין: ${remaining:,.0f}\n"
+                        f"⏳ <i>מחפש הזדמנויות...</i>"
+                    ))
+                except Exception:
+                    pass
 
                 # ── Action Log — התחלת סריקה ────────────────────────────────────
                 try:
@@ -2288,7 +2322,26 @@ async def auto_invest_loop():
                         # Slippage estimate (for metadata/audit — iceberg manages actual limit internally)
                         slip = await _asyncio.to_thread(slippage_estimate, price, qty, "buy", ticker)
 
-                        # Pre-buy notification removed — final notify_buy handles this
+                        # ── PRE-BUY NOTIFICATION — לפני הקנייה ──────────────────────
+                        try:
+                            _notional = round(price * qty, 2)
+                            _stop_p   = round(price * (1 - settings.STOP_LOSS_PCT / 100), 2)
+                            _tp_p     = round(price * (1 + settings.TAKE_PROFIT_PCT / 100), 2)
+                            _score_bar = "🟩" * round(score / 10) + "⬜" * (10 - round(score / 10))
+                            _tv_link = f'https://www.tradingview.com/chart/?symbol={ticker}'
+                            _create_background_task(send_message(
+                                f"⏳ <b>עומד לקנות — <a href=\"{_tv_link}\">{ticker}</a></b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"💵 מחיר: <b>${price:.2f}</b>  |  🔢 כמות: {qty:.4f}\n"
+                                f"💰 סכום: <b>${_notional:,.2f}</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📊 ציון: {_score_bar} <b>{score:.0f}/100</b>\n"
+                                f"🎯 יעד רווח: ${_tp_p:.2f} (+{settings.TAKE_PROFIT_PCT:.0f}%)\n"
+                                f"🛑 Stop Loss: ${_stop_p:.2f} (-{settings.STOP_LOSS_PCT:.0f}%)\n"
+                                f"⏳ <i>מבצע את הקנייה...</i>"
+                            ))
+                        except Exception:
+                            pass
 
                         # Acquire per-ticker lock to prevent double-buy with simultaneous webhook
                         # Acquire per-ticker lock (same lock webhook uses) — HOLD it during buy
