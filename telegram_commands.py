@@ -875,6 +875,64 @@ COMMAND_HANDLERS["fasttrack"] = handle_fasttrack_command
 COMMAND_HANDLERS["progress"] = handle_progress_command
 COMMAND_HANDLERS["advance"] = handle_advance_command
 
+
+async def handle_profit_estimate_command(args: str = "") -> str:
+    """/profit — estimate monthly/annual profit potential."""
+    try:
+        from profit_maximizer import estimate_monthly_profit, get_optimal_env_settings
+
+        # Use real budget if available
+        try:
+            from config import settings
+            budget = settings.MAX_BUDGET
+        except Exception:
+            budget = 10000
+
+        # Try different win rate scenarios
+        scenarios = [
+            ("שמרני (WR 50%)",   {"win_rate": 50, "trades_per_month": 20}),
+            ("ריאלי (WR 55%)",    {"win_rate": 55, "trades_per_month": 25}),
+            ("אופטימי (WR 60%)",  {"win_rate": 60, "trades_per_month": 30}),
+        ]
+
+        lines = [
+            "💰 <b>תחזית רווחים — IBKR Israel</b>",
+            "━━━━━━━━━━━━━━━━",
+            f"💼 תקציב: ${budget:,.0f}",
+            f"📊 פוזיציה ממוצעת: ${budget * 0.18:,.0f}",
+            "",
+        ]
+
+        for name, params in scenarios:
+            est = estimate_monthly_profit(budget=budget, **params)
+            lines.extend([
+                f"<b>📈 {name}:</b>",
+                f"  📅 {est['trades_per_month']} עסקאות/חודש",
+                f"  💵 רווח חודשי (אחרי עמלות): <b>${est['net_after_commission']:+.0f}</b>",
+                f"  📊 תשואה חודשית: <b>{est['monthly_return_pct']:+.1f}%</b>",
+                f"  🎯 תשואה שנתית: <b>{est['annual_return_pct']:+.0f}%</b>",
+                f"  💸 עמלות חודשיות: ${est['total_commissions']:.0f}",
+                f"  {est['interpretation']}",
+                "",
+            ])
+
+        lines.extend([
+            "━━━━━━━━━━━━━━━━",
+            "💡 <b>הגדרות אופטימליות נקבעו לרווח מקס'</b>",
+            "  • Min Score: 70 (סלקטיבי)",
+            "  • Position: 18% (מאמת עמלות)",
+            "  • Staged TP: +5%, +10%, +18%",
+            "  • Cut losses: 3% מקס",
+        ])
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Profit estimate error: {e}"
+
+
+COMMAND_HANDLERS["profit"] = handle_profit_estimate_command
+COMMAND_HANDLERS["earnings"] = handle_profit_estimate_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,
