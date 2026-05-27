@@ -728,6 +728,28 @@ async def stop_loss_monitor():
                         atr_stop = new_stop
                         high_wm  = new_wm
 
+                    # ── 1c. Partial Take Profits ─────────────────────────────────────
+                    # Sell 25% at +5%, +10%, +18% — lock in gains while letting winners run
+                    _partial_enabled = _os.getenv("PARTIAL_EXITS_ENABLED", "true").lower() == "true"
+                    if _partial_enabled and plpc >= 5.0:
+                        try:
+                            from partial_exit_engine import execute_partial_exit as _partial_exit
+                            _partial_done = await asyncio.wait_for(
+                                _partial_exit(trade, cur_price, plpc),
+                                timeout=15,
+                            )
+                            if _partial_done:
+                                # Re-fetch trade with updated qty
+                                _fresh_trades = await asyncio.to_thread(database.get_open_trades)
+                                for _ft in (_fresh_trades or []):
+                                    if _ft["id"] == trade["id"]:
+                                        trade = _ft
+                                        break
+                        except asyncio.TimeoutError:
+                            logger.debug(f"[PARTIAL EXIT] {ticker}: timed out")
+                        except Exception as _pe:
+                            logger.debug(f"[PARTIAL EXIT] {ticker}: {_pe}")
+
                     # ── 1b. Smart Trailing — tighten stop at profit milestones ──────
                     # Accelerates trail at +3%, +5%, +8%, +12%, +20%
                     try:

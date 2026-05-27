@@ -527,13 +527,15 @@
 
     <!-- Positions -->
     <div class="card wide">
-        <div class="card-label">Open Positions</div>
+        <div class="card-label">📍 פוזיציות פתוחות
+            <span style="float:left;font-size:11px;color:#484f58;font-weight:400" id="positionsSummary"></span>
+        </div>
         <table>
             <thead><tr>
-                <th>Ticker</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th><th>Sentiment</th><th>Status</th><th></th>
+                <th>📊 Ticker</th><th>Qty</th><th>Entry</th><th>Current</th><th>P&L</th><th>Hold</th><th>Stop</th><th>Sentiment</th><th></th>
             </tr></thead>
             <tbody id="positionsTable">
-                <tr><td colspan="8" class="empty-row">No open positions</td></tr>
+                <tr><td colspan="9" class="empty-row">No open positions</td></tr>
             </tbody>
         </table>
     </div>
@@ -651,21 +653,51 @@ function render(status, trades, tax, learning, health) {
         document.getElementById('liveWinRate').textContent = winRate + '%';
         document.getElementById('livePositionsCount').textContent = ot.length;
 
+        // Summary bar
+        const totalPnl = ot.reduce((s, t) => {
+            const p = pos.find(p => p.ticker === t.ticker);
+            return s + (p ? parseFloat(p.unrealized_pl) : 0);
+        }, 0);
+        document.getElementById('positionsSummary').textContent =
+            `${ot.length} פוזיציות | P&L: ${money(totalPnl, true)}`;
+
         ptb.innerHTML = ot.map(t => {
             const p = pos.find(p => p.ticker === t.ticker);
-            const cur = p ? p.current_price : t.entry_price;
-            const pl = p ? p.unrealized_pl : 0;
-            const plpc = p ? (p.unrealized_plpc * 100).toFixed(1) : '0.0';
+            const cur = p ? parseFloat(p.current_price) : t.entry_price;
+            const pl = p ? parseFloat(p.unrealized_pl) : 0;
+            const plpc = p ? (parseFloat(p.unrealized_plpc) * 100).toFixed(1) : '0.0';
             const arrow = pl >= 0 ? '▲' : '▼';
             const tvUrl = `https://www.tradingview.com/chart/?symbol=${t.ticker}`;
-            return `<tr>
+
+            // Hold time
+            let holdStr = '–';
+            if (t.entry_time) {
+                const ms = Date.now() - new Date(t.entry_time).getTime();
+                const hrs = Math.floor(ms / 3600000);
+                const days = Math.floor(hrs / 24);
+                holdStr = days > 0 ? `${days}d` : `${hrs}h`;
+            }
+
+            // Stop distance
+            let stopStr = '–';
+            if (t.atr_stop_price && cur > 0) {
+                const stopDist = ((cur - t.atr_stop_price) / cur * 100).toFixed(1);
+                const stopColor = parseFloat(stopDist) < 2 ? '#f87171' : '#8b949e';
+                stopStr = `<span style="color:${stopColor}">🛑${stopDist}%</span>`;
+            }
+
+            // P&L background flash for big movers
+            const plBg = Math.abs(pl) > 100 ? (pl > 0 ? 'rgba(46,160,67,0.08)' : 'rgba(218,54,51,0.08)') : '';
+
+            return `<tr style="background:${plBg}">
                 <td><a href="${tvUrl}" target="_blank" style="color:#58a6ff;font-weight:700;text-decoration:none;" title="פתח ב-TradingView">${t.ticker} 📊</a></td>
                 <td>${typeof t.qty === 'number' ? t.qty.toFixed(2) : t.qty}</td>
                 <td>$${t.entry_price.toFixed(2)}</td>
                 <td><strong>$${cur.toFixed(2)}</strong></td>
-                <td class="${pl>=0?'profit':'loss'}">${arrow} ${money(pl,true)} <span style="font-size:11px">(${plpc}%)</span></td>
+                <td class="${pl>=0?'profit':'loss'}" style="font-weight:700">${arrow} ${money(pl,true)} <span style="font-size:11px;opacity:0.7">(${plpc}%)</span></td>
+                <td style="color:#8b949e;font-size:12px">${holdStr}</td>
+                <td style="font-size:12px">${stopStr}</td>
                 <td>${sentiment(t.sentiment_score)}</td>
-                <td><span class="tag tag-open">OPEN</span></td>
                 <td><button class="btn btn-exit btn-sm" onclick="emergencyExitTicker('${t.ticker}')">EXIT</button></td>
             </tr>`;
         }).join('');

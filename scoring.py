@@ -748,9 +748,69 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     _min_score = get_min_buy_score()  # read fresh — apply_insights may have updated env
     should_buy_score = composite >= _min_score
 
+    # ── Earnings Blackout — חסום 3 ימים לפני דוח ─────────────────────────────
+    # Pre-earnings = binary event risk — never buy into unknown catalyst
+    _earnings_block_reason = None
+    try:
+        import yfinance as _yf_eb
+        from datetime import datetime as _dt_eb, timezone as _tz_eb, timedelta as _td_eb
+        _cal = _yf_eb.Ticker(ticker).calendar
+        if _cal is not None and not _cal.empty:
+            _earn_col = None
+            for _ec in ["Earnings Date", "Earnings Date 1"]:
+                if _ec in _cal.columns:
+                    _earn_col = _ec
+                    break
+            if _earn_col:
+                _earn_dates = _cal[_earn_col].dropna()
+                if not _earn_dates.empty:
+                    _now_utc = _dt_eb.now(_tz_eb.utc)
+                    for _ed in _earn_dates:
+                        try:
+                            _ed_dt = _ed if hasattr(_ed, "tzinfo") and _ed.tzinfo else _dt_eb.combine(_ed, _dt_eb.min.time(), tzinfo=_tz_eb.utc)
+                            _days_to = (_ed_dt - _now_utc).days
+                            if 0 <= _days_to <= 3:
+                                composite = max(0, composite - 20)
+                                logger.info(f"[EARNINGS BLACKOUT] {ticker}: earnings in {_days_to}d — score -20 → {composite}")
+                                if _days_to <= 1:
+                                    _earnings_block_reason = f"Earnings in {_days_to}d — binary risk, skip"
+                                break
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+    # ── Recent Analyst Upgrades ────────────────────────────────────────────────
+    # Buy upgrade in last 7 days = strong institutional signal
+    try:
+        from datetime import datetime as _dt_an, timezone as _tz_an, timedelta as _td_an
+        import yfinance as _yf_an
+        _upgrades = _yf_an.Ticker(ticker).upgrades_downgrades
+        if _upgrades is not None and not _upgrades.empty:
+            _week_ago = _dt_an.now(_tz_an.utc) - _td_an(days=7)
+            _rec_upgrades = _upgrades[
+                (_upgrades.index > _week_ago) &
+                (_upgrades["ToGrade"].str.lower().str.contains("buy|overweight|outperform", na=False))
+            ]
+            _rec_downgrades = _upgrades[
+                (_upgrades.index > _week_ago) &
+                (_upgrades["ToGrade"].str.lower().str.contains("sell|underperform|underweight", na=False))
+            ]
+            if len(_rec_upgrades) >= 2:
+                composite = min(100, composite + 8)
+                logger.info(f"[ANALYST] {ticker}: {len(_rec_upgrades)} upgrades in 7d → +8")
+            elif len(_rec_upgrades) == 1:
+                composite = min(100, composite + 4)
+                logger.info(f"[ANALYST] {ticker}: 1 upgrade in 7d → +4")
+            if len(_rec_downgrades) >= 1:
+                composite = max(0, composite - 6)
+                logger.info(f"[ANALYST] {ticker}: {len(_rec_downgrades)} downgrades in 7d → -6")
+    except Exception:
+        pass
+
     # ── Hard filters (env-controlled) ─────────────────────────────────────
     # These override the score and block buying regardless of composite_score
-    hard_block_reason = None
+    hard_block_reason = _earnings_block_reason  # may already be set from earnings blackout
 
     # 1. SMA50 hard filter — lesson from 8/8 losses being below SMA50
     if _os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() == "true":

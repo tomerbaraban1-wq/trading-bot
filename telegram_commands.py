@@ -1144,10 +1144,66 @@ async def handle_rotate_command(args: str = "") -> str:
         return f"❌ Rotation error: {e}"
 
 
+async def handle_partial_command(args: str = "") -> str:
+    """/partial — show partial exit status (which stages have fired)."""
+    try:
+        from partial_exit_engine import get_partial_exit_stats, _stages_fired, STAGES
+        import database, broker
+
+        stats = get_partial_exit_stats()
+        open_trades = await asyncio.to_thread(database.get_open_trades)
+        positions = await asyncio.to_thread(broker.get_positions)
+        pos_map = {p.symbol: p for p in (positions or [])}
+
+        lines = [
+            "💰 <b>Partial Exit Status</b>",
+            "━━━━━━━━━━━━━━━━",
+            f"📊 עסקאות עם exits חלקיים: {stats['active_trades_with_partials']}",
+            f"🔢 סה״כ stages שנורו: {stats['total_stages_fired']}",
+            "",
+        ]
+
+        if open_trades:
+            for trade in open_trades:
+                tid = trade["id"]
+                ticker = trade["ticker"]
+                fired = _stages_fired.get(tid, set())
+                pos = pos_map.get(ticker)
+                plpc = float(pos.unrealized_plpc) * 100 if pos else 0
+
+                stage_icons = []
+                for s in STAGES:
+                    if s["id"] in fired:
+                        stage_icons.append(f"✅{s['trigger_pct']:.0f}%")
+                    elif plpc >= s["trigger_pct"]:
+                        stage_icons.append(f"⚡{s['trigger_pct']:.0f}%")
+                    else:
+                        stage_icons.append(f"⬜{s['trigger_pct']:.0f}%")
+
+                em = "🟢" if plpc >= 0 else "🔴"
+                lines.append(f"{em} <b>{ticker}</b>  {plpc:+.1f}%")
+                lines.append(f"   {' | '.join(stage_icons)}")
+
+        lines.extend([
+            "",
+            "💡 <b>מה זה Partial Exits?</b>",
+            "  +5%  → מוכר 25% (Stage 1)",
+            "  +10% → מוכר 25% (Stage 2)",
+            "  +18% → מוכר 25% (Stage 3)",
+            "  25% האחרון → רץ עם trailing stop",
+        ])
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ Partial exit status error: {e}"
+
+
 COMMAND_HANDLERS["scale"] = handle_scale_stats_command
 COMMAND_HANDLERS["scaling"] = handle_scale_stats_command
 COMMAND_HANDLERS["rotate"] = handle_rotate_command
 COMMAND_HANDLERS["rotation"] = handle_rotate_command
+COMMAND_HANDLERS["partial"] = handle_partial_command
+COMMAND_HANDLERS["exits"] = handle_partial_command
 
 # ── מינוציות מסחר — TradingView watchlist ────────────────────────────────────
 COMMAND_HANDLERS["tv_watchlist"] = handle_tv_watchlist_command
