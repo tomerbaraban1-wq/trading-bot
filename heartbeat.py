@@ -519,6 +519,27 @@ async def stop_loss_monitor():
                     cur_price = float(position.get("current_price", trade["entry_price"]))
                     plpc      = float(position.get("unrealized_plpc", 0)) * 100
 
+                    # ── Live position status — דיווח על מצב פוזיציה פעם ב-15 דקות ──
+                    try:
+                        from action_log import notify_action as _na
+                        _pos_key = f"pos_status_{trade['id']}"
+                        import time as _t
+                        _last_pos_report = getattr(_na, '_pos_last', {})
+                        if _t.time() - _last_pos_report.get(_pos_key, 0) > 900:  # 15 min
+                            if not hasattr(_na, '_pos_last'):
+                                _na._pos_last = {}
+                            _na._pos_last[_pos_key] = _t.time()
+                            _tv = f'https://www.tradingview.com/chart/?symbol={ticker}'
+                            _pl = float(position.get("unrealized_pl", 0))
+                            _em = "🟢" if _pl >= 0 else "🔴"
+                            _atr_s = trade.get("atr_stop_price")
+                            _stop_line = f"\n🛑 Stop: ${_atr_s:.2f} ({((cur_price-_atr_s)/cur_price*100):.1f}% מרחק)" if _atr_s else ""
+                            asyncio.create_task(send_message(
+                                f"{_em} <b><a href=\"{_tv}\">{ticker}</a></b>  {plpc:+.1f}%  ${_pl:+.2f}{_stop_line}"
+                            ))
+                    except Exception:
+                        pass
+
                     # ── 1. ATR Trailing Stop ──────────────────────────────────
                     atr_stop = trade.get("atr_stop_price")
                     high_wm  = trade.get("high_watermark") or trade["entry_price"]
@@ -685,8 +706,8 @@ async def stop_loss_monitor():
                                 f"${atr_stop:.2f} → ${new_stop:.2f} "
                                 f"(price=${cur_price:.2f} | wm=${new_wm:.2f})"
                             )
-                            # Stop-raise alerts disabled — too noisy. Only buy/sell/news reach user.
-                            if False and not _is_quiet() and atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
+                            # Stop-raise alerts — ENABLED (user wants all actions reported)
+                            if not _is_quiet() and atr_stop > 0 and (new_stop - atr_stop) / atr_stop >= 0.005:
                                 _entry   = trade["entry_price"]
                                 _qty     = trade["qty"]
                                 _pnl_now = (cur_price - _entry) * _qty
@@ -1640,6 +1661,13 @@ async def auto_invest_loop():
                 bought = 0
                 _bought_list: list[dict] = []   # collect all buys for one combined Telegram message
 
+                # ── Action Log — התחלת סריקה ────────────────────────────────────
+                try:
+                    from action_log import start_scan as _start_scan
+                    _start_scan(len(candidates), remaining)
+                except Exception:
+                    pass
+
                 # ── SPY Gate — לא קונים כשהשוק יורד ────────────────────────────
                 # אם SPY ירד >1% היום → לא קונים כלום
                 try:
@@ -1679,6 +1707,8 @@ async def auto_invest_loop():
                 async def _score_candidate(ticker: str):
                     """Score a single candidate — runs in parallel."""
                     try:
+                        from action_log import log_ticker
+
                         # Earnings blackout check
                         try:
                             from earnings import check_earnings_risk
@@ -1687,6 +1717,7 @@ async def auto_invest_loop():
                             )
                             if earn_risky:
                                 logger.info(f"AUTO-INVEST: {ticker} EARNINGS BLACKOUT — {earn_reason}")
+                                log_ticker(ticker, 0, False, f"דוח בעוד {earn_days}d — מסוכן")
                                 return None
                         except Exception:
                             pass
@@ -1701,6 +1732,8 @@ async def auto_invest_loop():
                         logger.info(f"AUTO-INVEST: {ticker} → {score}/100 ({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})")
 
                         if not composite["should_buy"]:
+                            reason = composite.get("hard_block_reason") or f"ציון {score:.0f} < {composite.get('min_score', 70)}"
+                            log_ticker(ticker, score, False, reason)
                             return None
 
                         # AI Score Enhancement
@@ -1720,6 +1753,7 @@ async def auto_invest_loop():
                             )
                             if _enhancement.get("skip_trade"):
                                 logger.info(f"AUTO-INVEST: {ticker} AI skip — {_enhancement['skip_reason']}")
+                                log_ticker(ticker, score, False, f"AI: {_enhancement['skip_reason']}")
                                 return None
                             score = _enhancement.get("enhanced_score", score)
                         except Exception:
@@ -1735,6 +1769,7 @@ async def auto_invest_loop():
                             _buffett_score = _buf.get("score", 50)
                             if _buffett_score < 50:
                                 logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar — skip")
+                                log_ticker(ticker, score, False, f"Buffett {_buffett_score:.0f}/100 — איכות נמוכה")
                                 return None
                         except Exception:
                             pass
@@ -1747,6 +1782,7 @@ async def auto_invest_loop():
                             _news_boost = 5
                         _effective_score = score + _news_boost
                         if _effective_score < 60:
+                            log_ticker(ticker, score, False, f"ציון {_effective_score:.0f} < 60")
                             return None
 
                         # Intraday momentum — don't buy falling knife
@@ -1761,6 +1797,7 @@ async def auto_invest_loop():
                                     _day_chg = (_intra - _prev_close) / _prev_close * 100
                                     if _day_chg < -1.5:
                                         logger.info(f"AUTO-INVEST: {ticker} down {_day_chg:.1f}% — knife falling, skip")
+                                        log_ticker(ticker, score, False, f"יורד {_day_chg:.1f}% היום — סכין נופל")
                                         return None
                         except Exception:
                             pass
@@ -1770,7 +1807,9 @@ async def auto_invest_loop():
                             from pro_entry_system import pro_entry_gate as _pro_gate
                             _pro_result = await _asyncio.wait_for(_pro_gate(ticker, score), timeout=30)
                             if not _pro_result.get("should_enter", True):
-                                logger.info(f"AUTO-INVEST: {ticker} PRO BLOCKED — {_pro_result.get('skip_reason')}")
+                                _skip_r = _pro_result.get('skip_reason', f"דרגה {_pro_result.get('grade', '?')}")
+                                logger.info(f"AUTO-INVEST: {ticker} PRO BLOCKED — {_skip_r}")
+                                log_ticker(ticker, score, False, f"Pro Gate: {_skip_r}")
                                 return None
                             score = max(0, min(100, score + _pro_result.get("score_adjustment", 0)))
                         except Exception:
@@ -1791,6 +1830,8 @@ async def auto_invest_loop():
                                 ), timeout=20,
                             )
                             if not _checklist.get("pass"):
+                                _failed_c = ", ".join(_checklist.get("failed_checks", []))[:40]
+                                log_ticker(ticker, score, False, f"Checklist: {_failed_c}")
                                 return None
                             score = min(100, score + _checklist.get("confidence_boost", 0))
                         except Exception:
@@ -1804,9 +1845,14 @@ async def auto_invest_loop():
                             _block, _block_reason = _sob(ticker, _ind4)
                             if _block:
                                 logger.info(f"AUTO-INVEST: {ticker} blocked by learning — {_block_reason}")
+                                log_ticker(ticker, score, False, f"למידה: {_block_reason[:40]}")
                                 return None
                         except Exception:
                             pass
+
+                        # ✅ עבר את כל הפילטרים
+                        _buffett_str = f"Buffett {_buffett_score:.0f}" if _buffett_score != 50 else ""
+                        log_ticker(ticker, score, True, extra=_buffett_str)
 
                         _combined = score * 0.6 + _buffett_score * 0.4
                         return (ticker, _combined, composite, sentiment, _buffett_score)
@@ -2038,20 +2084,12 @@ async def auto_invest_loop():
                 logger.info(f"AUTO-INVEST: {len(_scored_candidates)} candidates above threshold, best-first: "
                             + ", ".join(f"{t}=ציון{s:.0f}(באפט{b:.0f})" for t, s, _, _, b in _scored_candidates[:3]))
 
-                # ── Live Reporter — דוח סריקה ─────────────────────────────────
+                # ── Action Log — שלח דוח סריקה מלא ─────────────────────────────
                 try:
-                    from live_reporter import send_scan_report as _sr
-                    _best_t = _scored_candidates[0][0] if _scored_candidates else None
-                    _best_s = _scored_candidates[0][1] if _scored_candidates else 0
-                    _no_buy = "" if _scored_candidates else "ציון נמוך לכל המניות"
-                    await _sr(
-                        scanned=len(candidates),
-                        best_ticker=_best_t,
-                        best_score=_best_s,
-                        no_buy_reason=_no_buy,
-                        candidates_found=len(_scored_candidates),
-                        cash=remaining,
-                    )
+                    from action_log import flush_scan_report as _flush, log_event as _log_ev
+                    if not _scored_candidates:
+                        _log_ev("💤", "אין מניות עם ציון מספיק — ממשיך לסריקה הבאה")
+                    await _flush()
                 except Exception:
                     pass
 
