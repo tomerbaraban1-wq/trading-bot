@@ -4335,7 +4335,7 @@ async def continuous_learning_loop():
 
             logger.info("[LEARNING] Running continuous learning cycle...")
             results = await asyncio.wait_for(
-                asyncio.to_thread(run_continuous_learning_cycle),
+                run_continuous_learning_cycle(),   # ✅ fixed: async, no to_thread
                 timeout=120
             )
 

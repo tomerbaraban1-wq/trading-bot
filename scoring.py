@@ -748,9 +748,10 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     _min_score = get_min_buy_score()  # read fresh — apply_insights may have updated env
     should_buy_score = composite >= _min_score
 
-    # ── Earnings Blackout — חסום 3 ימים לפני דוח ─────────────────────────────
+    # ── Earnings Blackout — חסום לפני דוח (נשלט ע"י EARNINGS_BLACKOUT_DAYS) ──
     # Pre-earnings = binary event risk — never buy into unknown catalyst
     _earnings_block_reason = None
+    _blackout_days = int(_os.getenv("EARNINGS_BLACKOUT_DAYS", "5"))  # default 5d
     try:
         import yfinance as _yf_eb
         from datetime import datetime as _dt_eb, timezone as _tz_eb, timedelta as _td_eb
@@ -769,10 +770,12 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
                         try:
                             _ed_dt = _ed if hasattr(_ed, "tzinfo") and _ed.tzinfo else _dt_eb.combine(_ed, _dt_eb.min.time(), tzinfo=_tz_eb.utc)
                             _days_to = (_ed_dt - _now_utc).days
-                            if 0 <= _days_to <= 3:
-                                composite = max(0, composite - 20)
-                                logger.info(f"[EARNINGS BLACKOUT] {ticker}: earnings in {_days_to}d — score -20 → {composite}")
-                                if _days_to <= 1:
+                            if 0 <= _days_to <= _blackout_days:
+                                # Score penalty scales with proximity
+                                _penalty = 30 if _days_to <= 1 else 20 if _days_to <= 3 else 10
+                                composite = max(0, composite - _penalty)
+                                logger.info(f"[EARNINGS BLACKOUT] {ticker}: earnings in {_days_to}d — score -{_penalty} → {composite}")
+                                if _days_to <= 2:
                                     _earnings_block_reason = f"Earnings in {_days_to}d — binary risk, skip"
                                 break
                         except Exception:
