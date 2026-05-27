@@ -2513,7 +2513,10 @@ async def auto_invest_loop():
             logger.error(f"AUTO-INVEST loop error: {e}")
             _create_background_task(notify_error("loop_error", "", f"שגיאה ב-auto_invest_loop"))
 
-        await asyncio.sleep(5 * 60)  # run every 5 minutes
+        # Configurable scan interval — default 4 min (was 5).
+        # Lower = more trade opportunities, faster path to 200 trades.
+        _scan_min = int(_os.getenv("SCAN_INTERVAL_MIN", "4"))
+        await asyncio.sleep(_scan_min * 60)
 
 
 async def morning_briefing_loop():
