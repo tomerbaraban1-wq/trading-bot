@@ -218,7 +218,29 @@ def score_sentiment(ticker: str) -> SentimentResult:
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        data = json.loads(raw)
+        # Repair truncated JSON: Groq sometimes cuts off mid-string.
+        # Strategy: try as-is, then try to close the last open string/object.
+        def _repair_json(s: str) -> dict:
+            try:
+                return json.loads(s)
+            except json.JSONDecodeError:
+                pass
+            # Close unterminated string: find last " and add closing chars
+            # Most truncation looks like: {"score":7,"reasoning":"some text...
+            # Try appending closing chars progressively
+            for suffix in ['"}', '"}}', '"}}}']:
+                try:
+                    return json.loads(s + suffix)
+                except json.JSONDecodeError:
+                    pass
+            # Try extracting score with regex if JSON is completely broken
+            import re as _re2
+            m = _re2.search(r'"score"\s*:\s*(\d+)', s)
+            if m:
+                return {"score": int(m.group(1)), "reasoning": "ניתוח חלקי"}
+            raise json.JSONDecodeError("Cannot repair JSON", s, 0)
+
+        data = _repair_json(raw)
         score = max(1, min(10, int(data.get("score", 5))))
         reasoning = data.get("reasoning", "אין הסבר זמין")
 

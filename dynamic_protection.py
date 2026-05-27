@@ -284,9 +284,9 @@ async def analyze_position_protection(
         if data.empty:
             atr = 0
         else:
-            highs = data["High"].tolist()
-            lows = data["Low"].tolist()
-            closes = data["Close"].tolist()
+            highs = [float(v) for v in data["High"].squeeze().dropna().values]
+            lows = [float(v) for v in data["Low"].squeeze().dropna().values]
+            closes = [float(v) for v in data["Close"].squeeze().dropna().values]
             atr = calculate_atr(highs, lows, closes)
 
         if highest_price is None:

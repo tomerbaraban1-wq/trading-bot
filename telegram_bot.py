@@ -58,6 +58,33 @@ _error_cooldown: dict[str, float] = {}   # error_key → last_sent_ts
 _cooldown_lock = threading.Lock()
 
 
+import re as _re
+
+# HTML tags Telegram supports in HTML parse mode
+_TELEGRAM_ALLOWED_TAGS = {
+    "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
+    "a", "code", "pre", "tg-spoiler",
+}
+
+def _sanitize_html(text: str) -> str:
+    """
+    Remove or escape HTML tags that Telegram doesn't support.
+    Keeps only the safe whitelist: <b>, <i>, <code>, <pre>, <a>, <u>, <s>.
+    Any other <tag> would cause Telegram to return 400 Bad Request and
+    silently drop the entire message.
+    """
+    def _handle_tag(m: _re.Match) -> str:
+        tag_content = m.group(1)  # everything inside < >
+        # Extract tag name (first word, strip / for closing tags)
+        tag_name = tag_content.lstrip("/").split()[0].split("=")[0].lower()
+        if tag_name in _TELEGRAM_ALLOWED_TAGS:
+            return m.group(0)  # keep allowed tags
+        # Replace unknown tags with escaped version so text is visible
+        return m.group(0).replace("<", "&lt;").replace(">", "&gt;")
+
+    return _re.sub(r"<([^>]+)>", _handle_tag, text)
+
+
 def _enabled() -> bool:
     return bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
 
@@ -237,6 +264,9 @@ async def send_message(text: str, reply_markup: dict | None = None) -> bool:
 
     if not _enabled():
         return False
+
+    # Sanitize HTML — remove tags Telegram doesn't support (causes 400 + dropped msg)
+    text = _sanitize_html(text)
 
     url     = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -1298,10 +1328,11 @@ async def notify_detailed_trade_analytics() -> None:
         # Get all closed trades from today
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         trades = conn.execute("""
-            SELECT ticker, pnl_gross, entry_price, exit_price, created_at, exit_time,
-                   quality_score, entry_sentiment_score
+            SELECT ticker, pnl_gross, entry_price, exit_price,
+                   COALESCE(created_at, entry_time) as created_at, exit_time,
+                   NULL as quality_score, sentiment_score as entry_sentiment_score
             FROM trade_log
-            WHERE status IN ('stopped', 'sold')
+            WHERE status != 'open'
             AND exit_time LIKE ?
             ORDER BY exit_time DESC
         """, (f"{today}%",)).fetchall()

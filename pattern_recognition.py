@@ -554,15 +554,24 @@ async def analyze_chart_patterns(ticker: str, period_days: int = 90) -> dict:
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=period_days)
 
-        data = yf.download(ticker, start=start, end=end, progress=False)
+        data = yf.download(ticker, start=start, end=end, progress=False,
+                           auto_adjust=True)
         if data.empty:
             return {"error": "No data available"}
 
-        opens = data["Open"].tolist()
-        highs = data["High"].tolist()
-        lows = data["Low"].tolist()
-        closes = data["Close"].tolist()
-        volumes = data["Volume"].tolist()
+        # Flatten MultiIndex columns that yfinance ≥0.2 may return for single
+        # tickers so Series.squeeze() / .values always give a flat 1-D array.
+        def _col(name: str) -> list:
+            col = data[name]
+            if hasattr(col, "squeeze"):
+                col = col.squeeze()
+            return [float(v) for v in col.dropna().values]
+
+        opens   = _col("Open")
+        highs   = _col("High")
+        lows    = _col("Low")
+        closes  = _col("Close")
+        volumes = _col("Volume")
 
         # Run all analyses
         trend = detect_trend(closes)

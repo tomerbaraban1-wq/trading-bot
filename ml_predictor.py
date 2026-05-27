@@ -154,10 +154,11 @@ async def find_similar_historical_trades(
         conn = database.get_connection()
 
         # Find trades with similar indicators
+        # Note: status values are: closed, time_exit, momentum_exit, stop_loss, stale_restart
         query = """
-            SELECT pnl_gross, exit_reason, rsi, macd, volume_ratio
+            SELECT pnl_gross, COALESCE(exit_reason, status) as exit_reason, rsi, macd, volume_ratio
             FROM trade_log
-            WHERE status IN ('stopped', 'sold')
+            WHERE status != 'open'
             AND rsi BETWEEN ? AND ?
             AND volume_ratio BETWEEN ? AND ?
         """

@@ -303,8 +303,8 @@ async def analyze_multi_timeframe(ticker: str) -> MultiTimeframeAnalysis:
                 if data.empty:
                     continue
 
-                prices = data["Close"].tolist()
-                volumes = data["Volume"].tolist()
+                prices = [float(v) for v in data["Close"].squeeze().dropna().values]
+                volumes = [float(v) for v in data["Volume"].squeeze().dropna().values]
 
                 signal = analyze_timeframe(prices, volumes, tf_name)
                 timeframe_signals[tf_name] = signal

@@ -50,12 +50,15 @@ def learn_error_patterns() -> list[ErrorPattern]:
         conn = database.get_connection()
 
         # Get recent closed trades with their indicators
+        # status values used by this bot: closed, time_exit, momentum_exit, stop_loss, stale_restart
         rows = conn.execute("""
             SELECT id, ticker, entry_price, exit_price, pnl_gross,
-                   exit_reason, rsi, macd, volume_ratio, created_at
+                   COALESCE(exit_reason, status) as exit_reason,
+                   rsi, macd, volume_ratio,
+                   COALESCE(created_at, entry_time) as created_at
             FROM trade_log
-            WHERE status IN ('stopped', 'sold', 'emergency_exit')
-            ORDER BY created_at DESC
+            WHERE status != 'open'
+            ORDER BY COALESCE(created_at, entry_time) DESC
             LIMIT 100
         """).fetchall()
 

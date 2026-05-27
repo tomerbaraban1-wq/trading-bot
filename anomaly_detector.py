@@ -107,7 +107,7 @@ async def detect_price_anomaly(ticker: str, threshold: float = 3.0) -> Optional[
             return None
 
         # Calculate daily returns
-        returns = data["Close"].pct_change().dropna().tolist()
+        returns = [float(v) for v in data["Close"].squeeze().pct_change().dropna().values]
 
         # Detect anomaly in recent return
         result = detect_z_score_anomaly(returns, threshold=threshold)
@@ -154,7 +154,7 @@ async def detect_volume_anomaly(ticker: str, threshold: float = 3.0) -> Optional
         if data.empty or len(data) < 20:
             return None
 
-        volumes = data["Volume"].tolist()
+        volumes = [float(v) for v in data["Volume"].squeeze().values]
         result = detect_z_score_anomaly(volumes, threshold=threshold)
 
         if not result:

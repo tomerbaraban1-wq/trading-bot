@@ -277,14 +277,16 @@ def save_trade(trade: dict) -> int:
 
 def close_trade(trade_id: int, exit_price: float, pnl_gross: float,
                 pnl_net: float, tax_reserved: float, fees: float = 0.0,
-                status: str = "closed"):
+                status: str = "closed", exit_reason: str = ""):
     conn = get_connection()
     conn.execute(
         """UPDATE trade_log SET
         exit_price=?, exit_time=CURRENT_TIMESTAMP,
-        pnl_gross=?, pnl_net=?, tax_reserved=?, fees=?, status=?
+        pnl_gross=?, pnl_net=?, tax_reserved=?, fees=?, status=?,
+        exit_reason=COALESCE(NULLIF(?, ''), status)
         WHERE id=?""",
-        (exit_price, pnl_gross, pnl_net, tax_reserved, fees, status, trade_id),
+        (exit_price, pnl_gross, pnl_net, tax_reserved, fees, status,
+         exit_reason, trade_id),
     )
     conn.commit()
 

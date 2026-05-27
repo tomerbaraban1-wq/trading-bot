@@ -242,10 +242,17 @@ async def analyze_entry(ticker: str) -> EntryAnalysis:
                 reasoning=["Insufficient data"], warnings=[],
             )
 
-        closes  = data["Close"].values.tolist()
-        highs   = data["High"].values.tolist()
-        lows    = data["Low"].values.tolist()
-        volumes = data["Volume"].values.tolist()
+        # Flatten MultiIndex columns (yfinance ≥0.2 single-ticker quirk)
+        def _flat(name: str) -> list:
+            col = data[name]
+            if hasattr(col, "squeeze"):
+                col = col.squeeze()
+            return [float(v) for v in col.dropna().values]
+
+        closes  = _flat("Close")
+        highs   = _flat("High")
+        lows    = _flat("Low")
+        volumes = _flat("Volume")
         current = float(closes[-1])
 
         # ── 1. TREND QUALITY (ADX + Higher Highs/Lows) ────────────────
