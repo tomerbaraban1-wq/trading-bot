@@ -3397,7 +3397,36 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         cash      = context.get("cash", 0)
         invested  = equity - cash
 
+        # Get first-trade date from DB
+        _since_line = ""
+        _stats_line = ""
+        try:
+            import sqlite3 as _sq2, os as _os2
+            _db2 = _os2.getenv("DATABASE_URL", "./data/trading.db").replace("sqlite:///","")
+            _cn2 = _sq2.connect(_db2)
+            _r2 = _cn2.execute(
+                "SELECT MIN(entry_time), COUNT(*), SUM(pnl_net), "
+                "SUM(CASE WHEN pnl_net>0 THEN 1 ELSE 0 END) FROM trade_log WHERE status != 'open'"
+            ).fetchone()
+            _cn2.close()
+            if _r2 and _r2[0]:
+                from datetime import datetime as _dt2
+                _first2 = _dt2.strptime(str(_r2[0])[:19], "%Y-%m-%d %H:%M:%S")
+                _days2 = (_dt2.now() - _first2).days
+                _period2 = f"{_days2//30} חודש{'ים' if _days2//30>1 else ''}" if _days2>=30 else f"{_days2} ימים"
+                _since_line = f"📅 מאז: <b>{_first2.strftime('%d/%m/%Y')}</b> ({_period2})"
+                _total_trades = _r2[1] or 0
+                _total_realized = _r2[2] or 0
+                _wins = _r2[3] or 0
+                _wr = _wins/_total_trades*100 if _total_trades else 0
+                _stats_line = f"📊 {_total_trades} עסקאות | אחוז הצלחה: {_wr:.0f}% | ממומש: {_fmt_pnl(_total_realized)}"
+        except Exception:
+            pass
+
         lines = [f"💰 <b>רווח/הפסד — תיק</b>\n━━━━━━━━━━━━━━━━"]
+        if _since_line:
+            lines.append(_since_line)
+            lines.append("")
 
         if positions:
             for p in positions:
@@ -3422,6 +3451,8 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             lines.append(f"💳  ממומש:     {_fmt_pnl(realized)}")
         icon = "📈" if total >= 0 else "📉"
         lines.append(f"{icon}  <b>סה״כ: {_fmt_pnl(total)}</b>")
+        if _stats_line:
+            lines.append(f"\n{_stats_line}")
         return "\n".join(lines)
 
     # /chart TICKER — ASCII price chart (30 days)
@@ -4187,19 +4218,58 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         positions = context.get("open_positions", [])
         realized  = context.get("realized_pnl_net", 0)
         total_pnl = context.get("open_pnl", 0)
-        total_emoji = "📈" if total_pnl >= 0 else "📉"
+        grand_total = total_pnl + realized
+        total_emoji = "📈" if grand_total >= 0 else "📉"
+
+        # Fetch trading start date and stats from DB
+        since_str = ""
+        days_str = ""
+        trades_str = ""
+        try:
+            import sqlite3 as _sql, os as _os
+            _db = _os.getenv("DATABASE_URL", "./data/trading.db").replace("sqlite:///", "")
+            _conn = _sql.connect(_db)
+            _c = _conn.cursor()
+            _c.execute("SELECT MIN(entry_time), COUNT(*), SUM(pnl_net) FROM trade_log WHERE status != 'open'")
+            _row = _c.fetchone()
+            _conn.close()
+            if _row and _row[0]:
+                from datetime import datetime, timezone, timedelta
+                _first = datetime.strptime(str(_row[0])[:19], "%Y-%m-%d %H:%M:%S")
+                _now = datetime.now()
+                _days = (_now - _first).days
+                _months = _days // 30
+                if _months >= 1:
+                    _period = f"{_months} חודש{'ים' if _months > 1 else ''}"
+                else:
+                    _period = f"{_days} ימים"
+                since_str = f"📅 מאז: <b>{_first.strftime('%d/%m/%Y')}</b> ({_period})"
+                trades_str = f"🔢 {_row[1]} עסקאות | ממומש: {_fmt_pnl(_row[2] or 0)}"
+        except Exception:
+            pass
 
         lines = ["💰 <b>רווח/הפסד</b>\n━━━━━━━━━━━━━━━━"]
 
+        if since_str:
+            lines.append(since_str)
+            lines.append("")
+
         # Per-stock breakdown
-        for p in positions:
-            e = "🟢" if p["pct"] >= 0 else "🔴"
-            lines.append(f"{e} <b>{p['ticker']}</b>: {_fmt_pnl(p['pnl'])} ({p['pct']:+.1f}%)")
+        if positions:
+            for p in positions:
+                e = "🟢" if p["pct"] >= 0 else "🔴"
+                lines.append(f"{e} <b>{p['ticker']}</b>: {_fmt_pnl(p['pnl'])} ({p['pct']:+.1f}%)")
+        else:
+            lines.append("אין פוזיציות פתוחות כרגע")
 
         # Total
-        lines.append(f"━━━━━━━━━━━━━━━━\n{total_emoji} סה״כ פתוח: {_fmt_pnl(total_pnl)}")
+        lines.append(f"━━━━━━━━━━━━━━━━")
+        lines.append(f"📂 פתוח:  {_fmt_pnl(total_pnl)}")
         if realized != 0:
             lines.append(f"💳 ממומש: {_fmt_pnl(realized)}")
+        lines.append(f"{total_emoji} <b>סה״כ: {_fmt_pnl(grand_total)}</b>")
+        if trades_str:
+            lines.append(f"\n{trades_str}")
         return "\n".join(lines)
 
     # ── שאלות שווי/תיק ─────────────────────────────────────────────────────
