@@ -692,7 +692,9 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
 
     t = text.strip().lower()
     cmd = t.split()[0] if t else ""
-    args = " ".join(t.split()[1:]) if len(t.split()) > 1 else ""
+    # args should be uppercase for tickers (AAPL not aapl)
+    raw_parts = text.strip().split()
+    args = " ".join(raw_parts[1:]).upper() if len(raw_parts) > 1 else ""
 
     # ── Advanced commands via telegram_commands.py (ASYNC — no deadlock) ─
     advanced_commands = {
@@ -741,6 +743,13 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         "/bdika": "backtest",       # בדיקה
         "/rofeh": "doctor",         # רופא
         "/anomaliot": "anomalies",  # אנומליות
+        # ── מינוציות מסחר — TradingView watchlist ──────────────────────────
+        "/מניות": "מניות",          # רשימת מניות עם לינקים ל-TradingView
+        "/tv_watchlist": "מניות",
+        "/watchlist": "מניות",
+        "/trades": "מניות",
+        "/manioth": "מניות",        # Latin transliteration alias
+        "/maniot": "מניות",
         # Hebrew text shortcuts (when user types Hebrew without /)
         "בריאות": "health",
         "ביצועים": "performance",
@@ -754,6 +763,12 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         "מה יש לי": "positions",
         "הכי טובות": "top",
         "הטובות": "top",
+        # Hebrew shortcuts for watchlist
+        "מניות": "מניות",
+        "מינוציות": "מניות",
+        "רשימת מניות": "מניות",
+        "מה הבוט מחזיק": "מניות",
+        "אילו מניות": "מניות",
     }
 
     if cmd in advanced_commands:
@@ -796,7 +811,8 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             "לדוגמה: <i>\"מה קורה עם AAPL?\"</i> או <i>\"מה דעתך על התיק שלי?\"</i>\n\n"
             "━━ 📊 <b>תיק ופוזיציות</b> ━━\n"
             "/status — מצב מלא של התיק\n"
-            "/manioth — איזה מניות פתוחות\n"
+            "/מניות — 📈 מינוציות מסחר + לינקים ל-TradingView ✨\n"
+            "/positions — פוזיציות מפורטות\n"
             "/revach — רווח/הפסד פירוט\n"
             "/shovi — שווי התיק\n"
             "/mazon — מזומן פנוי\n"

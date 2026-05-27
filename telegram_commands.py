@@ -514,8 +514,14 @@ async def handle_anomalies_command() -> str:
         return f"❌ Anomalies error: {e}"
 
 
+def _tv_link(ticker: str) -> str:
+    """Return HTML anchor that opens the ticker's TradingView chart."""
+    url = f"https://www.tradingview.com/chart/?symbol={ticker}"
+    return f'<a href="{url}">{ticker}</a>'
+
+
 async def handle_positions_command() -> str:
-    """Handle /positions — rich live portfolio with age + stop distance."""
+    """Handle /positions — rich live portfolio with age + stop distance + TV links."""
     try:
         import broker, database
         from datetime import datetime, timezone
@@ -560,8 +566,9 @@ async def handle_positions_command() -> str:
             atr_stop = trade.get("atr_stop_price")
             stop_str = f" | 🛑{((cur - atr_stop)/cur*100):.1f}%↓" if atr_stop else ""
 
+            # Ticker is a clickable TradingView link
             lines.append(
-                f"{em} <b>{p.symbol}</b>  ${cur:.2f}  "
+                f"{em} <b>{_tv_link(p.symbol)}</b>  ${cur:.2f}  "
                 f"<b>{plpc:+.1f}%</b>  ${pl:+.2f}  "
                 f"{days_held:.0f}d{age_icon}{stop_str}"
             )
@@ -569,6 +576,7 @@ async def handle_positions_command() -> str:
         lines += [
             "━━━━━━━━━━━━━━━━",
             f"💼 ${total_val:,.2f} | {'🟢' if total_pnl>=0 else '🔴'} <b>${total_pnl:+,.2f}</b>",
+            "💡 <i>לחץ על שם המניה → TradingView</i>",
         ]
         if stale_tickers:
             lines.append(f"\n⚠️ ישנות (>5 ימים): {', '.join(stale_tickers)}")
@@ -576,6 +584,110 @@ async def handle_positions_command() -> str:
         return "\n".join(lines)
     except Exception as e:
         return f"❌ Positions error: {e}"
+
+
+async def handle_tv_watchlist_command(args: str = "") -> str:
+    """
+    /מניות  /tv_watchlist — רשימת 'מינוציות מסחר'.
+
+    מציגה את כל הפוזיציות הפתוחות של הבוט.
+    כל שם מניה הוא לינק לחיץ שפותח את הגרף ב-TradingView.
+    """
+    try:
+        import broker, database
+        from datetime import datetime, timezone
+        from scoring import get_composite_score
+
+        positions = await asyncio.to_thread(broker.get_positions)
+        open_trades = await asyncio.to_thread(database.get_open_trades)
+        trade_map = {t["ticker"]: t for t in (open_trades or [])}
+        now = datetime.now(timezone.utc)
+
+        if not positions:
+            return (
+                "📊 <b>מינוציות מסחר</b>\n"
+                "━━━━━━━━━━━━━━━━\n"
+                "📭 אין פוזיציות פתוחות\n"
+                "🤖 הבוט מחפש הזדמנויות..."
+            )
+
+        lines = [
+            "📈 <b>מינוציות מסחר</b>",
+            f"<i>לחץ על שם מניה → TradingView</i>",
+            "━━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        total_pnl = sum(float(p.unrealized_pl) for p in positions)
+        total_val = sum(float(p.market_value) for p in positions)
+        winners = sum(1 for p in positions if float(p.unrealized_pl) >= 0)
+
+        # Sort: winners first, then by % gain
+        sorted_pos = sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)
+
+        for pos in sorted_pos:
+            pl   = float(pos.unrealized_pl)
+            plpc = float(pos.unrealized_plpc) * 100
+            cur  = float(pos.current_price)
+            qty  = float(pos.qty)
+            val  = float(pos.market_value)
+            em   = "🟢" if pl >= 0 else "🔴"
+
+            trade = trade_map.get(pos.symbol, {})
+            days_held = 0
+            entry_price = 0.0
+            try:
+                et = trade.get("entry_time")
+                if et:
+                    entry_dt = datetime.fromisoformat(
+                        str(et)[:19].replace("Z", "")
+                    ).replace(tzinfo=timezone.utc)
+                    days_held = (now - entry_dt).total_seconds() / 86400
+                entry_price = float(trade.get("entry_price", 0) or 0)
+            except Exception:
+                pass
+
+            # Age indicator
+            if days_held > 7:
+                age_str = f"⏰ {days_held:.0f}d"
+            elif days_held > 3:
+                age_str = f"🕐 {days_held:.0f}d"
+            else:
+                age_str = f"{days_held:.0f}d"
+
+            # Stop info
+            atr_stop = trade.get("atr_stop_price")
+            stop_info = ""
+            if atr_stop:
+                stop_pct = (cur - float(atr_stop)) / cur * 100
+                stop_info = f"  🛑 stop {stop_pct:.1f}%↓"
+
+            # Entry price
+            entry_str = f"  📥 ${entry_price:.2f}" if entry_price else ""
+
+            # Row — ticker is a TradingView link
+            lines.append(
+                f"{em} <b>{_tv_link(pos.symbol)}</b>\n"
+                f"   ${cur:.2f} | <b>{plpc:+.1f}%</b> | ${pl:+.2f}"
+                f"{entry_str} | {age_str}{stop_info}"
+            )
+
+        # Summary footer
+        lines += [
+            "",
+            "━━━━━━━━━━━━━━━━",
+            f"📊 <b>{len(positions)} פוזיציות</b>  |  "
+            f"💼 ${total_val:,.0f}",
+            f"{'🟢' if total_pnl >= 0 else '🔴'} <b>רווח/הפסד: ${total_pnl:+,.2f}</b>",
+            f"🏆 מנצחים: {winners}/{len(positions)}",
+            "",
+            "🔗 <i>כל שם מניה = לינק לגרף ב-TradingView</i>",
+        ]
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"❌ TV Watchlist error: {e}"
 
 
 async def handle_top_command() -> str:
@@ -1000,6 +1112,49 @@ COMMAND_HANDLERS["tradingview"] = handle_tv_status_command
 COMMAND_HANDLERS["tv_pine"] = handle_tv_pine_command
 COMMAND_HANDLERS["pine"] = handle_tv_pine_command
 
+
+async def handle_scale_stats_command(args: str = "") -> str:
+    """/scale — show position scaling status."""
+    try:
+        from position_scaler import get_scale_in_stats
+        stats = get_scale_in_stats()
+
+        return (
+            "📈 <b>Position Scaling Status</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            f"📊 פוזיציות עם scale-in: {stats['active_positions_scaled']}\n"
+            f"🔢 סה״כ הוספות: {stats['total_scale_ins']}\n"
+            f"🚀 פוזיציות פירמידה (2 scales): {stats['positions_with_2_scales']}\n\n"
+            "<b>איך זה עובד:</b>\n"
+            "  📈 +3% → מוסיף 50%\n"
+            "  📈 +7% → מוסיף עוד 25%\n"
+            "  📈 סה״כ עד 175% מהפוזיציה המקורית\n\n"
+            "⚠️ רק על winners! לא ממצעים down!"
+        )
+    except Exception as e:
+        return f"❌ Scale stats error: {e}"
+
+
+async def handle_rotate_command(args: str = "") -> str:
+    """/rotate — show portfolio rotation analysis."""
+    try:
+        from portfolio_rotator import get_rotation_report
+        return await get_rotation_report()
+    except Exception as e:
+        return f"❌ Rotation error: {e}"
+
+
+COMMAND_HANDLERS["scale"] = handle_scale_stats_command
+COMMAND_HANDLERS["scaling"] = handle_scale_stats_command
+COMMAND_HANDLERS["rotate"] = handle_rotate_command
+COMMAND_HANDLERS["rotation"] = handle_rotate_command
+
+# ── מינוציות מסחר — TradingView watchlist ────────────────────────────────────
+COMMAND_HANDLERS["tv_watchlist"] = handle_tv_watchlist_command
+COMMAND_HANDLERS["watchlist"]    = handle_tv_watchlist_command
+COMMAND_HANDLERS["מניות"]        = handle_tv_watchlist_command
+COMMAND_HANDLERS["trades"]       = handle_tv_watchlist_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,
@@ -1011,13 +1166,10 @@ COMMAND_HANDLERS_WITH_ARG = {
     "pro": handle_pro_analysis_command,
     "pro_analysis": handle_pro_analysis_command,
     "analyze": handle_pro_analysis_command,
-}
-
-COMMAND_HANDLERS_WITH_ARG = {
-    "ai_decision": handle_ai_decision_command,
-    "ai": handle_ai_decision_command,
-    "backtest": handle_backtest_command,
-    "bt": handle_backtest_command,
+    # TV watchlist with optional args
+    "tv_watchlist": handle_tv_watchlist_command,
+    "מניות": handle_tv_watchlist_command,
+    "watchlist": handle_tv_watchlist_command,
 }
 
 
@@ -1029,13 +1181,24 @@ async def route_command(command: str, args: str = "") -> str:
         command: command name (without leading /)
         args: arguments string
     """
-    command = command.lower().strip()
+    # Lowercase ASCII only — Hebrew letters stay unchanged (no upper/lower case)
+    cmd = command.strip()
+    cmd_lower = cmd.lower()
 
-    if command in COMMAND_HANDLERS:
-        return await COMMAND_HANDLERS[command]()
+    # Try exact lowercase match first (covers English commands)
+    if cmd_lower in COMMAND_HANDLERS:
+        return await COMMAND_HANDLERS[cmd_lower]()
 
-    if command in COMMAND_HANDLERS_WITH_ARG:
-        return await COMMAND_HANDLERS_WITH_ARG[command](args.strip())
+    # Try original casing (covers Hebrew commands like /מניות)
+    if cmd in COMMAND_HANDLERS:
+        return await COMMAND_HANDLERS[cmd]()
+
+    # Commands that accept arguments
+    if cmd_lower in COMMAND_HANDLERS_WITH_ARG:
+        return await COMMAND_HANDLERS_WITH_ARG[cmd_lower](args.strip())
+
+    if cmd in COMMAND_HANDLERS_WITH_ARG:
+        return await COMMAND_HANDLERS_WITH_ARG[cmd](args.strip())
 
     return None  # Not handled by this module
 
@@ -1046,19 +1209,31 @@ def get_command_list() -> str:
 📋 <b>Advanced Commands</b>
 ━━━━━━━━━━━━━━━━
 
+<b>📈 מינוציות מסחר:</b>
+/מניות — רשימת פוזיציות + לינקים ל-TradingView
+/positions — פוזיציות מפורטות
+/top — הביצועים הטובים היום
+/portfolio — כרטיס תיק מלא
+/sector — פיזור סקטורים
+/rotate — ניתוח סיבוב תיק
+
 <b>📊 Analysis:</b>
-/ai_decision TICKER - AI trading decision
-/backtest TICKER - Run 6-month backtest
-/confluence - Multi-TF opportunities
-/forecast - Market forecast
+/ai TICKER — AI trading decision
+/backtest TICKER — Run 6-month backtest
+/pro TICKER — ניתוח כניסה מקצועי
+/confluence — Multi-TF opportunities
+/forecast — Market forecast
 
 <b>📈 Performance:</b>
-/performance - Performance report (30 days)
-/risk - Portfolio risk analysis
+/performance — Performance report (30 days)
+/risk — Portfolio risk analysis
+/drawdown — Drawdown control status
 
 <b>📰 Information:</b>
-/news - Portfolio news summary
-/health - System health status
+/news — Portfolio news summary
+/health — System health
+/doctor — Full system diagnostic
+/tv — TradingView integration
 
-<i>Pro tip: Combine commands for full analysis!</i>
+<i>💡 /מניות = לחץ על שם מניה לגרף ב-TradingView</i>
 """
