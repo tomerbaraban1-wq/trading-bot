@@ -711,6 +711,8 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         "/anomalies": "anomalies",
         "/positions": "positions",
         "/drawdown": "drawdown",
+        "/validate": "validate",
+        "/backtest_strategy": "validate",
         "/pos": "positions",
         "/portfolio": "portfolio",
         "/top": "top",

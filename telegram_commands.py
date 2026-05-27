@@ -764,6 +764,37 @@ COMMAND_HANDLERS = {
 
 COMMAND_HANDLERS["drawdown"] = handle_drawdown_command
 
+
+async def handle_validate_command(args: str = "") -> str:
+    """
+    /validate — run 6-month backtest with current filters.
+    Returns realistic win rate estimate in 2-5 minutes.
+    """
+    try:
+        days = 180
+        if args.strip().isdigit():
+            days = int(args.strip())
+        days = min(365, max(30, days))
+
+        try:
+            from telegram_bot import send_message
+            await send_message(
+                f"🔍 <b>Fast Validator מתחיל...</b>\n"
+                f"בודק {days} ימים על 30+ מניות\n"
+                f"⏳ זה ייקח 2-5 דקות..."
+            )
+        except Exception:
+            pass
+
+        from fast_validator import fast_validate_strategy, format_validation_report
+        report = await fast_validate_strategy(days_back=days)
+        return format_validation_report(report)
+    except Exception as e:
+        return f"❌ Validator error: {e}"
+
+
+COMMAND_HANDLERS["validate"] = handle_validate_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,
