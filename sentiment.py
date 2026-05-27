@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _client = None
 _sentiment_cache: dict = {}
 _cache_lock = threading.Lock()  # guards _sentiment_cache across threads
-CACHE_TTL = int(os.getenv("NEWS_CACHE_TTL", "1800"))  # default 30 min
+CACHE_TTL = int(os.getenv("NEWS_CACHE_TTL", "3600"))  # Extended to 1h to save Groq tokens
 _SENTIMENT_CACHE_MAX = 100  # max entries to prevent memory growth
 
 # ── Groq rate limiter — max 1 call per 3 seconds ─────────────────────────────
@@ -249,9 +249,16 @@ def score_sentiment(ticker: str) -> SentimentResult:
         score = 5
         reasoning = "שגיאה בניתוח תגובת AI — ניטרלי"
     except Exception as e:
-        # Don't let a transient LLM/network error block trading — fall back
-        # to keyword-based sentiment so the bot still uses the actual news.
-        logger.error(f"Sentiment scoring failed for {ticker}: {e} — using keyword fallback")
+        err_str = str(e)
+        if "429" in err_str or "rate_limit" in err_str.lower() or "tokens per day" in err_str:
+            # Daily token limit exhausted — extend cache TTL to 3h to stop burning tokens
+            global CACHE_TTL
+            CACHE_TTL = max(CACHE_TTL, 10800)   # at least 3h when rate-limited
+            logger.warning(f"Groq daily token limit reached — extending cache TTL to 3h, using keyword fallback")
+        else:
+            # Don't let a transient LLM/network error block trading — fall back
+            # to keyword-based sentiment so the bot still uses the actual news.
+            logger.error(f"Sentiment scoring failed for {ticker}: {e} — using keyword fallback")
         score, reasoning = _keyword_sentiment(headlines)
         reasoning = f"[ניתוח מילות מפתח] {reasoning}"
 
