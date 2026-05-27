@@ -5273,7 +5273,7 @@ async def notification_digest_loop():
         try:
             from smart_notifications import send_hourly_digest, send_daily_digest
 
-            now = datetime.now(timezone.utc)
+            now = _dt.datetime.now(_dt.timezone.utc)
 
             # Send daily digest at end of trading day (after EOD)
             if now.hour == 21:  # 4PM EST = 9PM UTC
