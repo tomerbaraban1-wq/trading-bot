@@ -117,6 +117,7 @@ def score_sentiment(ticker: str) -> SentimentResult:
     Score news sentiment for a ticker (1-10).
     MANDATORY before any buy order.
     """
+    global CACHE_TTL  # may be extended on Groq rate-limit
     # Check cache
     now = time.time()
     with _cache_lock:
@@ -252,7 +253,6 @@ def score_sentiment(ticker: str) -> SentimentResult:
         err_str = str(e)
         if "429" in err_str or "rate_limit" in err_str.lower() or "tokens per day" in err_str:
             # Daily token limit exhausted — extend cache TTL to 3h to stop burning tokens
-            global CACHE_TTL
             CACHE_TTL = max(CACHE_TTL, 10800)   # at least 3h when rate-limited
             logger.warning(f"Groq daily token limit reached — extending cache TTL to 3h, using keyword fallback")
         else:
