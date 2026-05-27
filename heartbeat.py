@@ -856,6 +856,8 @@ async def stop_loss_monitor():
                         pass
 
                     # ── 1b. Time-Based Exit — free capital after MAX_HOLD_HOURS ─────
+                    # PROFIT BOOST: Let strong winners (>10%) run beyond MAX_HOLD_HOURS.
+                    # ATR trailing stop will protect them. Cuts losses early but keeps winners.
                     from datetime import datetime, timezone as _tz
                     entry_ts = trade.get("entry_time")
                     if entry_ts:
@@ -866,14 +868,27 @@ async def stop_loss_monitor():
                             hours_held = (
                                 datetime.now(_tz.utc) - entry_dt
                             ).total_seconds() / 3600
-                            if hours_held >= MAX_HOLD_HOURS:
+                            # Profit-aware time exit: extend hold time if trade is profitable
+                            #   - <0%  profit:        exit at MAX_HOLD_HOURS  (cut losers fast)
+                            #   - 0-5% profit:        exit at MAX_HOLD_HOURS + 24h
+                            #   - 5-10% profit:       exit at MAX_HOLD_HOURS + 48h
+                            #   - 10%+ profit:        no time limit — trailing stop only
+                            if plpc >= 10.0:
+                                effective_max_hold = float('inf')   # let strong winners run
+                            elif plpc >= 5.0:
+                                effective_max_hold = MAX_HOLD_HOURS + 48
+                            elif plpc >= 0:
+                                effective_max_hold = MAX_HOLD_HOURS + 24
+                            else:
+                                effective_max_hold = MAX_HOLD_HOURS   # cut losers fast
+                            if hours_held >= effective_max_hold:
                                 logger.info(
                                     f"[TIME EXIT] {ticker}: held {hours_held:.1f}h "
-                                    f"≥ {MAX_HOLD_HOURS}h — closing"
+                                    f"≥ {effective_max_hold:.0f}h (PnL={plpc:+.1f}%) — closing"
                                 )
                                 await _close_position(
                                     trade, cur_price, "time_exit",
-                                    f"יציאה לפי זמן ({hours_held:.1f} שעות, מגבלה={MAX_HOLD_HOURS}ש')",
+                                    f"יציאה לפי זמן ({hours_held:.1f} שעות, רווח {plpc:+.1f}%)",
                                 )
                                 continue
                         except Exception as te:
@@ -1788,6 +1803,16 @@ async def auto_invest_loop():
                         if not composite["should_buy"]:
                             reason = composite.get("hard_block_reason") or f"ציון {score:.0f} < {composite.get('min_score', 70)}"
                             log_ticker(ticker, score, False, reason)
+                            return None
+
+                        # ── PROFIT BOOST: Skip overbought entries (RSI too high) ─────
+                        # Data shows: late entries = small or no upside, but full downside risk
+                        _ind_chk = composite.get("indicators", {})
+                        _rsi_chk = float(_ind_chk.get("rsi") or 50.0)
+                        _max_rsi = float(_os.getenv("MAX_RSI_FOR_ENTRY", "72"))
+                        if _rsi_chk > _max_rsi:
+                            logger.info(f"AUTO-INVEST: {ticker} RSI {_rsi_chk:.0f} > {_max_rsi:.0f} — overbought, skipping")
+                            log_ticker(ticker, score, False, f"RSI={_rsi_chk:.0f} — overbought")
                             return None
 
                         # AI Score Enhancement
