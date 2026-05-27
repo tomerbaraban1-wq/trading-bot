@@ -33,13 +33,13 @@ async def _fetch_updates(session: aiohttp.ClientSession, token: str, offset: int
     url = f"https://api.telegram.org/bot{token}/getUpdates"
     params = {
         "offset": offset,
-        "timeout": 20,       # long-poll: wait up to 20s for new messages
+        "timeout": 5,        # long-poll: cut 20s→5s for faster user-message pickup
         "allowed_updates": ["message", "callback_query"],
     }
     try:
         async with session.get(
             url, params=params,
-            timeout=aiohttp.ClientTimeout(total=30)
+            timeout=aiohttp.ClientTimeout(total=15)
         ) as resp:
             if resp.status == 200:
                 data = await resp.json()

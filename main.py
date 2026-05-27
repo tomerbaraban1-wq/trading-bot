@@ -120,6 +120,22 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # ── Pre-warm Telegram context cache (parallel with other startup) ─────────
+    # First user message after restart hits a 5-6s cold cache. Pre-build now
+    # in background so by the time the user sends a command, cache is hot.
+    try:
+        import asyncio as _asyncio_pw
+        async def _prewarm():
+            try:
+                import telegram_chat as _tc_pw
+                await _asyncio_pw.to_thread(_tc_pw._build_context)
+                logger.info("[STARTUP] Telegram context pre-warmed")
+            except Exception as _pw_err:
+                logger.debug(f"[STARTUP] Context prewarm failed: {_pw_err}")
+        _asyncio_pw.create_task(_prewarm())
+    except Exception:
+        pass
+
     # ── Start polling loop when running locally (no RENDER_EXTERNAL_URL) ──────
     # On Render: webhook handles incoming messages (registered below).
     # Locally:   no public URL → use getUpdates polling instead.

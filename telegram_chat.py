@@ -310,32 +310,44 @@ def _build_context() -> dict:
             if (t.get("pnl_gross") or 0) > 0:
                 wins += 1
 
-    # ── Market conditions ─────────────────────────────────────────────
-    vix = None
-    market_open = False
-    try:
-        from indicators import get_vix
-        vix = get_vix()
-        market_open = broker.is_market_open()
-    except Exception:
-        pass
+    # ── Slow network calls — run in parallel via threads ─────────────
+    # This was the BOTTLENECK: serial network calls took 5-6s on cold cache.
+    # Now: max(call_times) instead of sum(call_times) → ~2x faster.
+    import concurrent.futures as _cf
+    def _safe_get_vix():
+        try:
+            from indicators import get_vix
+            return get_vix()
+        except Exception:
+            return None
+    def _safe_market_open():
+        try:
+            return broker.is_market_open()
+        except Exception:
+            return False
+    def _safe_news():
+        try:
+            from news_service import get_general_headlines
+            return get_general_headlines(3)
+        except Exception:
+            return []
+    def _safe_cb():
+        try:
+            from circuit_breaker import check_circuit_breaker
+            ok, _ = check_circuit_breaker()
+            return not ok
+        except Exception:
+            return False
 
-    # ── Circuit breaker ───────────────────────────────────────────────
-    cb_tripped = False
-    try:
-        from circuit_breaker import check_circuit_breaker
-        ok, _ = check_circuit_breaker()
-        cb_tripped = not ok
-    except Exception:
-        pass
-
-    # ── Recent headlines ──────────────────────────────────────────────
-    news = []
-    try:
-        from news_service import get_general_headlines
-        news = get_general_headlines(3)
-    except Exception:
-        pass
+    with _cf.ThreadPoolExecutor(max_workers=4) as _exec:
+        _f_vix    = _exec.submit(_safe_get_vix)
+        _f_market = _exec.submit(_safe_market_open)
+        _f_news   = _exec.submit(_safe_news)
+        _f_cb     = _exec.submit(_safe_cb)
+        vix         = _f_vix.result(timeout=8)
+        market_open = _f_market.result(timeout=8)
+        news        = _f_news.result(timeout=8)
+        cb_tripped  = _f_cb.result(timeout=8)
 
     # ── Trading hours (Israeli time) ─────────────────────────────────
     from datetime import datetime, timezone, timedelta
