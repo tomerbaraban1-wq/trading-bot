@@ -728,6 +728,39 @@ async def stop_loss_monitor():
                         atr_stop = new_stop
                         high_wm  = new_wm
 
+                    # ── 1b. Smart Trailing — tighten stop at profit milestones ──────
+                    # Accelerates trail at +3%, +5%, +8%, +12%, +20%
+                    try:
+                        from pro_exit_system import calculate_smart_trailing_stop as _smart_trail
+                        from atr_stop import get_atr as _get_atr
+                        _atr_val = 0.0
+                        try:
+                            _atr_val = float(await asyncio.wait_for(
+                                asyncio.to_thread(_get_atr, ticker), timeout=5
+                            ) or 0)
+                        except Exception:
+                            pass
+                        _trail_result = _smart_trail(
+                            entry_price=trade["entry_price"],
+                            current_price=cur_price,
+                            original_stop=atr_stop,
+                            atr=_atr_val,
+                            high_water_mark=high_wm,
+                        )
+                        if _trail_result["tightened"] and _trail_result["new_stop"] > atr_stop:
+                            _tighter_stop = _trail_result["new_stop"]
+                            await asyncio.to_thread(
+                                database.update_trade_stop, trade["id"], _tighter_stop, high_wm
+                            )
+                            logger.info(
+                                f"[SMART TRAIL] {ticker}: stop tightened "
+                                f"${atr_stop:.2f} → ${_tighter_stop:.2f} "
+                                f"({_trail_result['reason']})"
+                            )
+                            atr_stop = _tighter_stop
+                    except Exception as _st_err:
+                        logger.debug(f"[SMART TRAIL] {ticker}: {_st_err}")
+
                     # ── 1a. Minimum hold guard — never sell within MIN_HOLD_MINUTES ──
                     # Prevents immediate sell-after-buy caused by brief score dips or
                     # ATR stop calculated before price stabilises after fill.
@@ -2177,16 +2210,19 @@ async def morning_briefing_loop():
             _open_trades = database.get_open_trades()
             open_pos_text = ""
             if _open_trades:
-                for _ot in _open_trades[:3]:
+                for _ot in _open_trades[:5]:
                     try:
                         _pos = await asyncio.wait_for(
                             asyncio.to_thread(broker.get_position, _ot["ticker"]), timeout=8
                         )
                         _pct = float(_pos.get("unrealized_plpc", 0)) * 100 if _pos else 0
+                        _pl  = float(_pos.get("unrealized_pl", 0)) if _pos else 0
                         _icon = "🟢" if _pct >= 0 else "🔴"
-                        open_pos_text += f"\n  {_icon} <b>{_ot['ticker']}</b>  {_pct:+.1f}%"
+                        _tv = f'<a href="https://www.tradingview.com/chart/?symbol={_ot["ticker"]}">{_ot["ticker"]}</a>'
+                        open_pos_text += f"\n  {_icon} {_tv}  {_pct:+.1f}%  ${_pl:+.2f}"
                     except Exception:
-                        open_pos_text += f"\n  📌 <b>{_ot['ticker']}</b>"
+                        _tv = f'<a href="https://www.tradingview.com/chart/?symbol={_ot["ticker"]}">{_ot["ticker"]}</a>'
+                        open_pos_text += f"\n  📌 {_tv}"
 
             # VIX
             try:

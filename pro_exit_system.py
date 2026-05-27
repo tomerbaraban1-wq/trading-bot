@@ -132,6 +132,72 @@ async def check_moving_average_break(
     return None
 
 
+def calculate_smart_trailing_stop(
+    entry_price: float,
+    current_price: float,
+    original_stop: float,
+    atr: float = 0.0,
+    high_water_mark: float = 0.0,
+) -> dict:
+    """
+    🛡️ Smart Trailing Stop — נועל רווחים אוטומטית.
+
+    Levels:
+    - Profit +3%  → Stop moves to breakeven (entry price)
+    - Profit +5%  → Stop = entry + 1%  (lock in small profit)
+    - Profit +8%  → Trail at high water mark - 1×ATR
+    - Profit +12% → Trail at high water mark - 0.5×ATR (tighter)
+    - Profit +20% → Trail at high water mark - 0.3×ATR (very tight)
+    """
+    plpc = (current_price - entry_price) / entry_price * 100
+    hwm = max(high_water_mark, current_price)  # high water mark
+
+    # Default: keep original stop
+    new_stop = original_stop
+    reason = "Original stop (not enough profit yet)"
+    tightened = False
+
+    if plpc >= 20.0:
+        # Very tight trail — protect big winner
+        trail = atr * 0.3 if atr else current_price * 0.015
+        new_stop = hwm - trail
+        reason = f"🏆 +{plpc:.1f}% — Tight trail (HWM - 0.3×ATR)"
+        tightened = True
+    elif plpc >= 12.0:
+        trail = atr * 0.5 if atr else current_price * 0.02
+        new_stop = hwm - trail
+        reason = f"💰 +{plpc:.1f}% — Trailing (HWM - 0.5×ATR)"
+        tightened = True
+    elif plpc >= 8.0:
+        trail = atr * 1.0 if atr else current_price * 0.03
+        new_stop = hwm - trail
+        reason = f"✅ +{plpc:.1f}% — Trailing (HWM - 1×ATR)"
+        tightened = True
+    elif plpc >= 5.0:
+        # Lock in 1% profit
+        new_stop = max(entry_price * 1.01, original_stop)
+        reason = f"🟢 +{plpc:.1f}% — Stop locked above entry (+1%)"
+        tightened = new_stop > original_stop
+    elif plpc >= 3.0:
+        # Move to breakeven
+        new_stop = max(entry_price, original_stop)
+        reason = f"🟡 +{plpc:.1f}% — Breakeven stop"
+        tightened = new_stop > original_stop
+
+    # Never lower the stop
+    new_stop = max(new_stop, original_stop)
+
+    return {
+        "new_stop": round(new_stop, 2),
+        "original_stop": round(original_stop, 2),
+        "tightened": tightened,
+        "plpc": plpc,
+        "high_water_mark": round(hwm, 2),
+        "reason": reason,
+        "stop_distance_pct": round((current_price - new_stop) / current_price * 100, 2),
+    }
+
+
 def generate_pro_exit_plan(
     entry_price: float,
     current_price: float,

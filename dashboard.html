@@ -469,6 +469,18 @@
         </div>
     </div>
 
+    <!-- Win Rate Live Card -->
+    <div class="card">
+        <div class="card-label">📈 Live Stats</div>
+        <div class="big-num green" id="liveWinRate">–%</div>
+        <div class="sub">Win Rate (פוזיציות פתוחות)</div>
+        <div class="divider"></div>
+        <div class="mini-stats">
+            <div><div class="mini-stat-val" id="livePositionsCount">0</div><div class="mini-stat-label">פוזיציות</div></div>
+            <div style="text-align:left"><div class="mini-stat-val" id="lastUpdated" style="font-size:11px;color:#484f58">–</div><div class="mini-stat-label">עדכון אחרון</div></div>
+        </div>
+    </div>
+
     <!-- Controls -->
     <div class="card">
         <div class="card-label">Quick Actions</div>
@@ -548,7 +560,7 @@
 
 <script>
 const API = '';
-const REFRESH = 15000;
+const REFRESH = 10000;   // ⚡ 10s refresh (was 15s)
 // SECURITY: secret is no longer hardcoded. Loaded from localStorage on first use.
 // Use _getSecret() everywhere instead of the const SECRET.
 function _getSecret() {
@@ -628,24 +640,39 @@ function render(status, trades, tax, learning, health) {
     const pos = status.positions || [];
     const ptb = document.getElementById('positionsTable');
     if (!ot.length) {
-        ptb.innerHTML = '<tr><td colspan="8" class="empty-row">No open positions</td></tr>';
+        ptb.innerHTML = '<tr><td colspan="9" class="empty-row">No open positions</td></tr>';
     } else {
+        // Calculate win rate from positions
+        const winners = ot.filter(t => {
+            const p = pos.find(p => p.ticker === t.ticker);
+            return p && p.unrealized_pl >= 0;
+        }).length;
+        const winRate = ot.length > 0 ? Math.round(winners / ot.length * 100) : 0;
+        document.getElementById('liveWinRate').textContent = winRate + '%';
+        document.getElementById('livePositionsCount').textContent = ot.length;
+
         ptb.innerHTML = ot.map(t => {
             const p = pos.find(p => p.ticker === t.ticker);
             const cur = p ? p.current_price : t.entry_price;
             const pl = p ? p.unrealized_pl : 0;
+            const plpc = p ? (p.unrealized_plpc * 100).toFixed(1) : '0.0';
+            const arrow = pl >= 0 ? '▲' : '▼';
+            const tvUrl = `https://www.tradingview.com/chart/?symbol=${t.ticker}`;
             return `<tr>
-                <td><strong>${t.ticker}</strong></td>
-                <td>${t.qty}</td>
+                <td><a href="${tvUrl}" target="_blank" style="color:#58a6ff;font-weight:700;text-decoration:none;" title="פתח ב-TradingView">${t.ticker} 📊</a></td>
+                <td>${typeof t.qty === 'number' ? t.qty.toFixed(2) : t.qty}</td>
                 <td>$${t.entry_price.toFixed(2)}</td>
-                <td>$${cur.toFixed(2)}</td>
-                <td class="${pl>=0?'profit':'loss'}">${money(pl,true)}</td>
+                <td><strong>$${cur.toFixed(2)}</strong></td>
+                <td class="${pl>=0?'profit':'loss'}">${arrow} ${money(pl,true)} <span style="font-size:11px">(${plpc}%)</span></td>
                 <td>${sentiment(t.sentiment_score)}</td>
                 <td><span class="tag tag-open">OPEN</span></td>
                 <td><button class="btn btn-exit btn-sm" onclick="emergencyExitTicker('${t.ticker}')">EXIT</button></td>
             </tr>`;
         }).join('');
     }
+
+    // Update last refresh time
+    document.getElementById('lastUpdated').textContent = 'עודכן: ' + new Date().toLocaleTimeString('he-IL');
 
     // History
     const htb = document.getElementById('tradesTable');

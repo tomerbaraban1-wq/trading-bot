@@ -800,6 +800,105 @@ async def notify_weekly_report(report_html: str) -> None:
     await send_message(report_html)
 
 
+async def notify_morning_briefing() -> None:
+    """
+    📅 Morning briefing — sent at market open (9:30 EST / 16:30 Israel).
+    Shows: open positions P&L, today's plan, market context, top opportunities.
+    """
+    try:
+        from datetime import datetime, timezone, timedelta
+        _now_il = datetime.now(timezone.utc) + timedelta(hours=3)
+        date_str = _now_il.strftime("%A %d/%m/%Y")
+        day_heb = ["שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת", "ראשון"][_now_il.weekday()]
+
+        lines = [
+            f"🌅 <b>בוקר טוב! יום {day_heb}, {date_str}</b>",
+            "━━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        # 1. Current positions status
+        try:
+            import broker as _br, database as _db
+            positions = await asyncio.to_thread(_br.get_positions)
+            open_trades = await asyncio.to_thread(_db.get_open_trades)
+            trade_map = {t["ticker"]: t for t in (open_trades or [])}
+
+            if positions:
+                total_pnl = sum(float(p.unrealized_pl) for p in positions)
+                winners = sum(1 for p in positions if float(p.unrealized_pl) >= 0)
+                pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+                lines.append(f"📍 <b>פוזיציות פתוחות: {len(positions)}</b>")
+                lines.append(f"{pnl_emoji} רווח/הפסד: <b>${total_pnl:+,.2f}</b> | 🏆 {winners}/{len(positions)} ברווח")
+                lines.append("")
+
+                # Top 3 positions
+                sorted_pos = sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)
+                for pos in sorted_pos[:3]:
+                    plpc = float(pos.unrealized_plpc) * 100
+                    pl = float(pos.unrealized_pl)
+                    em = "🟢" if pl >= 0 else "🔴"
+                    tv_link = f'<a href="https://www.tradingview.com/chart/?symbol={pos.symbol}">{pos.symbol}</a>'
+                    lines.append(f"  {em} {tv_link}  {plpc:+.1f}%  ${pl:+.2f}")
+            else:
+                lines.append("📭 אין פוזיציות פתוחות — הבוט מחפש הזדמנויות")
+            lines.append("")
+        except Exception:
+            pass
+
+        # 2. Budget status
+        try:
+            import budget as _bud
+            b = await asyncio.to_thread(_bud.get_budget_status)
+            cash = b.get("cash_available", 0)
+            used_pct = b.get("budget_used_pct", 0)
+            lines.append(f"💰 <b>מזומן פנוי: ${cash:,.0f}</b> ({100-used_pct:.0f}% פנוי)")
+            lines.append("")
+        except Exception:
+            pass
+
+        # 3. Market context (SPY/QQQ)
+        try:
+            import yfinance as _yf
+            market_lines = []
+            for sym, name in [("SPY", "S&P500"), ("QQQ", "Nasdaq")]:
+                try:
+                    t = _yf.Ticker(sym)
+                    info = t.fast_info
+                    chg = float(getattr(info, "three_month_change", 0) or 0) * 100
+                    price = float(getattr(info, "last_price", 0) or 0)
+                    em = "🟢" if chg >= 0 else "🔴"
+                    market_lines.append(f"  {em} {name}: ${price:.0f}")
+                except Exception:
+                    pass
+            if market_lines:
+                lines.append("🌍 <b>מצב השוק:</b>")
+                lines.extend(market_lines)
+                lines.append("")
+        except Exception:
+            pass
+
+        # 4. Today's action items
+        lines.extend([
+            "📋 <b>לבדוק היום:</b>",
+            "  • /מניות — פוזיציות עם לינקים ל-TradingView",
+            "  • /positions — מצב מפורט",
+            "  • /risk — ניתוח סיכון",
+            "",
+            "🤖 <i>הבוט עובד אוטומטית — שפוי יום!</i>",
+        ])
+
+        morning_buttons = [[
+            {"text": "📈 מניות שלי", "callback_data": "positions:all"},
+            {"text": "💰 P&L", "callback_data": "pnl:quick"},
+        ]]
+
+        await send_message("\n".join(lines), reply_markup={"inline_keyboard": morning_buttons})
+
+    except Exception as e:
+        logger.error(f"Morning briefing failed: {e}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Backward-compat aliases  (keep old call-sites in heartbeat.py working)
 # ─────────────────────────────────────────────────────────────────────────────
