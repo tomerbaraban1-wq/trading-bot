@@ -42,7 +42,9 @@ CONFIRM_DELAY_SEC:          float = float(os.getenv("SANITY_CONFIRM_DELAY_SEC", 
 MAX_CROSS_EXCHANGE_PCT:     float = float(os.getenv("SANITY_MAX_CROSS_EXCHANGE_PCT","2.0"))
 
 # Required indicator keys for a BUY signal to be considered complete
-REQUIRED_FIELDS = ("rsi", "macd", "volume_ratio", "atr")
+# Note: "atr" is OPTIONAL — ATR-stop uses a fallback if missing (price×0.96)
+REQUIRED_FIELDS = ("rsi", "macd", "volume_ratio")   # atr removed from hard-requirements
+OPTIONAL_FIELDS = ("atr",)                           # warn only, don't block
 
 # ── Price snapshot cache (used for velocity check) ────────────────────────────
 # ticker → (price, timestamp)
@@ -135,6 +137,14 @@ def _check_data_completeness(
 
     if missing:
         return False, f"missing/invalid indicator fields: {missing}"
+
+    # Optional fields — warn only, don't block
+    for field in OPTIONAL_FIELDS:
+        val = indicators.get(field)
+        if val is None:
+            logger.debug(f"[SANITY] {ticker}: optional field '{field}' missing — ATR stop will use fallback (OK)")
+        elif isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+            logger.debug(f"[SANITY] {ticker}: optional field '{field}' invalid ({val}) — ATR stop will use fallback (OK)")
 
     return True, "complete"
 

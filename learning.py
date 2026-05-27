@@ -1,3 +1,4 @@
+import json
 import logging
 import time as _time
 from database import get_loss_trades, get_learning_entries, get_win_trades
@@ -8,14 +9,63 @@ logger = logging.getLogger(__name__)
 _last_threshold_update: float = 0.0
 _THRESHOLD_UPDATE_INTERVAL: float = 3600.0   # 1 hour
 
-# Dynamic thresholds — updated automatically based on trade history
-_dynamic_thresholds = {
-    "min_sentiment": 5,       # require positive news (not just neutral)
-    "max_rsi": 72,            # avoid overbought — enters at peak are poor quality
-    "min_rsi": 35,            # avoid deeply oversold crashes (knife-catching)
-    "max_bb_position": 0.90,  # avoid very top of Bollinger band
-    "min_volume_ratio": 0.8,  # OPTIMIZED: 1.0 was too strict (blocking quality trades)
+# Dynamic thresholds — defaults (overridden by DB on startup)
+_DEFAULT_THRESHOLDS = {
+    "min_sentiment": 5,
+    "max_rsi": 72,
+    "min_rsi": 35,
+    "max_bb_position": 0.90,
+    "min_volume_ratio": 0.8,
 }
+
+# In-memory state — persisted to DB on every update
+_dynamic_thresholds = _DEFAULT_THRESHOLDS.copy()
+
+
+def _save_thresholds_to_db() -> None:
+    """Persist current thresholds to DB so they survive restarts."""
+    try:
+        from database import get_connection
+        conn = get_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS learning_thresholds (
+                key TEXT PRIMARY KEY,
+                value REAL,
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        for k, v in _dynamic_thresholds.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO learning_thresholds(key, value, updated_at) VALUES(?,?,datetime('now'))",
+                (k, float(v))
+            )
+        conn.commit()
+        logger.debug("[LEARNING] Thresholds saved to DB")
+    except Exception as e:
+        logger.debug(f"[LEARNING] Failed to save thresholds: {e}")
+
+
+def _load_thresholds_from_db() -> None:
+    """Load thresholds from DB on startup (persists across restarts)."""
+    global _dynamic_thresholds
+    try:
+        from database import get_connection
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT key, value FROM learning_thresholds"
+        ).fetchall()
+        if rows:
+            loaded = {row[0]: float(row[1]) for row in rows}
+            _dynamic_thresholds.update(loaded)
+            logger.info(f"[LEARNING] Thresholds loaded from DB: {loaded}")
+        else:
+            logger.info("[LEARNING] No saved thresholds in DB — using defaults")
+    except Exception as e:
+        logger.debug(f"[LEARNING] Failed to load thresholds: {e}")
+
+
+# Load on module import — happens once at bot startup
+_load_thresholds_from_db()
 
 
 def get_dynamic_thresholds() -> dict:
@@ -107,6 +157,9 @@ def _update_thresholds():
                     f"(wins avg vol={avg_win_vol:.2f} — threshold too strict)"
                 )
                 _dynamic_thresholds["min_volume_ratio"] = relaxed_vol
+
+    # ✅ Persist learned thresholds to DB — survives restarts
+    _save_thresholds_to_db()
 
 
 def should_override_buy(ticker: str, indicators: dict) -> tuple[bool, str]:

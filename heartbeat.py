@@ -2154,8 +2154,33 @@ async def auto_invest_loop():
                         except Exception:
                             pass
 
+                        # ── Adaptive Position Sizing — ממ adaptive_trader.py ────────
+                        # נכוון גודל פוזיציה לפי win rate, drawdown, consecutive losses
+                        _adaptive_risk_factor = 1.0
+                        try:
+                            from adaptive_trader import get_adaptive_trading_params as _gatp
+                            _adapt = await _asyncio.wait_for(
+                                _gatp(
+                                    base_quantity=1.0,
+                                    base_min_buy_score=float(_os.getenv("MIN_BUY_SCORE", "70")),
+                                    base_stop_loss_pct=settings.STOP_LOSS_PCT,
+                                    base_take_profit_pct=settings.TAKE_PROFIT_PCT,
+                                ),
+                                timeout=10,
+                            )
+                            _adaptive_risk_factor = _adapt.get("position_sizing", {}).get("risk_factor", 1.0)
+                            # Clamp to safe range
+                            _adaptive_risk_factor = max(0.3, min(1.5, _adaptive_risk_factor))
+                            if abs(_adaptive_risk_factor - 1.0) > 0.1:
+                                logger.info(
+                                    f"AUTO-INVEST: {ticker} adaptive risk_factor={_adaptive_risk_factor:.2f} "
+                                    f"(reason={_adapt.get('position_sizing', {}).get('reason', '?')})"
+                                )
+                        except Exception:
+                            pass  # fail-open: use original sizing
+
                         # Risk-based position sizing — adjusted by Buffett quality AND market volatility
-                        _conviction = score
+                        _conviction = score * _adaptive_risk_factor
                         if _buffett_score >= 80:
                             _conviction += 10   # premium quality → bigger position
                         elif _buffett_score >= 70:
@@ -2681,13 +2706,43 @@ async def adaptive_threshold_loop():
                 await asyncio.sleep(6 * 60 * 60)
                 continue
 
-            current_min = int(_os_at.getenv("MIN_BUY_SCORE", "60"))
+            current_min = int(_os_at.getenv("MIN_BUY_SCORE", "70"))
 
-            if days_since >= 3 and current_min > 53:
+            # ── Win Rate check — raise score if performance is poor ───────────
+            try:
+                _week_history = await asyncio.to_thread(database.get_trade_history, limit=20)
+                _week_closed  = [t for t in _week_history
+                                  if t.get("pnl_gross") is not None][-10:]  # last 10 closed
+                if len(_week_closed) >= 5:
+                    _wins = sum(1 for t in _week_closed if float(t.get("pnl_gross", 0)) >= 0)
+                    _wr   = _wins / len(_week_closed) * 100
+                    if _wr < 35:
+                        # Win rate below 35% → raise score bar significantly
+                        new_min = min(80, current_min + 5)
+                        if new_min != current_min:
+                            _os_at.environ["MIN_BUY_SCORE"] = str(new_min)
+                            logger.info(f"[ADAPTIVE] Win rate {_wr:.0f}% < 35% — raising MIN_BUY_SCORE: {current_min} → {new_min}")
+                            _create_background_task(send_message(
+                                f"📊 <b>סף ציון הוגדל</b>\n"
+                                f"━━━━━━━━━━━━━━━━\n"
+                                f"📉 Win Rate שבועי: <b>{_wr:.0f}%</b> (נמוך מ-35%)\n"
+                                f"⬆️ סף ציון: {current_min} → <b>{new_min}</b>\n"
+                                f"🎯 בוחרים רק עסקאות איכותיות יותר!"
+                            ))
+                    elif _wr > 60:
+                        # Win rate above 60% → can be slightly more aggressive
+                        new_min = max(65, current_min - 2)
+                        if new_min != current_min:
+                            _os_at.environ["MIN_BUY_SCORE"] = str(new_min)
+                            logger.info(f"[ADAPTIVE] Win rate {_wr:.0f}% > 60% — easing MIN_BUY_SCORE: {current_min} → {new_min}")
+            except Exception as _wr_err:
+                logger.debug(f"[ADAPTIVE] Win rate check failed: {_wr_err}")
+
+            if days_since >= 3 and current_min > 55:
                 # No trades for 3+ days — lower threshold temporarily
                 if _original_score is None:
                     _original_score = current_min
-                new_min = max(53, current_min - 3)
+                new_min = max(55, current_min - 3)
                 _os_at.environ["MIN_BUY_SCORE"] = str(new_min)
                 logger.info(f"[ADAPTIVE] {days_since}d no trades — lowering MIN_BUY_SCORE: {current_min} → {new_min}")
                 _create_background_task(send_message(
