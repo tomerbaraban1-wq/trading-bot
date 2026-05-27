@@ -933,6 +933,73 @@ async def handle_profit_estimate_command(args: str = "") -> str:
 COMMAND_HANDLERS["profit"] = handle_profit_estimate_command
 COMMAND_HANDLERS["earnings"] = handle_profit_estimate_command
 
+
+async def handle_tv_status_command(args: str = "") -> str:
+    """/tv — show TradingView integration status."""
+    try:
+        import os
+        from tradingview_handler import get_tradingview_stats
+
+        webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://your-bot.onrender.com")
+        secret_set = bool(os.getenv("WEBHOOK_SECRET", ""))
+        bot_validation = os.getenv("TV_REQUIRE_BOT_VALIDATION", "true").lower() == "true"
+
+        stats = get_tradingview_stats()
+
+        lines = [
+            "📈 <b>TradingView Integration</b>",
+            "━━━━━━━━━━━━━━━━",
+            "",
+            "<b>🔗 Webhook URL:</b>",
+            f"<code>{webhook_url}/webhook</code>",
+            "",
+            "<b>📊 הגדרות:</b>",
+            f"  {'✅' if secret_set else '❌'} WEBHOOK_SECRET",
+            f"  {'✅' if bot_validation else '⚠️'} Bot Validation: {'ENABLED' if bot_validation else 'DISABLED'}",
+            "",
+            "<b>📈 סטטיסטיקות (30 ימים):</b>",
+            f"  📊 TV trades: {stats.get('tv_trades_30d', 0)}",
+            f"  🎯 Win Rate: {stats.get('tv_win_rate', 0):.0f}%",
+            "",
+            "<b>📝 איך לשלוח signal מ-TradingView:</b>",
+            "1. צור Alert בגרף",
+            f"2. URL: <code>{webhook_url}/webhook</code>",
+            "3. JSON message:",
+            '<code>{"secret":"YOUR_SECRET","ticker":"{{ticker}}","action":"buy","price":{{close}}}</code>',
+            "",
+            "<b>📚 Pine Script:</b>",
+            "שלח /tv_pine לקבלת תבנית Pine Script מוכנה",
+        ]
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ TV status error: {e}"
+
+
+async def handle_tv_pine_command(args: str = "") -> str:
+    """/tv_pine — get Pine Script template."""
+    try:
+        from tradingview_handler import PINE_SCRIPT_TEMPLATE
+        secret = os.getenv("WEBHOOK_SECRET", "YOUR_SECRET")
+        pine = PINE_SCRIPT_TEMPLATE.replace("YOUR_SECRET", secret)
+        return (
+            "📜 <b>Pine Script Template</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "העתק את הקוד הזה ל-Pine Editor ב-TradingView:\n\n"
+            f"<code>{pine[:3500]}</code>\n\n"
+            "💡 Save → Add to Chart\n"
+            "💡 Create Alert עם Webhook URL"
+        )
+    except Exception as e:
+        return f"❌ Pine error: {e}"
+
+
+import os
+COMMAND_HANDLERS["tv"] = handle_tv_status_command
+COMMAND_HANDLERS["tradingview"] = handle_tv_status_command
+COMMAND_HANDLERS["tv_pine"] = handle_tv_pine_command
+COMMAND_HANDLERS["pine"] = handle_tv_pine_command
+
 COMMAND_HANDLERS_WITH_ARG = {
     "ai_decision": handle_ai_decision_command,
     "ai": handle_ai_decision_command,
