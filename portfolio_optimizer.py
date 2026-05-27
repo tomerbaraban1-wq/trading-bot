@@ -55,7 +55,7 @@ async def calculate_returns_matrix(tickers: list[str], days: int = 90) -> tuple:
         returns_dict = {}
         for ticker in tickers:
             try:
-                data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+                data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
                 if data.empty:
                     continue
 

@@ -4080,7 +4080,7 @@ async def news_monitor_loop():
                                 timeout=15,
                             )
                             translated_reason = await asyncio.wait_for(
-                                asyncio.to_thread(translate_to_hebrew, reason),
+                                translate_to_hebrew(reason),
                                 timeout=10,
                             )
                             return translated_hl or hl, translated_reason or reason
@@ -4563,10 +4563,10 @@ async def market_closed_training_loop():
 
             # ── Run general historical backtest on watchlist ──────────────
             result = await asyncio.wait_for(
-                asyncio.to_thread(run_backtest, tickers),
+                run_backtest(tickers),
                 timeout=600  # 10 min max
             )
-            update = await asyncio.to_thread(apply_insights)
+            update = await apply_insights()
 
             score_line = (
                 f"🔄 ציון עודכן: {update['old_score']} → <b>{update['new_score']}</b>"
@@ -4648,8 +4648,8 @@ async def backtest_learning_loop():
             logger.info("[BACKTEST] Starting weekly historical learning...")
             from backtest_learner import run_backtest, apply_insights
             from scanner import get_watchlist as _gwl
-            result = await asyncio.to_thread(run_backtest, _gwl()[:25])
-            update = await asyncio.to_thread(apply_insights)
+            result = await run_backtest(_gwl()[:25])
+            update = await apply_insights()
             await send_message(
                 f"🎓 <b>למידה מהיסטוריה</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"

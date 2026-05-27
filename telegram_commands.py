@@ -360,8 +360,8 @@ async def handle_forecast_command() -> str:
         )
 
         vol = await detect_volatility_regime()
-        breadth = await asyncio.to_thread(get_market_breadth)
-        sectors = await asyncio.to_thread(analyze_sector_rotation)
+        breadth = await get_market_breadth()
+        sectors = await analyze_sector_rotation()
 
         lines = [
             "🔮 <b>Market Forecast</b>",

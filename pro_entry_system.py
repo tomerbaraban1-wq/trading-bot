@@ -193,7 +193,7 @@ async def calculate_relative_strength(ticker: str, period_days: int = 20) -> flo
         end   = datetime.now(timezone.utc)
         start = end - timedelta(days=period_days + 5)
 
-        data = yf.download([ticker, "SPY"], start=start, end=end, progress=False)["Close"]
+        data = yf.download([ticker, "SPY"], start=start, end=end, progress=False, auto_adjust=True)["Close"]
 
         if data.empty:
             return 0.0
@@ -229,7 +229,7 @@ async def analyze_entry(ticker: str) -> EntryAnalysis:
         # Get 90 days of OHLCV data
         end   = datetime.now(timezone.utc)
         start = end - timedelta(days=90)
-        data  = yf.download(ticker, start=start, end=end, progress=False)
+        data  = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
 
         if data.empty or len(data) < 30:
             return EntryAnalysis(

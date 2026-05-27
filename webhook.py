@@ -1451,7 +1451,7 @@ async def run_backtest_endpoint(secret: str = "", tickers: str = ""):
 
     ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()] if tickers else get_watchlist()[:20]
 
-    result  = await asyncio.to_thread(run_backtest, ticker_list)
+    result  = await run_backtest(ticker_list)
     insights = await asyncio.to_thread(apply_insights)   # fix: was blocking event loop
     return {**result.to_dict(), "score_update": insights}
 

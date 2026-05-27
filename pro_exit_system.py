@@ -104,7 +104,7 @@ async def check_moving_average_break(
 
     try:
         import yfinance as yf
-        data = yf.download(ticker, period="30d", progress=False)["Close"]
+        data = yf.download(ticker, period="30d", progress=False, auto_adjust=True)["Close"]
         if data.empty:
             return None
 

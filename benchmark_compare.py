@@ -99,7 +99,7 @@ async def get_benchmark_returns(benchmark_ticker: str, days: int = 90) -> list:
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
-        data = yf.download(benchmark_ticker, start=start_date, end=end_date, progress=False)
+        data = yf.download(benchmark_ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if data.empty:
             return []
 

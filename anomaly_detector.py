@@ -101,7 +101,7 @@ async def detect_price_anomaly(ticker: str, threshold: float = 3.0) -> Optional[
         # Get 30 days of daily data
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=30)
-        data = yf.download(ticker, start=start, end=end, progress=False)
+        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
 
         if data.empty or len(data) < 20:
             return None
@@ -149,7 +149,7 @@ async def detect_volume_anomaly(ticker: str, threshold: float = 3.0) -> Optional
 
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=30)
-        data = yf.download(ticker, start=start, end=end, progress=False)
+        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
 
         if data.empty or len(data) < 20:
             return None

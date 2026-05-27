@@ -308,8 +308,8 @@ def calculate_ticker_correlation(ticker1: str, ticker2: str, days: int = 30) -> 
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days)
 
-        data1 = yf.download(ticker1, start=start, end=end, progress=False)["Close"]
-        data2 = yf.download(ticker2, start=start, end=end, progress=False)["Close"]
+        data1 = yf.download(ticker1, start=start, end=end, progress=False, auto_adjust=True)["Close"]
+        data2 = yf.download(ticker2, start=start, end=end, progress=False, auto_adjust=True)["Close"]
 
         # Calculate returns
         returns1 = data1.pct_change().dropna()
@@ -377,7 +377,7 @@ async def get_market_volatility_index() -> float:
         import numpy as np
 
         # Get SPY (S&P 500 ETF) intraday data
-        spy = yf.download("SPY", period="5d", interval="1h", progress=False)
+        spy = yf.download("SPY", period="5d", interval="1h", progress=False, auto_adjust=True)
         if spy.empty:
             return 20.0  # Default neutral volatility
 

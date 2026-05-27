@@ -280,7 +280,7 @@ async def analyze_position_protection(
         import yfinance as yf
 
         # Get recent price data for ATR
-        data = yf.download(ticker, period="30d", progress=False)
+        data = yf.download(ticker, period="30d", progress=False, auto_adjust=True)
         if data.empty:
             atr = 0
         else:

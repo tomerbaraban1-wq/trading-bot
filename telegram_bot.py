@@ -1474,10 +1474,10 @@ async def notify_market_regime_analysis() -> None:
     try:
         from market_intelligence import detect_volatility_regime, analyze_sector_rotation, get_market_breadth
 
+        # All three are async — must await directly, never wrap in to_thread
         vol_regime = await detect_volatility_regime()
-        sectors = await asyncio.to_thread(analyze_sector_rotation)
-        # get_market_breadth is async — must await, not wrap in to_thread
-        breadth = await get_market_breadth()
+        sectors    = await analyze_sector_rotation()
+        breadth    = await get_market_breadth()
 
         lines = [
             "🌍 <b>ניתוח משטר שוק</b>",

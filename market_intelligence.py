@@ -52,7 +52,7 @@ async def get_market_breadth(market_index: str = "^GSPC") -> BreadthMetrics:
         ]
 
         # Quick sample of major stocks
-        data = yf.download(sp500_list, period="1d", progress=False)["Close"]
+        data = yf.download(sp500_list, period="1d", progress=False, auto_adjust=True)["Close"]
 
         if data.empty:
             return BreadthMetrics(0, 0, 0, 0, 0, "🔴 Error")
@@ -145,7 +145,7 @@ async def analyze_sector_rotation() -> List[SectorPerformance]:
         performances = []
         for sector_name, ticker in sector_etfs.items():
             try:
-                data = yf.download(ticker, start=start, end=end, progress=False)["Close"]
+                data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)["Close"]
                 if len(data) < 2:
                     continue
 
@@ -218,7 +218,7 @@ def find_support_resistance(ticker: str, period: int = 90) -> SupportResistance:
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=period)
 
-        data = yf.download(ticker, start=start, end=end, progress=False)
+        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
         if data.empty:
             return SupportResistance(ticker, [], [], 0, None, None, 0, 0)
 
@@ -297,7 +297,7 @@ async def detect_volatility_regime(ticker: str = "SPY") -> VolatilityRegime:
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=60)
 
-        data = yf.download(ticker, start=start, end=end, progress=False)["Close"]
+        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)["Close"]
         returns = data.pct_change().dropna()
 
         vol_20d = returns.tail(20).std() * np.sqrt(252) * 100
@@ -338,8 +338,8 @@ async def get_market_intelligence_report() -> dict:
     """
     try:
         # Gather all market data in parallel
-        breadth_task = asyncio.to_thread(get_market_breadth)
-        sectors_task = asyncio.to_thread(analyze_sector_rotation)
+        breadth_task = get_market_breadth()
+        sectors_task = analyze_sector_rotation()
         vol_regime_task = detect_volatility_regime()
 
         breadth = await breadth_task

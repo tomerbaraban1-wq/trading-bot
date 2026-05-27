@@ -299,7 +299,7 @@ async def analyze_multi_timeframe(ticker: str) -> MultiTimeframeAnalysis:
 
         for tf_name, (period, interval) in intervals.items():
             try:
-                data = yf.download(ticker, period=period, interval=interval, progress=False)
+                data = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=True)
                 if data.empty:
                     continue
 

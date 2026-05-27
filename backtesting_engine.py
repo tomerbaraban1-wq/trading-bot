@@ -113,7 +113,7 @@ async def run_backtest(
         import yfinance as yf
 
         # Get historical data
-        data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+        data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
         if data.empty:
             return _empty_backtest_result(config.name, start_date, end_date, initial_capital)
 

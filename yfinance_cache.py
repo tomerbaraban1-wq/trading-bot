@@ -88,7 +88,7 @@ def get_ohlcv(
         else:
             kwargs["period"] = period
 
-        df = yf.download(ticker, **kwargs)
+        df = yf.download(ticker, **kwargs, auto_adjust=True)
 
         if df.empty:
             logger.debug(f"[CACHE] {ticker}: yfinance returned empty DataFrame")

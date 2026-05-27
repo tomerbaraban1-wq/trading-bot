@@ -189,12 +189,18 @@ def get_fundamental_score(ticker: str) -> float:
         return 5.0
 
     try:
-        info = yf.Ticker(ticker).info
-        # Guard against None, non-dict, or too-sparse results
-        if not isinstance(info, dict) or len(info) < 5:
+        # Wrap .info separately — yfinance can raise TypeError internally
+        try:
+            raw = yf.Ticker(ticker).info
+            info = raw if isinstance(raw, dict) else {}
+        except Exception as _fetch_err:
+            logger.debug(f"[FUND] {ticker}: info fetch error — {_fetch_err}")
+            info = {}
+
+        if len(info) < 5:
             raise ValueError("Empty or invalid info response")
-        # Normalise: replace any None values with safe defaults to avoid
-        # 'argument of type NoneType is not iterable' errors downstream
+
+        # Remove None values to prevent 'NoneType is not iterable' TypeError
         info = {k: v for k, v in info.items() if v is not None}
 
         score = 0.0

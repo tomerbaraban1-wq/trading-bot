@@ -63,11 +63,24 @@ async def calculate_pair_correlation(ticker1: str, ticker2: str, days: int = 60)
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
-        # Get data for both tickers
-        data1 = yf.download(ticker1, start=start_date, end=end_date, progress=False)["Close"]
-        data2 = yf.download(ticker2, start=start_date, end=end_date, progress=False)["Close"]
+        # Get data for both tickers — handle yfinance ≥0.2 MultiIndex columns
+        def _get_close(ticker: str) -> "pd.Series":
+            df = yf.download(ticker, start=start_date, end=end_date,
+                             progress=False, auto_adjust=True)
+            if df.empty:
+                return df
+            col = df["Close"]
+            if hasattr(col, "squeeze"):
+                col = col.squeeze()
+            return col
 
-        if data1.empty or data2.empty:
+        import pandas as pd
+        data1 = _get_close(ticker1)
+        data2 = _get_close(ticker2)
+
+        if data1 is None or (hasattr(data1, 'empty') and data1.empty):
+            return {"error": "No data available"}
+        if data2 is None or (hasattr(data2, 'empty') and data2.empty):
             return {"error": "No data available"}
 
         # Returns
@@ -312,7 +325,7 @@ async def calculate_portfolio_beta() -> dict:
         # Get SPY data
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=90)
-        spy_data = yf.download("SPY", start=start_date, end=end_date, progress=False)["Close"]
+        spy_data = yf.download("SPY", start=start_date, end=end_date, progress=False, auto_adjust=True)["Close"]
         spy_returns = spy_data.pct_change().dropna()
 
         # Calculate weighted beta
@@ -326,7 +339,7 @@ async def calculate_portfolio_beta() -> dict:
         for p in positions:
             try:
                 weight = float(p.market_value) / total_value
-                ticker_data = yf.download(p.symbol, start=start_date, end=end_date, progress=False)["Close"]
+                ticker_data = yf.download(p.symbol, start=start_date, end=end_date, progress=False, auto_adjust=True)["Close"]
                 ticker_returns = ticker_data.pct_change().dropna()
 
                 # Align indices
