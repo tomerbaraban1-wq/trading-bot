@@ -66,23 +66,47 @@ _TELEGRAM_ALLOWED_TAGS = {
     "a", "code", "pre", "tg-spoiler",
 }
 
+# Pre-compiled pattern: matches allowed open/close tags exactly
+_ALLOWED_TAG_RE = _re.compile(
+    r"</?(b|strong|i|em|u|ins|s|strike|del|code|pre|tg-spoiler)"
+    r"(\s[^>]*)?>|<a(\s[^>]*)?>|</a>",
+    _re.IGNORECASE,
+)
+
 def _sanitize_html(text: str) -> str:
     """
-    Remove or escape HTML tags that Telegram doesn't support.
-    Keeps only the safe whitelist: <b>, <i>, <code>, <pre>, <a>, <u>, <s>.
-    Any other <tag> would cause Telegram to return 400 Bad Request and
-    silently drop the entire message.
-    """
-    def _handle_tag(m: _re.Match) -> str:
-        tag_content = m.group(1)  # everything inside < >
-        # Extract tag name (first word, strip / for closing tags)
-        tag_name = tag_content.lstrip("/").split()[0].split("=")[0].lower()
-        if tag_name in _TELEGRAM_ALLOWED_TAGS:
-            return m.group(0)  # keep allowed tags
-        # Replace unknown tags with escaped version so text is visible
-        return m.group(0).replace("<", "&lt;").replace(">", "&gt;")
+    Robustly sanitize HTML for Telegram's strict HTML parser.
 
-    return _re.sub(r"<([^>]+)>", _handle_tag, text)
+    Strategy (3-pass):
+    1. Save all ALLOWED tags by replacing them with placeholders.
+    2. Escape every remaining < and > character (comparison operators,
+       unsupported tags like <ticker>, Hebrew tags, etc.).
+    3. Restore the saved allowed tags.
+
+    This prevents silent message drops caused by:
+    - Comparison operators:  ציון 55 < min_score 70
+    - Unsupported tags:      <ticker>, <score>, <מניה>
+    - Broken/unclosed tags:  <anything without closing >
+    """
+    # Step 1 — extract and protect allowed tags
+    placeholders: list[str] = []
+
+    def _save_tag(m: _re.Match) -> str:
+        placeholders.append(m.group(0))
+        return f"\x00TAG{len(placeholders)-1}\x00"
+
+    protected = _ALLOWED_TAG_RE.sub(_save_tag, text)
+
+    # Step 2 — escape bare < and >
+    protected = protected.replace("&", "&amp;")   # escape & first
+    protected = protected.replace("<", "&lt;")
+    protected = protected.replace(">", "&gt;")
+
+    # Step 3 — restore allowed tags
+    for i, tag in enumerate(placeholders):
+        protected = protected.replace(f"\x00TAG{i}\x00", tag)
+
+    return protected
 
 
 def _enabled() -> bool:
@@ -1452,7 +1476,8 @@ async def notify_market_regime_analysis() -> None:
 
         vol_regime = await detect_volatility_regime()
         sectors = await asyncio.to_thread(analyze_sector_rotation)
-        breadth = await asyncio.to_thread(get_market_breadth)
+        # get_market_breadth is async — must await, not wrap in to_thread
+        breadth = await get_market_breadth()
 
         lines = [
             "🌍 <b>ניתוח משטר שוק</b>",

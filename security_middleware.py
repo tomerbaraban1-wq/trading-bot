@@ -57,6 +57,13 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         endpoint = request.url.path
 
+        # ── Localhost bypass — trust 127.0.0.1 and ::1 completely ────────
+        # Internal keep-alive pings and health checks come from localhost.
+        # Blocking them causes "Temporarily blocked" on /ping and /health.
+        _TRUSTED_LOCAL = {"127.0.0.1", "::1", "localhost"}
+        if client_ip in _TRUSTED_LOCAL:
+            return await call_next(request)
+
         try:
             # ── 0. Progressive blocking (enhanced) ───────────────────────
             try:
@@ -158,8 +165,17 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 except Exception as e:
                     logger.debug(f"Body parsing failed: {e}")
 
-            # Check headers
+            # Check headers — skip safe/standard headers to avoid false positives
+            # (e.g. Accept: */*  contains */ which matches SQL comment pattern)
+            try:
+                from security_manager import _SAFE_HEADERS as _sh
+                _skip_headers = _sh
+            except ImportError:
+                _skip_headers = frozenset()
+
             for header_name, header_value in request.headers.items():
+                if header_name.lower() in _skip_headers:
+                    continue
                 attack = detect_injection_attempt(header_value)
                 if attack:
                     log_security_event(

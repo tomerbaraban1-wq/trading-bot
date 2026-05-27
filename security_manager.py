@@ -431,10 +431,19 @@ SAFE_STRING_PATTERN = re.compile(r'^[\w\s\-.,_!?@#$%^&*()+=]+$')
 
 # Dangerous patterns to detect injections
 SQL_INJECTION_PATTERNS = [
-    re.compile(r"';|--|/\*|\*/|union\s+select", re.IGNORECASE),
+    # Note: removed standalone */ pattern — it matches */* in Accept headers (false positive)
+    re.compile(r"';\s*--|union\s+select|/\*.*?\*/", re.IGNORECASE),
     re.compile(r"(drop|delete|truncate)\s+(table|database)", re.IGNORECASE),
-    re.compile(r"or\s+1\s*=\s*1", re.IGNORECASE),
+    re.compile(r"\bor\s+1\s*=\s*1\b", re.IGNORECASE),
 ]
+
+# Headers that should never be scanned for injection (contain MIME types, user-agents, etc.)
+_SAFE_HEADERS = frozenset({
+    "accept", "accept-language", "accept-encoding", "accept-charset",
+    "content-type", "user-agent", "referer", "origin", "host",
+    "cache-control", "pragma", "connection", "keep-alive",
+    "x-forwarded-for", "x-real-ip", "x-request-id",
+})
 
 XSS_PATTERNS = [
     re.compile(r"<script[^>]*>", re.IGNORECASE),

@@ -150,7 +150,9 @@ def get_min_buy_score() -> int:
 # ── Fundamental Quality Cache ─────────────────────────────────────────────────
 # Stores (timestamp, score: float) per ticker; TTL = 24 hours
 _fundamental_cache: dict[str, tuple[float, float]] = {}
-_FUNDAMENTAL_CACHE_TTL = 24 * 3600  # seconds
+_FUNDAMENTAL_CACHE_TTL = 7 * 24 * 3600  # 7 days — fundamentals don't change daily
+# Track rate-limit cooldown: if yfinance returns 429, back off for 10 min
+_fundamental_rate_limit_until: float = 0.0
 
 
 def get_fundamental_score(ticker: str) -> float:
@@ -180,8 +182,16 @@ def get_fundamental_score(ticker: str) -> float:
             logger.debug(f"[FUND] {ticker}: using cached score={result}")
             return result
 
+    # Back off if yfinance is rate-limiting us
+    global _fundamental_rate_limit_until
+    if _time_module.time() < _fundamental_rate_limit_until:
+        logger.debug(f"[FUND] {ticker}: rate-limit backoff — returning neutral 5.0")
+        return 5.0
+
     try:
         info = yf.Ticker(ticker).info
+        if not info or len(info) < 5:
+            raise ValueError("Empty info response")
 
         score = 0.0
 
@@ -268,7 +278,13 @@ def get_fundamental_score(ticker: str) -> float:
         return final
 
     except Exception as e:
-        logger.warning(f"[FUND] Fundamental score failed for {ticker}: {e} — returning neutral 5.0")
+        err_str = str(e)
+        if "Too Many Requests" in err_str or "Rate limited" in err_str or "429" in err_str:
+            # Back off for 10 minutes so we stop hammering yfinance
+            _fundamental_rate_limit_until = _time_module.time() + 600
+            logger.warning(f"[FUND] yfinance rate-limited — backing off 10 min")
+        else:
+            logger.warning(f"[FUND] Fundamental score failed for {ticker}: {e} — returning neutral 5.0")
         _fundamental_cache[ticker] = (now_ts, 5.0)
         return 5.0
 
