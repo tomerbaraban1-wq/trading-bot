@@ -28,6 +28,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["analytics"])
 
+# ── Security Headers Middleware ────────────────────────────────────────────────
+# Injected on every analytics API response
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",          # don't cache sensitive financial data
+}
+
+def _secure_response(data: dict) -> JSONResponse:
+    """Return a JSONResponse with security headers added."""
+    return JSONResponse(content=data, headers=_SECURITY_HEADERS)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AUTHENTICATION
@@ -40,8 +54,9 @@ def _verify_api_key(provided_key: Optional[str]) -> bool:
 
     expected = os.getenv("ANALYTICS_API_KEY", "")
     if not expected:
-        # If not configured, allow access (development)
-        return True
+        # ⚠️ ANALYTICS_API_KEY not configured — DENY access (security fix)
+        logger.warning("ANALYTICS_API_KEY not set — denying analytics access")
+        return False
 
     import hmac
     return hmac.compare_digest(provided_key, expected)
@@ -64,7 +79,7 @@ async def get_performance(
         from performance_attribution import generate_attribution_report
         return await generate_attribution_report(days=days)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/performance/insights")
@@ -78,7 +93,7 @@ async def get_actionable_insights(x_api_key: Optional[str] = Header(None)):
         insights = await get_actionable_insights()
         return {"insights": insights, "count": len(insights)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +110,7 @@ async def get_portfolio_risk(x_api_key: Optional[str] = Header(None)):
         from risk_engine import analyze_portfolio_risk
         return await analyze_portfolio_risk()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +152,7 @@ async def get_ai_decision(ticker: str, x_api_key: Optional[str] = Header(None)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,7 +181,7 @@ async def get_multi_timeframe_analysis(ticker: str, x_api_key: Optional[str] = H
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -183,7 +198,7 @@ async def get_portfolio_news_endpoint(x_api_key: Optional[str] = Header(None)):
         from news_intelligence import get_portfolio_news
         return await get_portfolio_news()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/news/{ticker}")
@@ -223,7 +238,7 @@ async def get_ticker_news(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -240,7 +255,7 @@ async def get_market_intelligence(x_api_key: Optional[str] = Header(None)):
         from market_intelligence import get_market_intelligence_report
         return await get_market_intelligence_report()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,7 +272,7 @@ async def get_ytd_tax(x_api_key: Optional[str] = Header(None)):
         from tax_optimization import get_ytd_tax_summary
         return await get_ytd_tax_summary()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/tax/harvest")
@@ -275,7 +290,7 @@ async def get_tax_harvest_opportunities(x_api_key: Optional[str] = Header(None))
             "total_potential_benefit": sum(o.get("tax_benefit_estimate", 0) for o in opportunities),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/tax/wash-sales")
@@ -293,7 +308,7 @@ async def get_wash_sales(x_api_key: Optional[str] = Header(None)):
             "total_disallowed_losses": sum(w.get("loss_amount", 0) for w in wash_sales),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/tax/efficiency")
@@ -306,7 +321,7 @@ async def get_tax_efficiency(x_api_key: Optional[str] = Header(None)):
         from tax_optimization import calculate_tax_efficiency
         return await calculate_tax_efficiency()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -345,7 +360,7 @@ async def optimize_portfolio_endpoint(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/portfolio/rebalance")
@@ -358,7 +373,7 @@ async def analyze_rebalancing(x_api_key: Optional[str] = Header(None)):
         from portfolio_optimizer import analyze_rebalancing_needs
         return await analyze_rebalancing_needs()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -402,7 +417,7 @@ async def quick_backtest(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -419,7 +434,7 @@ async def get_learning_insights(x_api_key: Optional[str] = Header(None)):
         from continuous_learner import run_continuous_learning_cycle
         return await run_continuous_learning_cycle()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,7 +452,7 @@ async def get_pairs_opportunities(x_api_key: Optional[str] = Header(None)):
         opportunities = await scan_pairs_opportunities()
         return {"opportunities": opportunities, "count": len(opportunities)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/pairs/{ticker1}/{ticker2}")
@@ -458,7 +473,7 @@ async def analyze_pair(ticker1: str, ticker2: str, x_api_key: Optional[str] = He
             "confidence": pair.confidence,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/portfolio/beta")
@@ -471,7 +486,7 @@ async def get_portfolio_beta(x_api_key: Optional[str] = Header(None)):
         from pairs_trading import calculate_portfolio_beta
         return await calculate_portfolio_beta()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -488,7 +503,7 @@ async def get_compound_strategy(x_api_key: Optional[str] = Header(None)):
         from compound_engine import get_compounding_strategy
         return await get_compounding_strategy()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/compound/project")
@@ -523,7 +538,7 @@ async def project_compound_growth(
             "scenarios": scenarios,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -545,7 +560,7 @@ async def get_all_benchmarks(
         from benchmark_compare import compare_to_all_benchmarks
         return await compare_to_all_benchmarks(days)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/benchmark/{ticker}")
@@ -581,7 +596,7 @@ async def get_benchmark_comparison(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -617,7 +632,7 @@ async def get_unified_sentiment_endpoint(ticker: str, x_api_key: Optional[str] =
             ],
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -659,7 +674,7 @@ async def get_recent_journal(
             ],
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/journal/summary")
@@ -685,7 +700,7 @@ async def get_journal_summary(
             "strengths": summary.strengths,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -727,7 +742,7 @@ async def get_dashboard_data(x_api_key: Optional[str] = Header(None)):
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -750,7 +765,7 @@ async def analyze_execution(
         from smart_execution import analyze_optimal_execution
         return await analyze_optimal_execution(ticker.upper(), quantity, side, urgency)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -787,7 +802,7 @@ async def run_strategy_optimizer(
             },
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -808,7 +823,7 @@ async def analyze_protection(x_api_key: Optional[str] = Header(None)):
             "count": len(recommendations),
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -825,7 +840,7 @@ async def get_translation_stats_endpoint(x_api_key: Optional[str] = Header(None)
         from translation_service import get_translation_stats
         return get_translation_stats()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/translation/test")
@@ -852,7 +867,7 @@ async def test_translation(request: Request, x_api_key: Optional[str] = Header(N
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/translation/toggle")
@@ -873,7 +888,7 @@ async def toggle_translation(request: Request, x_api_key: Optional[str] = Header
 
         return {"enabled": enabled}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -890,7 +905,7 @@ async def scan_anomalies(x_api_key: Optional[str] = Header(None)):
         from anomaly_detector import scan_portfolio_anomalies
         return await scan_portfolio_anomalies()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/anomalies/{ticker}")
@@ -936,4 +951,4 @@ async def detect_ticker_anomaly(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"API error: {e}"); raise HTTPException(status_code=500, detail="Internal server error")

@@ -987,10 +987,10 @@ async def scan_now(secret: str = ""):
 
 
 @router.get("/scan/preview")
-async def scan_preview():
+async def scan_preview(_auth: None = Depends(_verify_secret)):
     """
     Score 5 random large-cap stocks right now and show why bot buys/skips.
-    Call this to understand what scores look like in current market conditions.
+    Requires WEBHOOK_SECRET — reveals scoring strategy.
     """
     import random
     from scanner import get_watchlist
@@ -1013,7 +1013,8 @@ async def scan_preview():
                 "vix":       comp.get("vix"),
             })
         except Exception as e:
-            results.append({"ticker": ticker, "error": str(e)})
+            logger.debug(f"/scan/preview error for {ticker}: {e}")
+            results.append({"ticker": ticker, "error": "scoring_failed"})
 
     results.sort(key=lambda x: x.get("score", 0), reverse=True)
     from scoring import MIN_BUY_SCORE
@@ -1456,8 +1457,8 @@ async def run_backtest_endpoint(secret: str = "", tickers: str = ""):
 
 
 @router.get("/backtest/insights")
-async def backtest_insights():
-    """Return latest backtest insights (no auth needed — read-only summary)."""
+async def backtest_insights(_auth: None = Depends(_verify_secret)):
+    """Return latest backtest insights — requires auth (reveals strategy patterns)."""
     from backtest_learner import get_insights
     return get_insights()
 

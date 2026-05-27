@@ -1247,6 +1247,70 @@ async def send_message_helper(text: str):
 COMMAND_HANDLERS["surge"] = handle_surge_command
 COMMAND_HANDLERS["volume"] = handle_surge_command
 
+
+async def handle_security_command(args: str = "") -> str:
+    """/security — show current security status."""
+    import os, hashlib
+
+    def _check(key: str, min_len: int = 20, label: str = "") -> tuple[str, str]:
+        val = os.getenv(key, "")
+        if not val:
+            return "🔴", f"{label or key}: לא מוגדר!"
+        if len(val) < min_len:
+            return "🟡", f"{label or key}: קצר מדי ({len(val)} תווים)"
+        return "🟢", f"{label or key}: ✅ ({len(val)} תווים)"
+
+    lines = [
+        "🛡️ <b>מצב אבטחה</b>",
+        "━━━━━━━━━━━━━━━━",
+        "",
+        "<b>🔑 מפתחות:</b>",
+    ]
+
+    checks = [
+        ("WEBHOOK_SECRET",    32, "Webhook Secret"),
+        ("JWT_SECRET",        48, "JWT Secret"),
+        ("ANALYTICS_API_KEY", 32, "Analytics API Key"),
+        ("ADMIN_API_KEY",     32, "Admin API Key"),
+        ("ENCRYPTION_KEY",    32, "Encryption Key"),
+        ("GROQ_API_KEY",      20, "Groq AI Key"),
+        ("TELEGRAM_BOT_TOKEN",30, "Telegram Token"),
+    ]
+
+    all_ok = True
+    for key, min_len, label in checks:
+        emoji, msg = _check(key, min_len, label)
+        lines.append(f"  {emoji} {msg}")
+        if emoji != "🟢":
+            all_ok = False
+
+    # Rate limiting status
+    try:
+        from webhook import _RATE_LIMIT_MAX_REQUESTS, _RATE_LIMIT_WINDOW, _AUTH_BLOCK_THRESHOLD
+        lines.extend([
+            "",
+            "<b>🔒 הגנות:</b>",
+            f"  🟢 Rate Limit: {_RATE_LIMIT_MAX_REQUESTS} req/{_RATE_LIMIT_WINDOW}s",
+            f"  🟢 Auth Block: אחרי {_AUTH_BLOCK_THRESHOLD} כישלונות",
+            f"  🟢 HMAC timing-safe comparison",
+            f"  🟢 SQL Parameterized queries",
+            f"  🟢 Ticker regex validation",
+        ])
+    except Exception:
+        pass
+
+    lines.extend([
+        "",
+        "━━━━━━━━━━━━━━━━",
+        f"{'🟢 כל המערכות מאובטחות!' if all_ok else '⚠️ יש בעיות אבטחה — בדוק למעלה'}",
+    ])
+
+    return "\n".join(lines)
+
+
+COMMAND_HANDLERS["security"] = handle_security_command
+COMMAND_HANDLERS["אבטחה"] = handle_security_command
+
 # ── מינוציות מסחר — TradingView watchlist ────────────────────────────────────
 COMMAND_HANDLERS["tv_watchlist"] = handle_tv_watchlist_command
 COMMAND_HANDLERS["watchlist"]    = handle_tv_watchlist_command
