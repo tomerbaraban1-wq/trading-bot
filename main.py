@@ -71,6 +71,33 @@ START_TIME = time.time()
 async def lifespan(app: FastAPI):
     # Startup
     settings.validate()
+
+    # ── RUN COMPREHENSIVE STARTUP CHECKLIST ──────────────────────────────────
+    try:
+        from startup_checklist import run_startup_checklist
+        is_safe, checks = await run_startup_checklist()
+
+        if not is_safe:
+            logger.critical("⛔ STARTUP CHECKLIST FAILED - BOT CANNOT START")
+            logger.critical("Please fix the critical issues listed above before restarting.")
+            logger.critical("")
+            logger.critical("Critical issues must be resolved:")
+            for check in checks:
+                if check.status == "fail" and check.severity == "critical":
+                    logger.critical(f"  {check.message}")
+            logger.critical("")
+            logger.critical("For detailed diagnostics, visit: /health")
+            raise RuntimeError("Startup checklist failed - critical configuration issues detected")
+        else:
+            logger.info("✅ Startup checklist PASSED - proceeding with initialization")
+    except ImportError:
+        logger.warning("⚠️  startup_checklist module not found - skipping comprehensive checks")
+    except RuntimeError as e:
+        # Re-raise startup failures - don't let bot start with critical issues
+        raise
+    except Exception as e:
+        logger.warning(f"⚠️  Startup checklist error (non-blocking): {e}")
+
     init_db()
 
     # Check database integrity

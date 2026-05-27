@@ -199,14 +199,24 @@ def init_db():
 
     # ── Schema migrations (safe to run repeatedly) ────────────────────────────
     # Add ATR trailing stop columns introduced in v2
-    for ddl in (
+    # Add created_at, exit_reason columns introduced in v3
+    _migrations = [
         "ALTER TABLE trade_log ADD COLUMN atr_stop_price REAL",
         "ALTER TABLE trade_log ADD COLUMN high_watermark  REAL",
-    ):
+        "ALTER TABLE trade_log ADD COLUMN created_at     DATETIME",
+        "ALTER TABLE trade_log ADD COLUMN exit_reason    TEXT",
+    ]
+    for ddl in _migrations:
         try:
             conn.execute(ddl)
         except Exception:
             pass  # column already exists — sqlite3.OperationalError is expected
+
+    # Backfill created_at from entry_time for existing rows
+    try:
+        conn.execute("UPDATE trade_log SET created_at = entry_time WHERE created_at IS NULL AND entry_time IS NOT NULL")
+    except Exception:
+        pass
 
     # Fix bb_position: SQLite stored it as TEXT but it should be REAL.
     # SQLite cannot ALTER COLUMN type, so we CAST all existing values in-place.
