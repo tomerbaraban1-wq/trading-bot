@@ -247,7 +247,8 @@ async def answer_callback_query(callback_id: str, text: str = "") -> bool:
         return False
 
 
-async def send_message(text: str, reply_markup: dict | None = None) -> bool:
+async def send_message(text: str, reply_markup: dict | None = None,
+                       force: bool = False) -> bool:
     """
     Send a message to Telegram AND Discord (if configured).
     Returns True if at least one channel succeeded.
@@ -256,9 +257,34 @@ async def send_message(text: str, reply_markup: dict | None = None) -> bool:
         text: HTML-formatted message body.
         reply_markup: Optional inline keyboard. Example:
             {"inline_keyboard": [[{"text": "💲 מחיר", "callback_data": "price:AAPL"}]]}
+        force: If True, bypass anti-spam deduplication (for critical alerts).
 
     Note: Automatically translates English text to Hebrew via translation_service.
+
+    Anti-spam: drops messages identical to one sent in the last 90 seconds
+    (unless force=True). Prevents notification fatigue.
     """
+    # ── ANTI-SPAM: dedupe identical messages within 90 seconds ────────────
+    if not force and text:
+        try:
+            import hashlib
+            import time as _spam_t
+            _key = hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
+            if not hasattr(send_message, "_recent_hashes"):
+                send_message._recent_hashes = {}
+            _now = _spam_t.time()
+            # Clean old
+            send_message._recent_hashes = {
+                k: v for k, v in send_message._recent_hashes.items()
+                if _now - v < 90
+            }
+            if _key in send_message._recent_hashes:
+                logger.debug(f"[ANTI-SPAM] Duplicate message dropped (sent {_now - send_message._recent_hashes[_key]:.0f}s ago)")
+                return True   # pretend success — already shown to user
+            send_message._recent_hashes[_key] = _now
+        except Exception as _antispam_err:
+            logger.debug(f"Anti-spam check failed: {_antispam_err}")
+
     # ── AUTO-TRANSLATE TO HEBREW ──────────────────────────────────────────
     # Smart translation: financial glossary first, then Google Translate
     # Preserves: HTML tags, tickers ($AAPL), numbers, percentages, URLs
@@ -1293,20 +1319,30 @@ async def notify_market_summary(
 
 
 async def notify_risk_metrics(
-    sharpe_ratio: float,
-    max_drawdown: float,
-    win_rate: float,
+    sharpe_ratio: float | None,
+    max_drawdown: float | None,
+    win_rate: float | None,
 ) -> None:
-    """📊 Daily risk and performance metrics."""
+    """📊 Daily risk and performance metrics. Tolerates None values gracefully."""
     if not _enabled():
         return
+
+    # Defensive coding: any of the metrics can be None when there's
+    # insufficient trade history yet. Format as "—" instead of crashing.
+    def _fmt(value, suffix: str = "", sign: str = "", decimals: int = 2) -> str:
+        if value is None:
+            return "—"
+        try:
+            return f"{sign}{float(value):.{decimals}f}{suffix}"
+        except (TypeError, ValueError):
+            return "—"
 
     await send_message(
         f"📊 <b>מדדי סיכון וביצועים</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"🎯 Sharpe Ratio: <b>{sharpe_ratio:.2f}</b>\n"
-        f"📉 Max Drawdown: <b>-{max_drawdown:.1f}%</b>\n"
-        f"✅ Win Rate: <b>{win_rate:.1f}%</b>\n"
+        f"🎯 Sharpe Ratio: <b>{_fmt(sharpe_ratio, decimals=2)}</b>\n"
+        f"📉 Max Drawdown: <b>{_fmt(max_drawdown, suffix='%', sign='-', decimals=1)}</b>\n"
+        f"✅ Win Rate: <b>{_fmt(win_rate, suffix='%', decimals=1)}</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"<i>מדדים טובים = סחירות בטוחות יותר</i>"
     )

@@ -40,13 +40,15 @@ def flush_database():
 
 
 def check_database_integrity():
-    """Verify database integrity and log status on startup."""
+    """Verify database integrity. If corrupt, attempts auto-recovery (backup + recreate)."""
     conn = get_connection()
     try:
         # Check for database corruption
         result = conn.execute("PRAGMA integrity_check").fetchone()
         if result[0] != "ok":
             logger.warning(f"Database integrity check failed: {result[0]}")
+            # AUTO-RECOVERY: backup corrupt DB and create fresh one
+            _attempt_recovery(reason=str(result[0])[:100])
             return False
 
         # Verify critical tables exist
@@ -65,8 +67,73 @@ def check_database_integrity():
             logger.info("✓ Database OK | No heartbeat history yet")
 
         return True
+    except sqlite3.DatabaseError as e:
+        # File-level corruption (e.g., "database disk image is malformed")
+        logger.error(f"Database corruption detected: {e}")
+        _attempt_recovery(reason=str(e)[:100])
+        return False
     except Exception as e:
         logger.error(f"Database integrity check failed: {e}")
+        return False
+
+
+def _attempt_recovery(reason: str) -> bool:
+    """Backup corrupt DB and create fresh one. Returns True on success."""
+    try:
+        from pathlib import Path
+        import shutil, datetime
+        db_path = Path(settings.DATABASE_PATH)
+        if not db_path.exists():
+            return False
+
+        # Backup with timestamp
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = db_path.parent / f"trading_CORRUPT_{ts}.db"
+        try:
+            close_connections()  # release file lock
+        except Exception:
+            pass
+        shutil.copy(str(db_path), str(backup_path))
+        logger.warning(f"[RECOVERY] Backed up corrupt DB → {backup_path.name}")
+
+        # Delete corrupt file (next get_connection will recreate it)
+        try:
+            db_path.unlink()
+            # Also remove WAL/SHM
+            (db_path.parent / (db_path.name + "-wal")).unlink(missing_ok=True)
+            (db_path.parent / (db_path.name + "-shm")).unlink(missing_ok=True)
+        except Exception as e:
+            logger.error(f"[RECOVERY] Failed to remove corrupt files: {e}")
+            return False
+
+        logger.warning(f"[RECOVERY] Fresh database will be created on next access (reason: {reason})")
+
+        # Send Telegram alert
+        try:
+            import os, requests
+            token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+            chat = os.getenv("TELEGRAM_CHAT_ID", "")
+            if token and chat:
+                requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": chat,
+                        "text": (
+                            f"🔴 <b>DATABASE RECOVERY</b>\n"
+                            f"מסד הנתונים היה פגום ושוחזר.\n"
+                            f"גיבוי: <code>{backup_path.name}</code>\n"
+                            f"סיבה: <code>{reason[:80]}</code>"
+                        ),
+                        "parse_mode": "HTML",
+                    },
+                    timeout=5,
+                )
+        except Exception:
+            pass
+
+        return True
+    except Exception as e:
+        logger.critical(f"[RECOVERY] Failed: {e}")
         return False
 
 

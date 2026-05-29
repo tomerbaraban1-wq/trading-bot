@@ -51,11 +51,52 @@ _price_alerts_fired: set = set()
 # Prevents double-sell if watermark DB write fails
 _partial_sell_done: set[str] = set()  # "trade_id:stage" strings
 
+# Safety valve: max background tasks to prevent runaway accumulation
+# If we hit this limit, oldest tasks are forcibly cancelled.
+_MAX_BACKGROUND_TASKS = 200
+
+
 def _create_background_task(coro):
-    """Create a background task and track it to prevent garbage collection."""
+    """
+    Create a background task and track it to prevent garbage collection.
+
+    Also ALWAYS retrieves exceptions so they don't propagate as
+    "Task exception was never retrieved" errors that pollute logs.
+
+    Includes safety valve: if too many background tasks accumulate
+    (indicates a backlog/leak), cancel the oldest to prevent OOM.
+    """
+    # Safety valve: if we're accumulating too many tasks, something is wrong
+    # Cancel oldest tasks to prevent memory blowup
+    if len(_background_tasks) >= _MAX_BACKGROUND_TASKS:
+        logger.warning(
+            f"[BG_TASK] OVERFLOW: {len(_background_tasks)} background tasks "
+            f"accumulated. Cancelling oldest to prevent memory leak."
+        )
+        # Cancel oldest 50 tasks (those that haven't completed)
+        cancelled = 0
+        for old_task in list(_background_tasks)[:50]:
+            if not old_task.done():
+                old_task.cancel()
+                cancelled += 1
+        logger.warning(f"[BG_TASK] Cancelled {cancelled} stale tasks")
+
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        # Retrieve and log any exception — never let it bubble up unhandled
+        if not t.cancelled():
+            exc = t.exception()
+            if exc is not None:
+                # Log the error so we know about it, but don't crash
+                logger.error(
+                    f"[BG_TASK] Background task failed silently: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+    task.add_done_callback(_on_done)
     return task
 
 
@@ -130,9 +171,16 @@ async def keep_alive_loop():
 
 async def heartbeat_loop():
     """Background task: log heartbeat every N minutes."""
+    # First iteration: send initial Telegram status quickly (90s after startup)
+    # instead of waiting full HEARTBEAT_INTERVAL_MINUTES (5 min default).
+    _first = True
     while True:
         try:
-            await asyncio.sleep(settings.HEARTBEAT_INTERVAL_MINUTES * 60)
+            if _first:
+                await asyncio.sleep(90)   # 90s on first run — quick "I'm alive" message
+                _first = False
+            else:
+                await asyncio.sleep(settings.HEARTBEAT_INTERVAL_MINUTES * 60)
 
             # Timeout guards prevent heartbeat from hanging indefinitely on slow I/O
             try:
@@ -158,11 +206,109 @@ async def heartbeat_loop():
                 notes=f"Open: {[t['ticker'] for t in open_trades]}" if open_trades else "No open positions",
             )
 
+            equity = status.get('positions_value', 0) + status.get('cash_available', 0)
+            budget_pct = status.get('budget_used_pct', 0)
             logger.info(
                 f"HEARTBEAT: {len(open_trades)} positions | "
-                f"Budget: {status.get('budget_used_pct', 0):.1f}% used | "
-                f"Equity: ${status.get('positions_value', 0) + status.get('cash_available', 0):,.2f}"
+                f"Budget: {budget_pct:.1f}% used | "
+                f"Equity: ${equity:,.2f}"
             )
+
+            # ── CONCENTRATION RISK CHECK: warn if any position > 25% of portfolio ──
+            try:
+                if not hasattr(heartbeat_loop, '_concentration_warned'):
+                    heartbeat_loop._concentration_warned = set()
+                if open_trades and equity > 0:
+                    for t in open_trades:
+                        try:
+                            tk = t.get("ticker", "")
+                            qty = float(t.get("qty") or 0)
+                            entry = float(t.get("entry_price") or 0)
+                            # Use entry price * qty as conservative estimate
+                            pos_value = qty * entry
+                            pct = pos_value / equity * 100
+                            if pct >= 25 and tk not in heartbeat_loop._concentration_warned:
+                                heartbeat_loop._concentration_warned.add(tk)
+                                _create_background_task(send_message(
+                                    f"⚠️ <b>אזעקת ריכוז: {tk}</b>\n"
+                                    f"━━━━━━━━━━━━━━━━\n"
+                                    f"📊 הפוזיציה מהווה <b>{pct:.0f}%</b> מהתיק\n"
+                                    f"💰 שווי: ${pos_value:,.0f}\n"
+                                    f"💼 תיק כולל: ${equity:,.0f}\n"
+                                    f"\n"
+                                    f"💡 שקול לקצץ — ביצי כל התיק בסל אחד = סיכון גבוה"
+                                ))
+                            # Clear warning if dropped below 20%
+                            elif pct < 20 and tk in heartbeat_loop._concentration_warned:
+                                heartbeat_loop._concentration_warned.discard(tk)
+                        except Exception:
+                            continue
+            except Exception as _conc_err:
+                logger.debug(f"Concentration check failed: {_conc_err}")
+
+            # ── Telegram heartbeat: send status periodically ──────────
+            # Frequency adapts to market state:
+            #   - Market open:   every 20 min (more activity to report)
+            #   - Market closed: every 45 min (training/learning updates)
+            try:
+                if not hasattr(heartbeat_loop, '_tg_last'):
+                    heartbeat_loop._tg_last = 0
+                if not hasattr(heartbeat_loop, '_first_sent'):
+                    heartbeat_loop._first_sent = False
+                import time as _hb_time
+                _now = _hb_time.time()
+
+                _is_market_open = False
+                try:
+                    _is_market_open = broker.is_market_open()
+                except Exception:
+                    pass
+
+                # Send first heartbeat 90s after startup, then on adaptive interval
+                _interval = 1200 if _is_market_open else 2700   # 20m / 45m
+                _send_now = (
+                    not heartbeat_loop._first_sent
+                    or _now - heartbeat_loop._tg_last >= _interval
+                )
+
+                if _send_now:
+                    heartbeat_loop._tg_last = _now
+                    heartbeat_loop._first_sent = True
+                    _mkt = "🟢 פתוח" if _is_market_open else "🔴 סגור"
+                    _pos_names = ", ".join(t['ticker'] for t in open_trades[:10]) if open_trades else "אין"
+                    _pnl = status.get('open_pnl', 0)
+                    _pnl_icon = "📈" if _pnl >= 0 else "📉"
+                    _cash = status.get('cash_available', 0)
+
+                    # Activity context: what is the bot actually doing right now?
+                    if _is_market_open:
+                        _activity = f"🔍 סורק מניות כל {settings.SCAN_INTERVAL_MIN} דק' — מחפש הזדמנויות"
+                    else:
+                        _activity = "🧠 מתאמן על היסטוריית מסחר ולומד דפוסים"
+
+                    # Israel time for context
+                    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+                    _il_now = _dt2.now(_tz2.utc) + _td2(hours=3)
+                    _time_str = _il_now.strftime("%H:%M")
+
+                    _hb_msg = (
+                        f"💓 <b>הבוט פעיל ועובד</b>  <i>({_time_str})</i>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"{_activity}\n"
+                        f"\n"
+                        f"🕐 שוק: {_mkt}\n"
+                        f"💰 מזומן זמין: ${_cash:,.0f}\n"
+                        f"📂 פוזיציות פתוחות ({len(open_trades)}): {_pos_names}\n"
+                        f"{_pnl_icon} רווח/הפסד פתוח: ${_pnl:+,.2f}\n"
+                        f"💼 שווי תיק: ${equity:,.0f}\n"
+                        f"⚙️ תקציב בשימוש: {budget_pct:.0f}%\n"
+                        f"\n"
+                        f"💡 שלח /help לרשימת כל הפקודות"
+                    )
+                    _create_background_task(send_message(_hb_msg))
+                    logger.info(f"[HEARTBEAT-TG] Sent status update (next in {_interval//60} min)")
+            except Exception as _hb_err:
+                logger.debug(f"Heartbeat TG notify skipped: {_hb_err}")
 
         except asyncio.CancelledError:
             raise
@@ -433,6 +579,63 @@ async def _close_position(
     # cause _close_position to return False (trade is already closed in broker+DB)
     _create_background_task(notify_sell(ticker, exit_price, pnl_gross, label))
 
+    # ── AUTO TRADE JOURNAL: post-mortem after every closed trade ─────────
+    # Sends analysis of what worked / what didn't so you can learn from each trade
+    try:
+        from trade_journal import analyze_closed_trade
+        _create_background_task(analyze_closed_trade(trade, exit_price, pnl_gross, status))
+    except ImportError:
+        # Fallback — send simple journal if analyze_closed_trade doesn't exist
+        async def _simple_journal():
+            try:
+                from telegram_bot import send_message as _sm
+                won = pnl_gross > 0
+                ret_pct = (exit_price - float(trade.get("entry_price") or exit_price)) / float(trade.get("entry_price") or exit_price) * 100 if trade.get("entry_price") else 0
+                icon = "🟢" if won else "🔴"
+                _exit_labels = {
+                    "stop_loss": "🛑 Stop Loss",
+                    "take_profit": "🎯 Take Profit",
+                    "time_exit": "⏱ יציאת זמן",
+                    "momentum_exit": "⚡ מומנטום",
+                    "smart_sell": "🧠 Smart Sell",
+                }
+                _label = _exit_labels.get(status, status)
+                _hold = 0.0
+                try:
+                    from datetime import datetime, timezone as _tz3
+                    _et = trade.get("entry_time")
+                    if _et:
+                        _ed = datetime.fromisoformat(str(_et)[:19]).replace(tzinfo=_tz3.utc)
+                        _hold = (datetime.now(_tz3.utc) - _ed).total_seconds() / 3600
+                except Exception:
+                    pass
+                rsi_str = f" | RSI: {trade.get('rsi', '?'):.0f}" if trade.get("rsi") else ""
+                vol_str = f" | Vol: {trade.get('volume_ratio', '?'):.1f}x" if trade.get("volume_ratio") else ""
+                await _sm(
+                    f"{icon} <b>יומן: {ticker}</b>\n"
+                    f"━━━━━━━━━━━━━━━━\n"
+                    f"💰 {'רווח' if won else 'הפסד'}: <b>${abs(pnl_gross):,.2f}</b> ({ret_pct:+.1f}%)\n"
+                    f"⏱ החזקה: {_hold:.1f}h  |  {_label}\n"
+                    f"📊 כניסה: ${float(trade.get('entry_price',0)):.2f} → ${exit_price:.2f}{rsi_str}{vol_str}"
+                )
+            except Exception:
+                pass
+        _create_background_task(_simple_journal())
+
+    # ── SMART RE-ENTRY: record stop-out for future cooldown ──────────────
+    # Only track stop_loss exits — not profit-takes or time exits
+    if status == "stop_loss" and pnl_gross < 0:
+        try:
+            from smart_reentry import mark_stopout
+            mark_stopout(
+                ticker=ticker,
+                stop_price=exit_price,
+                original_score=float(trade.get("score") or 0),
+                original_rsi=float(trade.get("rsi") or 50),
+            )
+        except Exception as _re_err:
+            logger.debug(f"Re-entry mark failed: {_re_err}")
+
     # Cleanup per-ticker state so re-entry into the same ticker works correctly
     _smart_sell_last_check.pop(ticker, None)
     _position_alert_sent.pop(ticker, None)
@@ -442,6 +645,12 @@ async def _close_position(
     if _trade_id:
         _partial_sell_done.discard(f"{_trade_id}:s1")
         _partial_sell_done.discard(f"{_trade_id}:s2")
+        # Clean up position-scaler state (pyramid tracking) to prevent memory growth
+        try:
+            from position_scaler import cleanup_old_trade
+            cleanup_old_trade(_trade_id)
+        except Exception:
+            pass
 
     return True
 
@@ -555,7 +764,8 @@ async def stop_loss_monitor():
                             _em = "🟢" if _pl >= 0 else "🔴"
                             _atr_s = trade.get("atr_stop_price")
                             _stop_line = f"\n🛑 Stop: ${_atr_s:.2f} ({((cur_price-_atr_s)/cur_price*100):.1f}% מרחק)" if _atr_s else ""
-                            asyncio.create_task(send_message(
+                            # Use _create_background_task to retrieve exceptions silently
+                            _create_background_task(send_message(
                                 f"{_em} <b><a href=\"{_tv}\">{ticker}</a></b>  {plpc:+.1f}%  ${_pl:+.2f}{_stop_line}"
                             ))
                     except Exception:
@@ -891,6 +1101,26 @@ async def stop_loss_monitor():
                                     f"יציאה לפי זמן ({hours_held:.1f} שעות, רווח {plpc:+.1f}%)",
                                 )
                                 continue
+
+                            # ── SMART TIME EXIT: Exit FLAT positions early to free capital ────
+                            # If position has been "going nowhere" (-1% to +1%) for 48h,
+                            # close it and free the capital for better opportunities.
+                            # Historic data: COP held 197h → -$65, KO held 170h → -$2 (flat too long)
+                            _smart_exit_hours = float(_os.getenv("SMART_TIME_EXIT_HOURS", "48"))
+                            if (
+                                hours_held >= _smart_exit_hours
+                                and -1.0 <= plpc <= 1.0
+                                and hours_held < effective_max_hold
+                            ):
+                                logger.info(
+                                    f"[SMART TIME EXIT] {ticker}: held {hours_held:.1f}h "
+                                    f"flat (PnL={plpc:+.2f}%) — releasing capital"
+                                )
+                                await _close_position(
+                                    trade, cur_price, "time_exit",
+                                    f"יציאה חכמה — {hours_held:.0f}h שטוח ({plpc:+.1f}%)",
+                                )
+                                continue
                         except Exception as te:
                             logger.debug(f"[TIME EXIT] {ticker}: parse error: {te}")
 
@@ -1097,9 +1327,13 @@ async def stop_loss_monitor():
                     #   Stage 1 — sell 50% at 50% of ATR TP
                     #   Stage 2 — sell 25% (of original) at 80% of ATR TP
                     #   Stage 3 — sell remaining 25% at full ATR TP
-                    # MAX WIN-RATE MODE: lock in at +1.5%, second lock at +4%
-                    _stage1_pct = max(1.5, _atr_tp_pct * 0.15)  # 15% of full TP (≈1.5-2%)
-                    _stage2_pct = max(3.0, _atr_tp_pct * 0.35)  # 35% of full TP (≈4-5%)
+                    # PROFIT MAXIMIZATION MODE: raised stages from 1.5%/3% → 3%/6%
+                    # With 42.9% win rate, we need R/R > 2:1 to be profitable.
+                    # Stop loss 3.5% × R/R 2 = 7% avg win needed.
+                    # Old: stages 1.5/3% gave avg win = 0.5×1.5 + 0.5×4 = 2.75% → R/R 0.79 (NEGATIVE EV!)
+                    # New: stages 3/6% gives avg win = 0.3×3 + 0.4×6 + 0.3×10 = 6.3% → R/R 1.80 (POSITIVE EV)
+                    _stage1_pct = max(3.0, _atr_tp_pct * 0.25)  # 3% min (was 1.5%) — let winners breathe
+                    _stage2_pct = max(6.0, _atr_tp_pct * 0.50)  # 6% min (was 3%) — capture more upside
                     # Stage 1 is considered done when the high_watermark already reached
                     # the stage-1 level (price was above it at some point and partial was taken)
                     _stage1_done = bool(trade.get("high_watermark") and
@@ -1365,6 +1599,25 @@ async def stop_loss_monitor():
                                 notify_error("stop_loss_fail", ticker, f"מכירה חכמה נכשלה")
                             )
 
+                    # ── PYRAMID UP: scale-in to winners (+3%, +7%) ──────
+                    # Only triggers on positions making strong gains AND score is still high.
+                    # Adds 50% then 25% — never more than 175% of original size.
+                    # Cooldown 4h between scale-ins. Daily P&L must be positive.
+                    try:
+                        # Re-fetch composite score (might be cached)
+                        _scale_score = comp if "comp" in dir() else 70
+                        from position_scaler import execute_scale_in
+                        _scaled = await asyncio.wait_for(
+                            execute_scale_in(trade, cur_price, _scale_score),
+                            timeout=30,
+                        )
+                        if _scaled:
+                            logger.info(f"[SCALE-IN] {ticker}: pyramid step executed @ ${cur_price:.2f}")
+                    except asyncio.TimeoutError:
+                        logger.debug(f"[SCALE-IN] {ticker}: timed out — skip")
+                    except Exception as _sc_err:
+                        logger.debug(f"[SCALE-IN] {ticker}: check failed: {_sc_err}")
+
                 except Exception as e:
                     logger.error(f"Stop loss monitor error for {ticker}: {e}")
                     _create_background_task(notify_error("stop_loss_fail", ticker, f"שגיאה"))
@@ -1419,8 +1672,32 @@ async def auto_invest_loop():
                 logger.warning("AUTO-INVEST: is_market_open timed out — skipping scan")
                 await asyncio.sleep(5 * 60)
                 continue
+            # ── Detect MARKET STATE TRANSITIONS (closed→open or open→closed) ──
+            try:
+                if not hasattr(auto_invest_loop, '_last_market_open'):
+                    auto_invest_loop._last_market_open = None
+                _prev_state = auto_invest_loop._last_market_open
+                if _prev_state is not None and _prev_state != mkt_open:
+                    # State CHANGED — broadcast it
+                    from activity_broadcaster import announce_market_open, announce_market_closed
+                    if mkt_open:
+                        _create_background_task(announce_market_open())
+                        logger.info("[STATE] Market just OPENED — broadcasting")
+                    else:
+                        _create_background_task(announce_market_closed())
+                        logger.info("[STATE] Market just CLOSED — broadcasting")
+                auto_invest_loop._last_market_open = mkt_open
+            except Exception as _trans_err:
+                logger.debug(f"Market state transition check failed: {_trans_err}")
+
             if not mkt_open:
                 logger.info("AUTO-INVEST: Market is closed, skipping scan")
+                # Periodic "market closed" reminder via broadcaster (throttled to 1/hour)
+                try:
+                    from activity_broadcaster import announce_market_closed
+                    _create_background_task(announce_market_closed())
+                except Exception:
+                    pass
                 await asyncio.sleep(5 * 60)
                 continue
 
@@ -1437,16 +1714,25 @@ async def auto_invest_loop():
                 _et_now   = _now_et()
                 _et_hour  = _et_now.hour
                 _et_min   = _et_now.minute
-                _minutes_since_open  = (_et_hour - 9) * 60 + _et_min - 30   # since 9:30 ET
-                _minutes_before_close = (16 * 60) - (_et_hour * 60 + _et_min)  # to 4:00 ET
-                # OPTIMIZED: block only first 15 min (volatile spread) + last 15 min (EOD)
-                if _minutes_since_open < 15:
-                    logger.info(f"AUTO-INVEST: First 15 min ({_et_hour:02d}:{_et_min:02d} ET) — skipping (wide spreads)")
-                    await asyncio.sleep(5 * 60)
+                _et_total_min = _et_hour * 60 + _et_min                # 0–1439
+                _regular_open_min  = 9 * 60 + 30                       # 9:30 ET
+                _regular_close_min = 16 * 60                           # 16:00 ET
+                _minutes_since_open  = _et_total_min - _regular_open_min
+                _minutes_before_close = _regular_close_min - _et_total_min
+
+                # The first/last 15 min filter applies ONLY during regular hours
+                # (9:30–16:00 ET). During pre-market (4:00–9:30) and after-hours
+                # (16:00–20:00), allow trading without these spread guards.
+                _is_regular_hours = _regular_open_min <= _et_total_min < _regular_close_min
+
+                # FIX: was 15min — too restrictive. Reduced to 5min so bot can trade more.
+                if _is_regular_hours and 0 <= _minutes_since_open < 5:
+                    logger.info(f"AUTO-INVEST: First 5 min ({_et_hour:02d}:{_et_min:02d} ET) — skipping (wide spreads)")
+                    await asyncio.sleep(2 * 60)
                     continue
-                if _minutes_before_close < 15:
-                    logger.info(f"AUTO-INVEST: Last 15 min before close — skipping (EOD volatility)")
-                    await asyncio.sleep(5 * 60)
+                if _is_regular_hours and 0 < _minutes_before_close < 5:
+                    logger.info(f"AUTO-INVEST: Last 5 min before close — skipping (EOD volatility)")
+                    await asyncio.sleep(2 * 60)
                     continue
             except Exception:
                 pass
@@ -1462,15 +1748,68 @@ async def auto_invest_loop():
                     await asyncio.sleep(5 * 60)
                     continue
                 _vix = _mkt.get("vix")
-                # MAX-WIN MODE: was 30 (extreme fear), now 22 (mild fear) — only calm markets
-                if _vix and _vix > 22:
-                    logger.info(f"AUTO-INVEST: VIX={_vix:.1f} too high for max-win mode (max 22) — skipping buys")
+                # Allow trades up to VIX=28 (was 22) — current market needs flexibility
+                if _vix and _vix > 28:
+                    logger.info(f"AUTO-INVEST: VIX={_vix:.1f} too high (max 28) — skipping buys")
                     await asyncio.sleep(5 * 60)
                     continue
             except asyncio.TimeoutError:
                 logger.warning("AUTO-INVEST: market conditions timeout — proceeding fail-open")
             except Exception as _mkt_e:
                 logger.debug(f"AUTO-INVEST: market conditions error ({type(_mkt_e).__name__}) — proceeding fail-open")
+
+            # ══════════════════════════════════════════════════════════════════
+            # INSTITUTIONAL FILTER 1: Time-of-day filter
+            # Avoid first/last X min of session — volatile, often false moves
+            # ══════════════════════════════════════════════════════════════════
+            try:
+                from trading_hours import _now_et
+                from datetime import time as _time
+                _now_et_obj = _now_et()
+                _hm = _now_et_obj.hour * 60 + _now_et_obj.minute
+                _market_open = 9 * 60 + 30   # 9:30 AM ET
+                _market_close = 16 * 60      # 4:00 PM ET
+                _avoid_first = settings.AVOID_FIRST_MINUTES
+                _avoid_last  = settings.AVOID_LAST_MINUTES
+
+                if _market_open <= _hm < _market_open + _avoid_first:
+                    logger.info(f"AUTO-INVEST: Skipping — within first {_avoid_first} min of open (volatile)")
+                    await asyncio.sleep(60)
+                    continue
+                if _market_close - _avoid_last <= _hm < _market_close:
+                    logger.info(f"AUTO-INVEST: Skipping — within last {_avoid_last} min of close (volatile)")
+                    await asyncio.sleep(60)
+                    continue
+            except Exception:
+                pass  # fail-open
+
+            # ══════════════════════════════════════════════════════════════════
+            # INSTITUTIONAL FILTER 2: Portfolio Heat
+            # Sum of all open position risks ≤ MAX_PORTFOLIO_HEAT_PCT
+            # Prevents over-exposure even with many small positions
+            # ══════════════════════════════════════════════════════════════════
+            try:
+                _open_trades = await asyncio.to_thread(database.get_open_trades)
+                if _open_trades:
+                    _acct = await asyncio.wait_for(asyncio.to_thread(broker.get_account), timeout=10)
+                    _equity = float(_acct.get("equity", 0))
+                    if _equity > 0:
+                        _total_risk_usd = sum(
+                            float(t.get("qty", 0)) * float(t.get("entry_price", 0)) * (settings.STOP_LOSS_PCT / 100)
+                            for t in _open_trades
+                        )
+                        _heat_pct = (_total_risk_usd / _equity) * 100
+                        if _heat_pct >= settings.MAX_PORTFOLIO_HEAT_PCT:
+                            logger.info(
+                                f"AUTO-INVEST: Portfolio heat {_heat_pct:.1f}% ≥ "
+                                f"max {settings.MAX_PORTFOLIO_HEAT_PCT}% — no new entries"
+                            )
+                            await asyncio.sleep(3 * 60)
+                            continue
+                        else:
+                            logger.debug(f"[HEAT] Portfolio risk: {_heat_pct:.1f}% / {settings.MAX_PORTFOLIO_HEAT_PCT}%")
+            except Exception as _heat_err:
+                logger.debug(f"[HEAT] check skipped: {_heat_err}")
 
             # ── Event Memory: record today + read scenario signal (with timeouts) ──
             try:
@@ -1815,6 +2154,102 @@ async def auto_invest_loop():
                             log_ticker(ticker, score, False, f"RSI={_rsi_chk:.0f} — overbought")
                             return None
 
+                        # ── LOSS PREVENTION: Skip downtrending entries (RSI too low) ────
+                        # Data shows: losing trades had avg RSI 39, winners had RSI 50+
+                        # Stocks already in downtrend rarely reverse without volume catalyst
+                        _min_rsi = float(_os.getenv("MIN_RSI_FOR_ENTRY", "45"))
+                        if _rsi_chk < _min_rsi:
+                            logger.info(f"AUTO-INVEST: {ticker} RSI {_rsi_chk:.0f} < {_min_rsi:.0f} — downtrending, skipping")
+                            log_ticker(ticker, score, False, f"RSI={_rsi_chk:.0f} — מגמת ירידה")
+                            return None
+
+                        # ── BLACKLIST: Commodity ETFs (consistently lost in our history) ────
+                        # GLD/GDX/SLV/USO etc — too volatile + macro-driven (not technical)
+                        _BLACKLISTED_TICKERS = {
+                            "GLD", "GDX", "SLV", "SLVR", "USO", "UNG", "OIH", "XOP",
+                            "DBA", "DBC", "PDBC", "GDXJ", "SIL", "PALL", "PPLT",
+                            "UCO", "BNO", "WEAT", "CORN", "SOYB",
+                        }
+                        if ticker in _BLACKLISTED_TICKERS:
+                            logger.info(f"AUTO-INVEST: {ticker} — commodity ETF, blacklisted")
+                            log_ticker(ticker, score, False, "ETF סחורות — חסום")
+                            return None
+
+                        # ── SECTOR DIVERSIFICATION: max 2 open positions per sector ────
+                        try:
+                            _open_for_sector = await _asyncio.to_thread(database.get_open_trades)
+                            if _open_for_sector and len(_open_for_sector) >= 2:
+                                # Build a simple sector map for tickers we already hold
+                                _SECTOR_MAP = {
+                                    # Tech
+                                    "AAPL": "tech", "MSFT": "tech", "GOOGL": "tech", "GOOG": "tech",
+                                    "META": "tech", "NVDA": "tech", "AMD": "tech", "INTC": "tech",
+                                    "MU": "tech", "QCOM": "tech", "AVGO": "tech", "CRM": "tech",
+                                    "ORCL": "tech", "ADBE": "tech", "NOW": "tech", "SAP": "tech",
+                                    # Consumer
+                                    "AMZN": "consumer", "TSLA": "consumer", "WMT": "consumer",
+                                    "HD": "consumer", "MCD": "consumer", "NKE": "consumer",
+                                    "SBUX": "consumer", "TGT": "consumer", "LOW": "consumer",
+                                    # Healthcare
+                                    "JNJ": "health", "PFE": "health", "LLY": "health",
+                                    "UNH": "health", "MRK": "health", "ABBV": "health", "XLV": "health",
+                                    # Finance
+                                    "JPM": "finance", "BAC": "finance", "WFC": "finance",
+                                    "GS": "finance", "MS": "finance", "V": "finance", "MA": "finance",
+                                    # Energy
+                                    "XOM": "energy", "CVX": "energy", "COP": "energy",
+                                    "SLB": "energy", "OXY": "energy",
+                                    # Staples
+                                    "KO": "staples", "PEP": "staples", "PG": "staples",
+                                    "COST": "staples", "PM": "staples",
+                                }
+                                _new_sector = _SECTOR_MAP.get(ticker)
+                                if _new_sector:
+                                    _count_in_sector = sum(
+                                        1 for t in _open_for_sector
+                                        if _SECTOR_MAP.get(t.get("ticker", "")) == _new_sector
+                                    )
+                                    if _count_in_sector >= 2:
+                                        logger.info(f"AUTO-INVEST: {ticker} — already 2 in {_new_sector} sector, skipping")
+                                        log_ticker(ticker, score, False, f"דיברסיפיקציה: 2 כבר ב-{_new_sector}")
+                                        return None
+                        except Exception as _div_err:
+                            logger.debug(f"Sector diversification check failed: {_div_err}")
+
+                        # ── CORRELATION FILTER: skip candidates highly correlated with open positions ──
+                        # Prevents double-exposure (e.g., holding AMD + NVDA both = same risk)
+                        try:
+                            from correlation_filter import is_too_correlated
+                            _open_now = await _asyncio.to_thread(database.get_open_trades)
+                            _open_tickers_list = [t.get("ticker") for t in (_open_now or []) if t.get("ticker")]
+                            if _open_tickers_list:
+                                _too_corr, _corr_reason = await _asyncio.to_thread(
+                                    is_too_correlated, ticker, _open_tickers_list
+                                )
+                                if _too_corr:
+                                    logger.info(f"AUTO-INVEST: {ticker} — {_corr_reason}, skipping")
+                                    log_ticker(ticker, score, False, f"מתאם גבוה: {_corr_reason}")
+                                    return None
+                        except Exception as _corr_err:
+                            logger.debug(f"Correlation check failed: {_corr_err}")
+
+                        # ── SMART RE-ENTRY GUARD: blocked if recently stopped-out & not recovered ──
+                        # Prevents bot from chasing a stock that just hit stop-loss
+                        try:
+                            from smart_reentry import should_reenter
+                            _allow_re, _re_reason = should_reenter(
+                                ticker=ticker,
+                                current_price=price,
+                                current_score=score,
+                                current_rsi=_rsi_chk,
+                            )
+                            if not _allow_re:
+                                logger.info(f"AUTO-INVEST: {ticker} — re-entry blocked: {_re_reason}")
+                                log_ticker(ticker, score, False, f"Re-entry: {_re_reason}")
+                                return None
+                        except Exception as _re_err:
+                            logger.debug(f"Re-entry check failed: {_re_err}")
+
                         # AI Score Enhancement
                         try:
                             from score_enhancer import enhance_score as _enhance_score
@@ -1839,6 +2274,9 @@ async def auto_invest_loop():
                             pass
 
                         # Buffett Quality Filter
+                        # FIX: When yfinance fails (401 errors), Buffett score = 0-15 even for
+                        # top-quality stocks (ORCL, CRWD, AMAT). We now detect "data-missing"
+                        # cases (score < 20) and treat them as neutral rather than blocking.
                         _buffett_score = 50
                         try:
                             from buffett_analysis import get_buffett_analysis as _bff
@@ -1846,8 +2284,15 @@ async def auto_invest_loop():
                                 _asyncio.to_thread(_bff, ticker), timeout=15
                             )
                             _buffett_score = _buf.get("score", 50)
-                            if _buffett_score < 50:
-                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar — skip")
+
+                            # Detect yfinance data-missing case (score < 20 = no fundamentals returned)
+                            # Skip the Buffett filter entirely in this case — score is unreliable
+                            if _buffett_score < 20:
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} likely data-missing (yfinance) — bypass filter")
+                                _buffett_score = 50  # treat as neutral
+                            elif _buffett_score < 35:
+                                # Genuinely weak fundamentals — block
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar (35) — skip")
                                 log_ticker(ticker, score, False, f"Buffett {_buffett_score:.0f}/100 — איכות נמוכה")
                                 return None
                         except Exception:
@@ -1860,8 +2305,10 @@ async def auto_invest_loop():
                         elif hasattr(sentiment, 'score') and sentiment.score >= 8:
                             _news_boost = 5
                         _effective_score = score + _news_boost
-                        if _effective_score < 60:
-                            log_ticker(ticker, score, False, f"ציון {_effective_score:.0f} < 60")
+                        # Use config MIN_BUY_SCORE (not hard-coded 60) — was blocking all candidates
+                        _min_required = settings.MIN_BUY_SCORE
+                        if _effective_score < _min_required:
+                            log_ticker(ticker, score, False, f"ציון {_effective_score:.0f} < {_min_required}")
                             return None
 
                         # Intraday momentum — don't buy falling knife
@@ -1940,9 +2387,16 @@ async def auto_invest_loop():
                         logger.debug(f"AUTO-INVEST: {ticker} parallel score failed — {type(_err).__name__}")
                         return None
 
-                # ── סריקה מקבילית — כל המועמדים בו-זמנית ──────────────────────
+                # ── סריקה מקבילית — מוגבלת ל-N בו-זמנית ───────────────────────
+                # LIGHTER: cap concurrency (4 cores) so a scan doesn't spike CPU to
+                # ~340% / 100 threads. Same tickers, same decisions — just throttled.
+                _scan_conc = max(1, int(_os.getenv("SCAN_CONCURRENCY", "4")))
+                _scan_sem = _asyncio.Semaphore(_scan_conc)
+                async def _bounded_score(_tk):
+                    async with _scan_sem:
+                        return await _score_candidate(_tk)
                 _parallel_results = await _asyncio.gather(
-                    *[_score_candidate(t) for t in candidates],
+                    *[_bounded_score(t) for t in candidates],
                     return_exceptions=False
                 )
                 _scored_candidates = [r for r in _parallel_results if r is not None]
@@ -2031,7 +2485,8 @@ async def auto_invest_loop():
                             logger.debug(f"AUTO-INVEST: {ticker} enhancement skipped ({type(_enh_err).__name__})")
 
                         # ── Buffett Quality Filter — MAX-WIN MODE: only quality companies ──
-                        # קונה רק חברות עם Buffett >= 50 (איכות בינונית+)
+                        # FIX: When yfinance fails (401 errors), Buffett score = 0-15 even for
+                        # top-quality stocks (ORCL, CRWD, AMAT). Detect this and bypass filter.
                         _buffett_score = None
                         try:
                             from buffett_analysis import get_buffett_analysis as _bff
@@ -2039,9 +2494,14 @@ async def auto_invest_loop():
                                 _asyncio.to_thread(_bff, ticker), timeout=15
                             )
                             _buffett_score = _buf.get("score", 50)
-                            # STRICTER: was 30, now 50 — require above-average quality
-                            if _buffett_score < 50:
-                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar (50) — skip")
+
+                            # Score < 20 = yfinance data missing → treat as neutral instead of blocking
+                            if _buffett_score < 20:
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} likely data-missing — bypass filter")
+                                _buffett_score = 50  # neutral
+                            elif _buffett_score < 35:
+                                # Genuinely weak fundamentals (>= 20 means yfinance returned data)
+                                logger.info(f"AUTO-INVEST: {ticker} Buffett={_buffett_score:.0f} below quality bar (35) — skip")
                                 continue
                         except Exception:
                             _buffett_score = 50   # neutral if Buffett analysis fails
@@ -2462,6 +2922,18 @@ async def auto_invest_loop():
                             "notional": actual_price * filled_qty,
                         })
 
+                        # Also broadcast per-buy notification (separate from combined msg)
+                        # The broadcaster has priority=IMPORTANT so it ALWAYS sends
+                        try:
+                            from activity_broadcaster import announce_buy
+                            _create_background_task(announce_buy(
+                                ticker=ticker, price=actual_price,
+                                qty=filled_qty, score=score,
+                                reason=f"sentiment={sentiment.score}/10",
+                            ))
+                        except Exception:
+                            pass
+
                     except _asyncio.TimeoutError:
                         # Timeout during scan is normal — just skip this ticker silently.
                         # The bot will retry in the next 5-minute cycle. No Telegram alert needed.
@@ -2500,7 +2972,10 @@ async def auto_invest_loop():
                             if _b != _bought_list[-1]:
                                 lines.append("━━━━━━━━━━━━━━━━")
                         lines.append("━━━━━━━━━━━━━━━━")
-                        lines.append(f"💰 מזומן נותר: {_fp(remaining)}  |  פוזיציות: {_open_count+n}")
+                        # FIX: _open_count was defined only inside the inner _score_candidate
+                        # scope — undefined here. Query the live position count directly.
+                        _pos_now = len(database.get_open_trades() or [])
+                        lines.append(f"💰 מזומן נותר: {_fp(remaining)}  |  פוזיציות: {_pos_now}")
                         _create_background_task(send_message("\n".join(lines)))
                     except Exception as _te:
                         logger.warning(f"[NOTIFY] combined buy message failed: {_te}")
@@ -2513,9 +2988,10 @@ async def auto_invest_loop():
             logger.error(f"AUTO-INVEST loop error: {e}")
             _create_background_task(notify_error("loop_error", "", f"שגיאה ב-auto_invest_loop"))
 
-        # Configurable scan interval — default 4 min (was 5).
-        # Lower = more trade opportunities, faster path to 200 trades.
-        _scan_min = int(_os.getenv("SCAN_INTERVAL_MIN", "4"))
+        # PROFIT OPTIMIZATION: scan interval reduced 4→3 min.
+        # 33% more scans per day = 33% more profit opportunities.
+        # During market hours: 6.5h × 60 / 3 = 130 scans/day (was 97/day).
+        _scan_min = int(_os.getenv("SCAN_INTERVAL_MIN", "3"))
         await asyncio.sleep(_scan_min * 60)
 
 
@@ -4581,20 +5057,27 @@ async def market_closed_training_loop():
             _send_telegram_results = now_ts - _last_tg_notify_ts >= 30 * 60
             if _send_telegram_results:
                 _last_tg_notify_ts = now_ts   # update immediately to prevent re-fire on timeout
-                _create_background_task(send_message(
-                    f"🧠 <b>מתחיל אימון — {mode_label}</b>\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"📋 מניות לניתוח:\n"
-                    + "\n".join(f"   • {t}" for t in tickers)
-                    + f"\n\n⏳ מנתח היסטוריה של כל מניה..."
-                ))
+                # Use the broadcaster for consistent throttled messaging
+                try:
+                    from activity_broadcaster import announce_training_start
+                    _create_background_task(announce_training_start(mode_label, tickers))
+                except Exception:
+                    # Fallback to direct send if broadcaster fails to import
+                    _create_background_task(send_message(
+                        f"🧠 <b>מתחיל אימון — {mode_label}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📋 מניות לניתוח:\n"
+                        + "\n".join(f"   • {t}" for t in tickers)
+                        + f"\n\n⏳ מנתח היסטוריה של כל מניה..."
+                    ))
 
             # ── Run general historical backtest on watchlist ──────────────
             result = await asyncio.wait_for(
-                run_backtest(tickers),
+                asyncio.to_thread(run_backtest, tickers),
                 timeout=600  # 10 min max
             )
-            update = await apply_insights()
+            # apply_insights returns a dict synchronously (not a coroutine)
+            update = await asyncio.to_thread(apply_insights)
 
             score_line = (
                 f"🔄 ציון עודכן: {update['old_score']} → <b>{update['new_score']}</b>"
@@ -4656,7 +5139,10 @@ async def market_closed_training_loop():
             logger.error(f"[TRAINING] Training error: {e}")
 
         # Loop: 5 min during market hours, 1 min when closed (cache prevents heavy load)
-        await asyncio.sleep(300 if is_open else 60)
+        # Market open:   5 min (quick learning during active hours)
+        # Market closed: 15 min (no rush — don't hammer yfinance all night)
+        # Previous value of 60s when closed caused 240% CPU usage!
+        await asyncio.sleep(300 if is_open else 900)
 
 
 async def backtest_learning_loop():
@@ -4676,8 +5162,8 @@ async def backtest_learning_loop():
             logger.info("[BACKTEST] Starting weekly historical learning...")
             from backtest_learner import run_backtest, apply_insights
             from scanner import get_watchlist as _gwl
-            result = await run_backtest(_gwl()[:25])
-            update = await apply_insights()
+            result = await asyncio.to_thread(run_backtest, _gwl()[:25])
+            update = await asyncio.to_thread(apply_insights)
             await send_message(
                 f"🎓 <b>למידה מהיסטוריה</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"

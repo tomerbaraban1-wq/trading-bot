@@ -654,12 +654,18 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         1
     )
 
-    # ── Sector Rotation Bonus ─────────────────────────────────────────────
+    # ── Sector Rotation Bonus (data-driven: tech +16.7% leading) ─────────
+    # Top 3 sectors: +8 pts, Lagging sectors: -6 pts
+    # Evidence: tech stocks dominate winning trades in our history
     try:
         from sector_rotation import get_sector_multiplier
         _smult = get_sector_multiplier(ticker)
-        if _smult > 1.0:    composite = min(100, composite + 5)
-        elif _smult < 1.0:  composite = max(0,   composite - 4)
+        if _smult >= 1.20:
+            composite = min(100, composite + 8)
+            logger.debug(f"[SCORE] {ticker}: leading sector boost +8 → {composite}")
+        elif _smult <= 0.85:
+            composite = max(0,   composite - 6)
+            logger.debug(f"[SCORE] {ticker}: lagging sector penalty -6 → {composite}")
     except Exception:
         pass
 
@@ -735,6 +741,40 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
         pass
 
     composite = round(composite, 1)
+
+    # ── PROFIT BOOST: Multi-timeframe momentum scoring (BONUS ONLY) ─────────
+    # FIX V2: Removed the -4 penalty because it dropped ARM/AMD/NOW/ASML by 9-14
+    # points → blocked them from MIN_BUY_SCORE=60. Now: bonus only, no penalty.
+    # This catches momentum WITHOUT punishing recent dips (which are often
+    # buying opportunities for mean-reversion).
+    try:
+        import yfinance as _yf_mom
+        _hist_mom = _yf_mom.Ticker(ticker).history(period="1mo", interval="1d")
+        if len(_hist_mom) >= 20:
+            _closes = _hist_mom["Close"].values
+            _cur = float(_closes[-1])
+            _d5 = float(_closes[-6]) if len(_closes) >= 6 else _cur
+            _d10 = float(_closes[-11]) if len(_closes) >= 11 else _cur
+            _d20 = float(_closes[-21]) if len(_closes) >= 21 else _cur
+
+            _ret_5d = (_cur - _d5) / _d5 * 100 if _d5 > 0 else 0
+            _ret_10d = (_cur - _d10) / _d10 * 100 if _d10 > 0 else 0
+            _ret_20d = (_cur - _d20) / _d20 * 100 if _d20 > 0 else 0
+
+            _positive_count = sum(1 for r in [_ret_5d, _ret_10d, _ret_20d] if r > 0)
+            # BONUS ONLY — no penalties (penalties were too aggressive and blocked all entries)
+            if _positive_count == 3 and _ret_5d > 2:
+                composite = round(min(100, composite + 5), 1)
+                logger.debug(f"[MOMENTUM] {ticker}: 3-TF uptrend → +5")
+            elif _positive_count == 3:
+                composite = round(min(100, composite + 3), 1)
+                logger.debug(f"[MOMENTUM] {ticker}: 3-TF positive → +3")
+            elif _positive_count == 2:
+                # Mixed but trending positive — small bonus
+                composite = round(min(100, composite + 1), 1)
+            # No penalty for negative momentum — could be a dip-buy opportunity
+    except Exception:
+        pass
 
     # ── Pre-Market Gap Adjustment ─────────────────────────────────────────────
     # Only relevant during pre-market / early market (6:00–10:00 AM ET)
@@ -841,17 +881,57 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     # These override the score and block buying regardless of composite_score
     hard_block_reason = _earnings_block_reason  # may already be set from earnings blackout
 
-    # 1. SMA50 hard filter — lesson from 8/8 losses being below SMA50
+    # 1. SMA50 + Golden Cross hard filters (data-driven from own trade history)
+    # Evidence: 60x below SMA50 & 36x SMA50<SMA200 in losing trades
+    # FIX V2: Allow high-score exception (>=70) — like death cross does
+    # This catches quality dips where the price temporarily fell below SMA50
+    # (e.g., CRM at score 55.4 — was getting blocked despite reasonable score)
     if _os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() == "true":
         indicators_for_filter = get_current_indicators(ticker) or {}
-        above_sma50 = indicators_for_filter.get("above_sma50")
+        above_sma50  = indicators_for_filter.get("above_sma50")
         above_sma200 = indicators_for_filter.get("above_sma200")
-        if above_sma50 is False and above_sma200 is False:
-            hard_block_reason = "Death Cross + below SMA50 — trend bearish"
-        elif above_sma50 is False:
-            # Below SMA50: penalise composite by 15 pts but don't hard-block
-            composite = max(0, composite - 15)
-            logger.info(f"[SCORE] {ticker}: below SMA50 → composite discounted to {composite}")
+
+        if above_sma50 is False:
+            # NEW: Allow exception for high-conviction trades (composite >= 70)
+            # Quality companies often dip below SMA50 — these are buying opportunities
+            if composite < 70:
+                hard_block_reason = f"מתחת SMA50 — מגמה יורדת (ציון {composite:.0f} < 70)"
+            else:
+                logger.info(f"[SCORE] {ticker}: below SMA50 BUT score={composite:.0f} ≥70 — allowing dip-buy exception")
+        elif _os.getenv("REQUIRE_GOLDEN_CROSS", "true").lower() == "true" and above_sma200 is False:
+            # Death Cross: SMA50 < SMA200 appeared in 36/36 losing trades
+            # Still allow if score is exceptionally high (≥80) — QCOM won despite death cross
+            if composite < 80:
+                hard_block_reason = f"דת קרוס SMA50<SMA200 — מגמה ארוכת-טווח שלילית (ציון {composite:.0f} < 80)"
+            else:
+                logger.info(f"[SCORE] {ticker}: death cross BUT score={composite:.0f} ≥80 — allowing exception")
+
+    # 1b. Bollinger Band ceiling filter — 24x losses had bb_position > 82%
+    # "קרוב לגג" = price near top of Bollinger Band = stretched, likely to pull back
+    _max_bb = float(_os.getenv("MAX_BB_POSITION", "0.97"))  # raised 0.92→0.97 (market BB at 89-107%, only block extremes)
+    try:
+        _bb_pos = (get_current_indicators(ticker) or {}).get("bb_position")
+        if _bb_pos is not None and float(_bb_pos) > _max_bb:
+            hard_block_reason = hard_block_reason or (
+                f"BB {float(_bb_pos)*100:.0f}% — קרוב לגג בולינגר (24x הפסדים)"
+            )
+    except Exception:
+        pass
+
+    # 1c. Negative Momentum Filter — 30x losses had negative momentum
+    # momentum = difference between current price and SMA(5). Negative = trending down short-term
+    try:
+        if not hard_block_reason:
+            _ind_mom = (get_current_indicators(ticker) or {})
+            _macd = _ind_mom.get("macd")
+            _macd_sig = _ind_mom.get("macd_signal")
+            # If both MACD and signal are negative — short-term momentum bearish
+            if _macd is not None and _macd_sig is not None:
+                if float(_macd) < -1.0 and float(_macd_sig) < 0:
+                    composite = max(0, composite - 10)
+                    logger.info(f"[SCORE] {ticker}: negative MACD momentum → discount -10 pts to {composite}")
+    except Exception:
+        pass
 
     # 2. Volume hard filter — low volume = weak signal
     _min_vol = float(_os.getenv("MIN_VOLUME_RATIO", "0.5"))

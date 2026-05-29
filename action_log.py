@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 _scan_actions: list[str] = []
 _scan_start_time: float = 0
 _last_sent: float = 0
-_MIN_BATCH_INTERVAL = 60   # שניות מינימום בין הודעות מאגר
+_MIN_BATCH_INTERVAL = 30   # שניות מינימום בין הודעות מאגר (was 60)
 
 
 def start_scan(n_candidates: int, cash: float) -> None:
@@ -99,6 +99,7 @@ def _shorten(reason: str) -> str:
 async def flush_scan_report() -> None:
     """
     שולח את כל הדוח שנאסף מהסריקה — הודעה אחת מרוכזת.
+    אם עברו פחות מ-_MIN_BATCH_INTERVAL מאז הדוח הקודם — שולחים גרסה תמציתית בלבד.
     """
     global _last_sent
 
@@ -106,8 +107,7 @@ async def flush_scan_report() -> None:
         return
 
     now = time.time()
-    if now - _last_sent < _MIN_BATCH_INTERVAL:
-        return   # לא שולחים יותר מדי הודעות
+    _too_soon = (now - _last_sent < _MIN_BATCH_INTERVAL) if _last_sent > 0 else False
     _last_sent = now
 
     elapsed = now - _scan_start_time if _scan_start_time else 0
@@ -146,9 +146,18 @@ async def flush_scan_report() -> None:
         if not passed and not failed and not events:
             lines.append("😴 אין פעילות בסריקה זו")
 
-        msg = "\n".join(lines)
-        if len(msg) > 4000:
-            msg = msg[:3900] + "\n...(קוצר)"
+        # If too soon since last report — send only a brief summary (1 line)
+        if _too_soon:
+            n_pass = len(passed)
+            n_fail = len(failed)
+            msg = (
+                f"📡 <b>סריקה {time_str}</b> ({elapsed:.0f}s) — "
+                f"✅ {n_pass} עברו | ❌ {n_fail} נחסמו"
+            )
+        else:
+            msg = "\n".join(lines)
+            if len(msg) > 4000:
+                msg = msg[:3900] + "\n...(קוצר)"
 
         await send_message(msg)
 

@@ -211,7 +211,18 @@ def get_price(ticker: str) -> float | None:
     """Get the current market price for a ticker.
 
     Hard-protected against yfinance hangs via threading timeout (12s).
+    NEW: Circuit breaker prevents TCP connection leak when yfinance returns 401.
     """
+    # CRITICAL FIX: Check circuit breaker first to prevent socket leaks
+    try:
+        from yfinance_circuit_breaker import get_breaker
+        breaker = get_breaker()
+        if breaker.is_open():
+            logger.debug(f"get_price({ticker}): yfinance circuit open — skip")
+            return None
+    except Exception:
+        breaker = None
+
     import threading
     import yfinance as yf
     result: list = [None]
@@ -242,8 +253,14 @@ def get_price(ticker: str) -> float | None:
     th.join(timeout=12)
     if th.is_alive():
         logger.warning(f"get_price hung >12s for {ticker} — aborted")
+        if breaker:
+            breaker.record_failure()
         return None
     if exc_box[0] is not None:
         logger.warning(f"get_price failed for {ticker}: {exc_box[0]}")
+        if breaker:
+            breaker.record_failure()
         return None
+    if result[0] is not None and breaker:
+        breaker.record_success()
     return result[0]

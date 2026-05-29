@@ -28,26 +28,76 @@ _last_update_id = 0
 _running = False
 
 
+# Track consecutive 409 conflicts (webhook + polling both active)
+_consecutive_409 = 0
+_MAX_409_BEFORE_PAUSE = 5    # after 5 conflicts, auto-disable webhook
+_pause_until_ts = 0.0          # epoch seconds — pause polling until this time
+
+
+async def _delete_webhook(token: str) -> bool:
+    """Force-delete an existing webhook so polling can take over.
+    Required when localtunnel set a webhook but we run locally with polling."""
+    url = f"https://api.telegram.org/bot{token}/deleteWebhook"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json={"drop_pending_updates": False},
+                              timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 200:
+                    logger.warning("[POLLING] Auto-deleted stale webhook (409 → polling takeover)")
+                    return True
+    except Exception as e:
+        logger.warning(f"[POLLING] deleteWebhook failed: {e}")
+    return False
+
+
 async def _fetch_updates(session: aiohttp.ClientSession, token: str, offset: int) -> list:
-    """Call getUpdates and return list of update objects."""
+    """Call getUpdates and return list of update objects.
+    Auto-recovers from 409 conflicts by deleting the conflicting webhook."""
+    global _consecutive_409, _pause_until_ts
+    import time as _t
+
+    # If we're in cool-down, skip the call entirely
+    if _t.time() < _pause_until_ts:
+        await asyncio.sleep(2)
+        return []
+
     url = f"https://api.telegram.org/bot{token}/getUpdates"
     params = {
         "offset": offset,
-        "timeout": 5,        # long-poll: cut 20s→5s for faster user-message pickup
+        "timeout": 2,        # long-poll: 2s — picks up messages within 2 seconds
         "allowed_updates": ["message", "callback_query"],
     }
     try:
         async with session.get(
             url, params=params,
-            timeout=aiohttp.ClientTimeout(total=15)
+            timeout=aiohttp.ClientTimeout(total=8)   # 2s poll + 6s buffer for network
         ) as resp:
             if resp.status == 200:
+                _consecutive_409 = 0   # reset on success
                 data = await resp.json()
                 return data.get("result", [])
+
+            body = await resp.text()
+
+            # Special handling for 409 (webhook conflict)
+            if resp.status == 409:
+                _consecutive_409 += 1
+                if _consecutive_409 == 1:
+                    logger.warning(f"[POLLING] 409 conflict — webhook is active, polling cannot run")
+                elif _consecutive_409 >= _MAX_409_BEFORE_PAUSE:
+                    # After repeated 409s — take over by deleting webhook
+                    logger.warning(f"[POLLING] {_consecutive_409}x consecutive 409 — taking over from webhook")
+                    if await _delete_webhook(token):
+                        _consecutive_409 = 0
+                    else:
+                        # Couldn't delete — pause for 60s
+                        _pause_until_ts = _t.time() + 60
+                        logger.warning("[POLLING] Pausing polling for 60s")
+                # Wait 2s before next attempt (don't spam)
+                await asyncio.sleep(2)
             else:
-                body = await resp.text()
                 logger.warning(f"[POLLING] getUpdates returned {resp.status}: {body[:100]}")
-                return []
+            return []
     except asyncio.TimeoutError:
         return []   # normal — long-poll timeout
     except Exception as e:

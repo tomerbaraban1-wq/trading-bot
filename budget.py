@@ -146,7 +146,7 @@ def _get_streak_multiplier() -> float:
     """
     try:
         from database import get_trade_history
-        recent = get_trade_history(limit=6)
+        recent = get_trade_history(limit=10)
         closed = [t for t in recent if t.get("status") not in ("open", None)]
         if len(closed) < 3:
             return 1.0  # not enough history
@@ -156,6 +156,19 @@ def _get_streak_multiplier() -> float:
         all_wins   = all(p > 0 for p in last3)
         all_losses = all(p < 0 for p in last3)  # breakeven (0.0) is NOT a loss
 
+        # Check last 5 trades for stronger streaks (institutional pattern)
+        if len(closed) >= 5:
+            last5 = [t.get("pnl_gross", 0) or 0 for t in closed[:5]]
+            n_wins_5 = sum(1 for p in last5 if p > 0)
+            n_loss_5 = sum(1 for p in last5 if p < 0)
+
+            if n_wins_5 >= 5:
+                logger.info("[SIZING] 5 consecutive wins — riding momentum ×1.40")
+                return 1.40
+            if n_loss_5 >= 3:
+                logger.info("[SIZING] 3+ losses in last 5 — capital preservation ×0.50")
+                return 0.50
+
         if all_losses:
             logger.info("[SIZING] 3 consecutive losses — reducing position size ×0.60")
             return 0.60
@@ -164,6 +177,77 @@ def _get_streak_multiplier() -> float:
             return 1.25
     except Exception:
         pass
+    return 1.0
+
+
+def _calculate_sharpe_ratio(lookback_trades: int = 50) -> float:
+    """
+    Calculate rolling Sharpe ratio from recent closed trades.
+    Sharpe = mean(returns) / std(returns) — annualized.
+
+    Industry interpretation:
+      Sharpe > 2.0 → exceptional (top hedge funds)
+      Sharpe 1-2  → very good
+      Sharpe 0.5-1 → acceptable
+      Sharpe < 0.5 → weak (reduce exposure)
+      Sharpe < 0  → strategy losing edge (drastic cut)
+    """
+    try:
+        from database import get_trade_history
+        import statistics
+        recent = get_trade_history(limit=lookback_trades)
+        closed = [t for t in recent if t.get("status") not in ("open", None)]
+        if len(closed) < 10:
+            return 1.0  # default — not enough data
+
+        # Calculate per-trade returns as pct of entry
+        returns = []
+        for t in closed:
+            entry = float(t.get("entry_price") or 0)
+            qty = float(t.get("qty") or 0)
+            pnl = float(t.get("pnl_gross") or 0)
+            if entry > 0 and qty > 0:
+                position_value = entry * qty
+                if position_value > 0:
+                    returns.append(pnl / position_value)
+
+        if len(returns) < 5:
+            return 1.0
+
+        mean_ret = statistics.mean(returns)
+        std_ret = statistics.stdev(returns) if len(returns) > 1 else 0.01
+
+        if std_ret <= 0:
+            return 1.0
+
+        # Annualize (assume 8 trades/day × 252 days = 2016 trades/year)
+        sharpe = (mean_ret / std_ret) * (2016 ** 0.5)
+        logger.debug(f"[SHARPE] {len(returns)} trades, mean={mean_ret:.4f}, std={std_ret:.4f}, sharpe={sharpe:.2f}")
+        return sharpe
+    except Exception as _sharpe_err:
+        logger.debug(f"[SHARPE] calc failed: {_sharpe_err}")
+        return 1.0
+
+
+def _get_sharpe_multiplier() -> float:
+    """
+    Adjust position sizing based on rolling Sharpe ratio.
+    Strategy: when system is performing well, scale up. When struggling, scale down.
+    """
+    if not settings.SHARPE_GUARD_ENABLED:
+        return 1.0
+
+    sharpe = _calculate_sharpe_ratio()
+    if sharpe >= settings.SHARPE_HIGH_THRESHOLD:
+        logger.info(f"[SHARPE] {sharpe:.2f} ≥ {settings.SHARPE_HIGH_THRESHOLD} → scale up ×1.25")
+        return 1.25
+    elif sharpe < 0:
+        logger.info(f"[SHARPE] {sharpe:.2f} < 0 → strategy losing edge — cut ×0.25")
+        return 0.25
+    elif sharpe < settings.SHARPE_LOW_THRESHOLD:
+        logger.info(f"[SHARPE] {sharpe:.2f} < {settings.SHARPE_LOW_THRESHOLD} → cautious ×0.50")
+        return 0.50
+
     return 1.0
 
 

@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Cache structure: {ticker: (timestamp, DataFrame)}
 _cache: dict[str, tuple[float, pd.DataFrame]] = {}
+# Last-known-GOOD data (long-lived). Used as a fallback when a fresh fetch fails
+# (e.g. Yahoo 401 "Invalid Crumb"), so the bot decides on slightly-stale-but-real
+# data instead of empty/corrupt data. Far safer for trade decisions.
+_last_good: dict[str, tuple[float, pd.DataFrame]] = {}
 _lock = threading.Lock()
 
 # Cache lives for 5 minutes (matches scan cadence)
@@ -76,37 +80,56 @@ def get_ohlcv(
                     _stats["hits"] += 1
                     return df.copy()
 
-    # Cache miss — fetch fresh
+    # Cache miss — fetch fresh, with RETRY (transient Yahoo 401 "Invalid Crumb"
+    # usually succeeds on a second attempt) and LAST-GOOD fallback.
     _stats["misses"] += 1
-    try:
-        kwargs: dict = {"progress": False, "auto_adjust": True, "interval": interval}
-        if days:
-            from datetime import datetime, timedelta, timezone
-            end = datetime.now(timezone.utc)
-            kwargs["start"] = end - timedelta(days=days)
-            kwargs["end"] = end
-        else:
-            kwargs["period"] = period
 
-        df = yf.download(ticker, **kwargs, auto_adjust=True)
+    kwargs: dict = {"interval": interval}
+    if days:
+        from datetime import datetime, timedelta, timezone
+        end = datetime.now(timezone.utc)
+        kwargs["start"] = end - timedelta(days=days)
+        kwargs["end"] = end
+    else:
+        kwargs["period"] = period
 
-        if df.empty:
-            logger.debug(f"[CACHE] {ticker}: yfinance returned empty DataFrame")
-            return df
+    last_err = "unknown"
+    for attempt in range(3):
+        try:
+            df = yf.download(ticker, **kwargs, auto_adjust=True, progress=False)
+            if df is None or df.empty:
+                last_err = "empty result (possible rate-limit / 401)"
+                time.sleep(0.4 * (attempt + 1))   # brief backoff, let yfinance refresh its crumb
+                continue
 
-        # Flatten MultiIndex columns (yfinance ≥ 0.2 quirk for single ticker)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.droplevel(1)
+            # Flatten MultiIndex columns (yfinance ≥ 0.2 quirk for single ticker)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.droplevel(1)
 
-        with _lock:
-            _cache[cache_key] = (now, df)
+            with _lock:
+                _cache[cache_key] = (now, df)
+                _last_good[cache_key] = (now, df)   # remember as last-known-good
+            if attempt > 0:
+                logger.info(f"[CACHE] {ticker}: fetched on retry #{attempt+1} ({len(df)} rows)")
+            return df.copy()
 
-        logger.debug(f"[CACHE] {ticker}: fetched {len(df)} rows ({period or f'{days}d'})")
-        return df.copy()
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.4 * (attempt + 1))
 
-    except Exception as e:
-        logger.warning(f"[CACHE] {ticker}: download failed — {e}")
-        return pd.DataFrame()
+    # All attempts failed — fall back to last-known-good data if we have any.
+    with _lock:
+        lg = _last_good.get(cache_key)
+    if lg:
+        age_min = (time.monotonic() - lg[0]) / 60.0
+        logger.warning(
+            f"[CACHE] {ticker}: fetch failed ({last_err}) — using last-good data "
+            f"({age_min:.0f}m old) instead of empty/corrupt"
+        )
+        return lg[1].copy()
+
+    logger.warning(f"[CACHE] {ticker}: fetch failed ({last_err}) and no cached fallback available")
+    return pd.DataFrame()
 
 
 def get_close_prices(ticker: str, period: str = "3mo") -> list[float]:
@@ -156,7 +179,9 @@ def prefetch_batch(tickers: list[str], period: str = "3mo") -> None:
 
                 cache_key = f"{ticker}_{period}_1d"
                 with _lock:
-                    _cache[cache_key] = (now, df_ticker.copy())
+                    _df_copy = df_ticker.copy()
+                    _cache[cache_key] = (now, _df_copy)
+                    _last_good[cache_key] = (now, _df_copy)   # also keep as last-known-good
 
                 logger.debug(f"[CACHE] prefetch: {ticker} loaded ({len(df_ticker)} rows)")
 

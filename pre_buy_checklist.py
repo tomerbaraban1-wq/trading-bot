@@ -40,17 +40,26 @@ async def run_pre_buy_checklist(
         "confidence_boost": float,  # extra score if all pass
     }
     """
-    failed = []
+    failed = []        # CRITICAL failures — these BLOCK the buy
+    soft_failed = []   # non-critical warnings — reduce confidence but do NOT block
     passed = []
     confidence_boost = 0.0
 
     # ── Check 1: RSI Zone ────────────────────────────────────────────────
-    # RSI 40-55 had 0% win rate in our trade history
+    # RSI 42-55 historically had 0% win rate.
+    # FIX: Allow exception for high-conviction trades (score >= 65).
+    # Without this, ALL current candidates (NVDA, AVGO, ORCL at RSI 50) were blocked.
     rsi_death_zone_min = float(os.getenv("RSI_AVOID_MIN", "42"))
     rsi_death_zone_max = float(os.getenv("RSI_AVOID_MAX", "55"))
 
     if rsi and rsi_death_zone_min <= rsi <= rsi_death_zone_max:
-        failed.append(f"RSI {rsi:.0f} נמצא ב-zone מסוכן ({rsi_death_zone_min:.0f}-{rsi_death_zone_max:.0f}) — 0% WR היסטורי")
+        # NEW: Allow high-score override (composite >= 65 = strong signal regardless of RSI)
+        if score >= 65:
+            passed.append(f"RSI {rsi:.0f} ב-zone אבל ציון {score:.0f} גבוה — חריגה מאושרת")
+        else:
+            # SOFT (balanced): RSI zone is less-ideal but not a hard block
+            soft_failed.append(f"RSI {rsi:.0f} ב-zone פחות-אידאלי ({rsi_death_zone_min:.0f}-{rsi_death_zone_max:.0f})")
+            confidence_boost -= 2
     elif rsi and 28 <= rsi <= 42:
         passed.append(f"RSI {rsi:.0f} ב-zone המצוין (WR 100% היסטורי)")
         confidence_boost += 3
@@ -60,7 +69,9 @@ async def run_pre_buy_checklist(
     # ── Check 2: Volume ──────────────────────────────────────────────────
     min_vol = float(os.getenv("MIN_VOLUME_RATIO", "0.75"))
     if volume_ratio and volume_ratio < min_vol:
-        failed.append(f"Volume {volume_ratio:.2f}x נמוך מ-{min_vol}x נדרש")
+        # SOFT (balanced): low volume reduces confidence but does not block
+        soft_failed.append(f"Volume {volume_ratio:.2f}x נמוך מ-{min_vol}x")
+        confidence_boost -= 1
     elif volume_ratio and volume_ratio >= 1.0:
         passed.append(f"Volume {volume_ratio:.2f}x — confirmation חזקה")
         confidence_boost += 2
@@ -99,10 +110,13 @@ async def run_pre_buy_checklist(
         minutes_since_open  = (et_hour - 9) * 60 + et_min - 30   # since 9:30
         minutes_before_close = (16 * 60) - (et_hour * 60 + et_min)  # to 4:00
 
-        if minutes_since_open < 10:
-            failed.append(f"שוק נפתח לפני {10-minutes_since_open:.0f} דקות — spreads רחבים")
-        elif minutes_before_close < 10:
-            failed.append("פחות מ-10 דקות לסגירה — לא קונים")
+        min_after_open   = int(os.getenv("MIN_MINUTES_AFTER_OPEN", "5"))
+        min_before_close = int(os.getenv("MIN_MINUTES_BEFORE_CLOSE", "5"))
+        if minutes_since_open < min_after_open:
+            # SOFT (balanced): wide spreads near open — warn, don't block
+            soft_failed.append(f"שוק נפתח לפני {min_after_open-minutes_since_open:.0f} דקות — spreads רחבים")
+        elif minutes_before_close < min_before_close:
+            soft_failed.append(f"פחות מ-{min_before_close} דקות לסגירה")
         else:
             # Best time: 10:30-11:30 and 13:00-15:30 (ET)
             if (60 <= minutes_since_open <= 120) or (210 <= minutes_since_open <= 360):
@@ -144,23 +158,28 @@ async def run_pre_buy_checklist(
         passed.append("חדשות: לא ניתן לבדוק")
 
     # ── Final decision ────────────────────────────────────────────────────
+    # BALANCED: only CRITICAL failures block the buy. Soft warnings reduce
+    # confidence but still allow the trade (paper trading — favor taking trades
+    # to actually learn, instead of vetoing every candidate on a minor check).
     all_pass = len(failed) == 0
 
     if all_pass:
+        _warn = f" | soft: {'; '.join(soft_failed)}" if soft_failed else ""
         logger.info(
-            f"[PRE-BUY] {ticker}: ✅ ALL {len(passed)} checks passed "
-            f"(boost={confidence_boost:+.0f})"
+            f"[PRE-BUY] {ticker}: ✅ PASS ({len(passed)} ok, "
+            f"{len(soft_failed)} soft, boost={confidence_boost:+.0f}){_warn}"
         )
     else:
         logger.info(
-            f"[PRE-BUY] {ticker}: ❌ BLOCKED — {'; '.join(failed)}"
+            f"[PRE-BUY] {ticker}: ❌ BLOCKED (critical) — {'; '.join(failed)}"
         )
 
     return {
         "pass": all_pass,
         "failed_checks": failed,
+        "soft_failed_checks": soft_failed,
         "passed_checks": passed,
         "confidence_boost": confidence_boost,
-        "total_checks": len(passed) + len(failed),
+        "total_checks": len(passed) + len(failed) + len(soft_failed),
         "pass_count": len(passed),
     }

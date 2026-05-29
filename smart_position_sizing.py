@@ -45,20 +45,23 @@ def calculate_smart_position(
 
     Returns the dollar amount to invest and share quantity.
     """
-    max_pct = float(os.getenv("MAX_POSITION_PCT", "15"))
-    min_pct = 5.0  # never go below 5%
+    max_pct = float(os.getenv("MAX_POSITION_PCT", "10"))
+    # min_pct now configurable — lower = more positions can fit in budget
+    min_pct = float(os.getenv("MIN_POSITION_PCT", "3"))
 
-    # ── 1. Score-based tier ─────────────────────────────────────────────
+    # ── 1. Score-based tier (scaled to max_pct) ─────────────────────────
+    # The bot scales position size by confidence — but the budget is the
+    # ultimate cap. Lower MAX_POSITION_PCT = smaller positions = more diversification.
     if score >= 90:
         base_pct = max_pct           # Max confidence → max size
     elif score >= 80:
-        base_pct = max_pct * 0.85   # ~12.75% of budget
+        base_pct = max_pct * 0.85   # ~8.5% of budget if max=10
     elif score >= 75:
-        base_pct = max_pct * 0.70   # ~10.5%
+        base_pct = max_pct * 0.70   # ~7%
     elif score >= 70:
-        base_pct = max_pct * 0.55   # ~8.25%
+        base_pct = max_pct * 0.55   # ~5.5%
     else:
-        base_pct = max_pct * 0.40   # ~6% (minimum viable)
+        base_pct = max_pct * 0.40   # ~4% (minimum viable)
 
     # ── 2. Drawdown protection ──────────────────────────────────────────
     # Reduce size if today has been bad

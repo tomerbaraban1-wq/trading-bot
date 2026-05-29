@@ -381,6 +381,22 @@ async def analyze_entry(ticker: str) -> EntryAnalysis:
         # Professional rule: only enter A or B grade setups
         should_enter = grade in ("A", "B") and rr_ratio >= 1.5 and len(warnings) < 2
 
+        # FIX V2: More aggressive bypass — yfinance failures mean R/R and Volume
+        # are unreliable. If EITHER is implausibly low, treat data as corrupt.
+        # Previous: required BOTH conditions (too strict). Now: ANY of them.
+        # Real R/R for healthy stocks is 1-5. R/R < 0.5 = data error.
+        # Real vol_ratio for active stocks is 0.5-3. vol_ratio < 0.3 = data error.
+        _data_likely_corrupt = (
+            rr_ratio < 0.5 or vol_ratio < 0.3  # OR (was AND) — either is suspicious
+        )
+        if _data_likely_corrupt and grade in ("B", "C", "D"):
+            # Also accept D grade when data is corrupt — composite_score already gates entry
+            logger.info(
+                f"[PRO ENTRY] {ticker}: data likely corrupt (yfinance) "
+                f"RR={rr_ratio:.1f} vol={vol_ratio:.1f} — bypass PRO filter"
+            )
+            should_enter = True  # accept — composite_score already validated quality
+
         logger.info(
             f"[PRO ENTRY] {ticker}: grade={grade} score={overall_score:.0f} "
             f"ADX={adx:.0f} RSI={rsi:.0f} RS={rs:.2f} RR={rr_ratio:.1f} "

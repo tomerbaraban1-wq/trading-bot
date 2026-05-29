@@ -2292,8 +2292,15 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             import random
             wl     = get_watchlist()
             sample = random.sample(wl, min(30, len(wl)))
-            # Quick batch download
-            prices = _yf.download(sample, period="2d", progress=False, auto_adjust=True)
+            # Quick batch download — wrapped to prevent event-loop blocking
+            try:
+                prices = await asyncio.wait_for(
+                    asyncio.to_thread(_yf.download, sample, period="2d", progress=False, auto_adjust=True),
+                    timeout=8.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[CHAT] gainers yfinance timed out — returning empty")
+                return "⏳ נתוני שוק לא זמינים כרגע — נסה שוב בעוד דקה"
             movers = []
             _cols = prices.columns.get_level_values(0) if hasattr(prices.columns, "get_level_values") else prices.columns
             if not prices.empty and "Close" in _cols:
@@ -3761,7 +3768,15 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             held = {tr["ticker"] for tr in (_db.get_open_trades() or [])}
             wl   = [tk for tk in wl if tk not in held]
             sample = random.sample(wl, min(40, len(wl)))
-            prices = _yf.download(sample, period="5d", progress=False, auto_adjust=True)
+            # Wrapped to prevent event-loop blocking
+            try:
+                prices = await asyncio.wait_for(
+                    asyncio.to_thread(_yf.download, sample, period="5d", progress=False, auto_adjust=True),
+                    timeout=10.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[CHAT] trending yfinance timed out — returning empty")
+                return "⏳ נתוני שוק לא זמינים כרגע — נסה שוב בעוד דקה"
             trending = []
             _cols = prices.columns.get_level_values(0) if hasattr(prices.columns, "get_level_values") else prices.columns
             if not prices.empty and "Close" in _cols:
@@ -3884,8 +3899,8 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             logger.error(f"[/newscheck] Error: {e}")
             return "❌ שגיאה פנימית — נסה שוב"
 
-    # /today — what happened today
-    if cmd in ("/today", "today", "היום", "מה היה היום"):
+    # /today — what happened today (full activity report)
+    if cmd in ("/today", "today", "היום", "מה היה היום", "מה הבוט עשה היום"):
         try:
             import database as _db
             from datetime import datetime, timezone
@@ -3894,12 +3909,121 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             opened = [t for t in all_trades if str(t.get("entry_time") or "")[:10] == today_str]
             closed = [t for t in all_trades if str(t.get("exit_time") or "")[:10] == today_str]
             total_pnl = sum(float(t.get("pnl_gross") or 0) for t in closed)
-            lines = [f"📅 <b>סיכום היום</b>", "━━━━━━━━━━━━━━━━"]
-            lines.append(f"📆 תאריך:         {today_str}")
+
+            # ── Parse log for today's bot activity ─────────────────────────
+            _scan_count = 0
+            _buffett_blocks = 0
+            _pro_blocks = 0
+            _earnings_blocks = 0
+            _score_blocks = 0
+            _heartbeats = 0
+            _errors = 0
+            _candidates_above_threshold = 0
+            _blocked_tickers = {}  # ticker → reason
+
+            try:
+                from pathlib import Path as _P
+                log_path = _P("trading_bot.log")
+                if log_path.exists():
+                    # Read only last 200KB for speed
+                    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                        f.seek(max(0, size - 500_000))
+                        log_content = f.read()
+                    today_lines = [ln for ln in log_content.split("\n") if today_str in ln]
+
+                    for ln in today_lines:
+                        if "Starting scheduled scan" in ln:
+                            _scan_count += 1
+                        elif "Buffett=" in ln and "below quality" in ln:
+                            _buffett_blocks += 1
+                            # Extract ticker
+                            try:
+                                tk = ln.split("AUTO-INVEST:")[1].split("Buffett")[0].strip()
+                                _blocked_tickers[tk] = "Buffett איכות נמוכה"
+                            except Exception:
+                                pass
+                        elif "PRO BLOCKED" in ln:
+                            _pro_blocks += 1
+                            try:
+                                tk = ln.split("AUTO-INVEST:")[1].split("PRO BLOCKED")[0].strip()
+                                if "Poor R/R" in ln:
+                                    _blocked_tickers[tk] = "יחס סיכוי/סיכון גרוע"
+                                elif "Low volume" in ln:
+                                    _blocked_tickers[tk] = "נפח מסחר נמוך"
+                                elif "Ranging" in ln:
+                                    _blocked_tickers[tk] = "שוק ללא מגמה"
+                                elif "Extended" in ln:
+                                    _blocked_tickers[tk] = "מניה מתוחה (RSI גבוה)"
+                                else:
+                                    _blocked_tickers[tk] = "PRO Entry חסם"
+                            except Exception:
+                                pass
+                        elif "EARNINGS BLACKOUT" in ln:
+                            _earnings_blocks += 1
+                        elif "❌ SKIP" in ln:
+                            _score_blocks += 1
+                        elif "HEARTBEAT:" in ln and "positions" in ln:
+                            _heartbeats += 1
+                        elif "| ERROR |" in ln and "yfinance" not in ln:
+                            _errors += 1
+                        elif "candidates above threshold" in ln:
+                            try:
+                                _n = int(ln.split("candidates")[0].split()[-1])
+                                _candidates_above_threshold += _n
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+
+            # ── Build report ─────────────────────────────────────────────
+            lines = [f"📅 <b>סיכום היום — {today_str}</b>", "━━━━━━━━━━━━━━━━"]
+
+            # Trades section
             lines.append(f"🛒 קניות:          <b>{len(opened)}</b>")
             lines.append(f"💸 מכירות:        <b>{len(closed)}</b>")
             if closed:
                 lines.append(f"💰 רווח/הפסד:   {_fmt_pnl(total_pnl)}")
+
+            # Bot activity section
+            lines.append("\n📊 <b>פעילות הבוט היום</b>")
+            lines.append("━━━━━━━━━━━━━━━━")
+            lines.append(f"🔍 סריקות:        <b>{_scan_count}</b>")
+            lines.append(f"💓 פעימות:        <b>{_heartbeats}</b>")
+            lines.append(f"⚠️ שגיאות:        <b>{_errors}</b>")
+            if _errors == 0:
+                lines.append("   ✅ ללא קריסות")
+
+            # Why no buys? Show blocks
+            total_blocks = _buffett_blocks + _pro_blocks + _earnings_blocks + _score_blocks
+            if total_blocks > 0:
+                lines.append(f"\n🚫 <b>למה לא קנה</b> ({total_blocks} חסימות)")
+                lines.append("━━━━━━━━━━━━━━━━")
+                if _score_blocks > 0:
+                    lines.append(f"  📉 ציון נמוך:           {_score_blocks}")
+                if _buffett_blocks > 0:
+                    lines.append(f"  📊 איכות באפט:        {_buffett_blocks}")
+                if _pro_blocks > 0:
+                    lines.append(f"  🎯 PRO Entry:          {_pro_blocks}")
+                if _earnings_blocks > 0:
+                    lines.append(f"  📅 לפני earnings:      {_earnings_blocks}")
+
+            # Top blocked tickers
+            if _blocked_tickers:
+                lines.append("\n🔍 <b>מניות עם סיבות חסימה</b>")
+                lines.append("━━━━━━━━━━━━━━━━")
+                # Show first 8 unique tickers
+                shown = 0
+                for tk, reason in list(_blocked_tickers.items())[:8]:
+                    lines.append(f"  • <b>{tk}</b>: {reason}")
+                    shown += 1
+                if len(_blocked_tickers) > shown:
+                    lines.append(f"  ... ועוד {len(_blocked_tickers) - shown}")
+
+            # Closed trades detail
+            if closed:
+                lines.append("\n💸 <b>מכירות היום</b>")
                 lines.append("━━━━━━━━━━━━━━━━")
                 for _ct in closed:
                     _sym  = _ct.get("ticker","?")
@@ -3908,17 +4032,20 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
                     _xp   = float(_ct.get("exit_price") or 0)
                     _pct  = (_xp-_ep)/_ep*100 if _ep else 0
                     _icon = "🟢" if _pnl >= 0 else "🔴"
-                    lines.append(f"{_icon} <b>{_sym}</b>")
-                    lines.append(f"   📍 שינוי:      {_pct:+.1f}%")
-                    lines.append(f"   💰 רווח:       {_fmt_pnl(_pnl, False)}")
+                    lines.append(f"{_icon} <b>{_sym}</b>  {_pct:+.1f}%  {_fmt_pnl(_pnl, False)}")
+
+            # Opened trades detail
             if opened:
+                lines.append("\n📂 <b>נקנו היום</b>")
                 lines.append("━━━━━━━━━━━━━━━━")
-                lines.append(f"📂 נקנו היום:")
                 for _ot in opened:
-                    lines.append(f"   📌 <b>{_ot.get('ticker','?')}</b>  @ {_fmt_price(_ot.get('entry_price',0))}")
+                    lines.append(f"  📌 <b>{_ot.get('ticker','?')}</b>  @ {_fmt_price(_ot.get('entry_price',0))}")
+
             if not opened and not closed:
-                lines.append("━━━━━━━━━━━━━━━━")
-                lines.append("😴 לא היו עסקאות היום")
+                lines.append("\n😴 לא היו עסקאות היום")
+                if _scan_count > 0:
+                    lines.append(f"   הבוט סרק {_scan_count} פעמים — לא מצא הזדמנויות עוברות סף")
+
             return "\n".join(lines)
         except Exception as _e:
             logger.error(f"[/today] Error: {_e}")
@@ -4157,23 +4284,42 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
     stocks_keywords = ["מניות", "מניה", "פוזיציות", "מה יש", "מה קניתי", "מחזיק", "תיק שלי", "איזה", "manioth", "/manioth"]
     if any(k in t for k in stocks_keywords):
         # Always fetch live from DB — bypass cache so new positions show immediately
+        # CRITICAL FIX: yfinance.download() was blocking the event loop!
+        # Now runs in thread with 5s hard timeout so /manioth returns fast.
         try:
             import database as _dbm
             import yfinance as _yf_m
-            _live_trades = _dbm.get_open_trades()
+            _live_trades = await asyncio.to_thread(_dbm.get_open_trades)
             if _live_trades:
                 _tickers = [tr["ticker"] for tr in _live_trades]
-                _hist = _yf_m.download(_tickers, period="2d", progress=False, auto_adjust=True)
+
+                # FAST PATH: try yfinance with 5s timeout; fall back to entry price if slow
+                _hist = None
+                try:
+                    _hist = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            _yf_m.download, _tickers,
+                            period="2d", progress=False, auto_adjust=True
+                        ),
+                        timeout=5.0,  # hard timeout — never wait more than 5s
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[CHAT] yfinance.download timed out for {_tickers} — using entry prices")
+                except Exception as _yf_err:
+                    logger.debug(f"[CHAT] yfinance fetch failed (using fallback): {_yf_err}")
+
                 positions = []
                 for tr in _live_trades:
                     tk = tr["ticker"]
-                    try:
-                        if len(_tickers) == 1:
-                            cur = float(_hist["Close"].dropna().iloc[-1])
-                        else:
-                            cur = float(_hist["Close"][tk].dropna().iloc[-1])
-                    except Exception:
-                        cur = float(tr.get("entry_price", 0))
+                    cur = float(tr.get("entry_price", 0))  # default: entry price
+                    if _hist is not None:
+                        try:
+                            if len(_tickers) == 1:
+                                cur = float(_hist["Close"].dropna().iloc[-1])
+                            else:
+                                cur = float(_hist["Close"][tk].dropna().iloc[-1])
+                        except Exception:
+                            pass  # keep entry price as fallback
                     entry = float(tr.get("entry_price", 0))
                     qty   = float(tr.get("qty", 0))
                     pnl   = (cur - entry) * qty
@@ -4492,6 +4638,20 @@ async def _handle_callback_query(callback: dict) -> dict:
             "top":         ("top", ""),
         }
 
+        # ── SPECIAL: sell action — requires confirmation through chat ──
+        if action == "sell" and param:
+            from telegram_bot import send_message
+            await send_message(
+                f"⚠️ <b>מכירה ידנית של {param}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"לאישור — שלח את הפקודה:\n"
+                f"<code>/sell {param}</code>\n"
+                f"\n"
+                f"💡 הבוט ינתח את הפוזיציה ויאשר לפני הביצוע."
+            )
+            await answer_callback_query(callback_id, "⚠️ דרוש אישור")
+            return {"status": "ok", "action": "sell_confirm_requested", "ticker": param}
+
         if action in action_to_command:
             cmd, args = action_to_command[action]
             reply = await route_command(cmd, args)
@@ -4554,6 +4714,29 @@ async def handle_telegram_update(update: dict) -> dict:
     if len(text) > 1000:
         text = text[:1000]
 
+    # ── SECURITY LAYER: rate limit, anomaly detection, dangerous-cmd confirmation ──
+    try:
+        from telegram_security import security_check
+        sec = security_check(chat_id, text)
+
+        # If user sent a confirmation, replace `text` with the confirmed command
+        if sec.get("confirmed_command"):
+            text = sec["confirmed_command"]
+            logger.info(f"[SECURITY] Executing confirmed dangerous command: {text}")
+
+        # If blocked (rate limit, etc), reply and stop
+        if not sec.get("allowed"):
+            await send_message(sec.get("reason", "⛔ פעולה נחסמה"))
+            return {"status": "blocked", "reason": sec.get("reason")}
+
+        # If dangerous command — send confirmation prompt and stop
+        if sec.get("needs_confirm"):
+            await send_message(sec.get("confirm_prompt"))
+            return {"status": "awaiting_confirmation", "command": text}
+    except Exception as _sec_err:
+        # Security layer should never break command handling
+        logger.warning(f"[SECURITY] Check failed (allowing through): {_sec_err}")
+
     # Map Hebrew button labels to commands (keyboard buttons + new buttons)
     _BUTTON_MAP = {
         # Original buttons
@@ -4600,24 +4783,32 @@ async def handle_telegram_update(update: dict) -> dict:
     # offer quick analysis options instead of guessing.
     _detected_ticker = _detect_ticker(text)
 
+    # ── FAST-PATH: instant response for bare ticker (no context build needed) ──
+    # Saves ~2-5 seconds since we skip the expensive _build_context() call
+    if _detected_ticker and len(text.split()) == 1:
+        _fast_reply = (
+            f"📊 <b>{_detected_ticker}</b> — מה תרצה לדעת?\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💲 /price {_detected_ticker} — מחיר נוכחי\n"
+            f"🎯 /score {_detected_ticker} — ציון טכני (0-100)\n"
+            f"🎩 /buffett {_detected_ticker} — ניתוח באפט מלא\n"
+            f"📰 /news {_detected_ticker} — חדשות + סנטימנט AI\n"
+            f"📑 /earnings {_detected_ticker} — דוח רווחים\n"
+            f"📐 /volatility {_detected_ticker} — תנודתיות + Beta\n"
+            f"💡 או שלח שאלה: <i>\"האם כדאי לקנות {_detected_ticker}?\"</i>"
+        )
+        try:
+            await send_message(_fast_reply)
+            _remember(chat_id, "user", text)
+            _remember(chat_id, "assistant", _fast_reply)
+            return {"status": "replied_fast", "incoming": text[:200]}
+        except Exception:
+            pass
+
     # Generate reply — total timeout 25s (Telegram drops webhook at ~30s)
     try:
         async def _generate_reply():
             ctx = await asyncio.to_thread(_build_context)
-
-            # Auto-respond to bare ticker with quick analysis menu
-            if _detected_ticker and len(text.split()) == 1:
-                return (
-                    f"📊 <b>{_detected_ticker}</b> — מה תרצה לדעת?\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"💲 /price {_detected_ticker} — מחיר נוכחי\n"
-                    f"🎯 /score {_detected_ticker} — ציון טכני (0-100)\n"
-                    f"🎩 /buffett {_detected_ticker} — ניתוח באפט מלא\n"
-                    f"📰 /news {_detected_ticker} — חדשות + סנטימנט AI\n"
-                    f"📑 /earnings {_detected_ticker} — דוח רווחים\n"
-                    f"📐 /volatility {_detected_ticker} — תנודתיות + Beta\n"
-                    f"💡 או שלח שאלה: <i>\"האם כדאי לקנות {_detected_ticker}?\"</i>"
-                )
 
             rep = await _handle_command_async(text, ctx)
             if rep is None:

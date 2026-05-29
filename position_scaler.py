@@ -69,28 +69,41 @@ async def evaluate_scale_in(
             return ScaleInDecision(False, 0, "Scaled in recently (need 4h gap)",
                                   current_qty, entry_price)
 
-    # 3. Max 2 scale-ins
+    # 3. Max 3 scale-ins (was 2) — let big winners run bigger
     count = _scale_in_count.get(trade_id, 0)
-    if count >= 2:
-        return ScaleInDecision(False, 0, "Max scale-ins reached (2)",
+    if count >= 3:
+        return ScaleInDecision(False, 0, "Max scale-ins reached (3)",
                               current_qty, entry_price)
 
-    # 4. Score still strong
-    if current_score < 65:
+    # 4. Score still strong — lowered 65→55 to match new MIN_BUY_SCORE
+    # (matches current entry threshold so pyramiding is consistent)
+    if current_score < 55:
         return ScaleInDecision(False, 0, f"Score weakened to {current_score:.0f}",
                               current_qty, entry_price)
 
-    # 5. Determine size
+    # 5. Determine size — PROFIT OPTIMIZATION: triple-pyramid mode
+    # Old: 2 levels max (50% @ +3%, 25% @ +7%) → max position 175% of original
+    # New: 3 levels (50% @ +3%, 35% @ +6%, 20% @ +10%) → max position 205%
     if count == 0 and plpc >= 3.0:
-        # First scale-in: add 50%
+        # First scale-in: add 50% (winners need bigger size)
         scale_pct = 0.50
         scale_name = "1st"
-    elif count == 1 and plpc >= 7.0:
-        # Second scale-in: add 25%
-        scale_pct = 0.25
+    elif count == 1 and plpc >= 6.0:  # was 7.0 — trigger sooner
+        # Second scale-in: add 35% (was 25%)
+        scale_pct = 0.35
         scale_name = "2nd"
+    elif count == 2 and plpc >= 10.0:
+        # NEW: 3rd scale-in at +10% — let big winners run BIG
+        scale_pct = 0.20
+        scale_name = "3rd"
     else:
-        return ScaleInDecision(False, 0, f"Need +7% for 2nd scale-in (now +{plpc:.1f}%)",
+        if count == 0:
+            need = "+3%"
+        elif count == 1:
+            need = "+6%"
+        else:
+            need = "+10%"
+        return ScaleInDecision(False, 0, f"Need {need} for next scale-in (now +{plpc:.1f}%)",
                               current_qty, entry_price)
 
     # 6. Daily P&L must be positive (don't pyramid on bad day)

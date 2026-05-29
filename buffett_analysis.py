@@ -57,16 +57,25 @@ def get_buffett_analysis(ticker: str) -> dict:
     try:
         import yfinance as yf
         info = yf.Ticker(ticker).info
+        # yfinance can return None or empty dict when Yahoo rate-limits us
+        # or rejects the crumb token. Treat both as "no data".
+        if not info or not isinstance(info, dict):
+            raise ValueError("yfinance returned no data (rate-limited or crumb expired)")
     except Exception as e:
-        logger.warning(f"[BUFFETT] yfinance failed for {ticker}: {e}")
-        return {
+        logger.debug(f"[BUFFETT] yfinance failed for {ticker}: {e}")
+        # Cache the "unclear" verdict briefly so we don't hammer yfinance
+        result = {
             "ticker": ticker,
             "verdict": "UNCLEAR",
             "score": 50,
-            "summary_he": f"לא הצלחתי לטעון נתונים על {ticker}",
+            "summary_he": f"נתונים זמניים לא זמינים — {ticker}",
             "criteria": {},
             "moat": "unknown",
         }
+        # Cache it for 5 minutes to avoid repeated yfinance calls during rate-limit
+        with _cache_lock:
+            _cache[ticker] = (now - _CACHE_TTL + 300, result)  # expires in 5 min
+        return result
 
     # ── Extract metrics ──────────────────────────────────────────────────
     roe         = _safe_float(info.get("returnOnEquity"))
