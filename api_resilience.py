@@ -84,7 +84,7 @@ def with_retry(
                 # This attempt failed
                 if attempt < max_retries:
                     logger.warning(
-                        f"⚠️  {func.__name__} failed ({error_type}): {str(e)[:100]} "
+                        f"⚠️  {func.__name__} failed ({error_type}): {str(last_error)[:100]} "
                         f"— retry in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})"
                     )
                     await asyncio.sleep(wait_time)
@@ -146,7 +146,7 @@ def sync_with_retry(
                 # This attempt failed
                 if attempt < max_retries:
                     logger.warning(
-                        f"⚠️  {func.__name__} failed: {str(e)[:100]} "
+                        f"⚠️  {func.__name__} failed: {str(last_error)[:100]} "
                         f"— retry in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})"
                     )
                     time.sleep(wait_time)

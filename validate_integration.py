@@ -31,24 +31,28 @@ checks = [
         "required": True
     },
     {
-        "name": "Replace asyncio.create_task with monitor.create_task",
-        "pattern": r"await monitor\.create_task\(heartbeat_loop\(\), \"heartbeat_loop\"\)",
+        # NOTE: the code monitors tasks via the _spawn() helper, which internally
+        # calls asyncio.create_task(_monitored_wrapper(monitor, coro, name)).
+        # That is functionally equivalent to monitor.create_task — so we check
+        # for the _spawn() idiom the codebase actually uses.
+        "name": "heartbeat_loop registered with TaskMonitor (via _spawn)",
+        "pattern": r"_spawn\(heartbeat_loop\(\), \"heartbeat_loop\"\)",
         "required": True
     },
     {
-        "name": "Replace asyncio.create_task with monitor.create_task (stop_loss)",
-        "pattern": r"await monitor\.create_task\(stop_loss_monitor\(\), \"stop_loss_monitor\"\)",
+        "name": "stop_loss_monitor registered with TaskMonitor (via _spawn)",
+        "pattern": r"_spawn\(stop_loss_monitor\(\), \"stop_loss_monitor\"\)",
         "required": True
     },
     {
-        "name": "Replace asyncio.create_task with monitor.create_task (at least 30 tasks)",
-        "pattern": r"await monitor\.create_task",
+        "name": "At least 30 tasks registered with TaskMonitor (via _spawn)",
+        "pattern": r"_spawn\(",
         "min_count": 30,
         "required": True
     },
     {
         "name": "TaskMonitor shutdown in cleanup",
-        "pattern": r"await monitor\.shutdown\(\)",
+        "pattern": r"monitor\.shutdown\(\)",
         "required": True
     },
     {

@@ -1,7 +1,8 @@
 # Health Check Endpoints for TaskMonitor
 # Add these endpoints to your main.py routes (around line 548, after app = FastAPI(...))
 
-from fastapi import FastAPI, JSONResponse
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse  # FIX: JSONResponse lives in fastapi.responses, not fastapi
 from task_monitor import get_monitor
 import asyncio
 

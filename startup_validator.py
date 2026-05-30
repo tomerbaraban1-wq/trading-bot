@@ -91,9 +91,29 @@ async def send_startup_report() -> None:
 
         result = validate_and_report()
 
+        # ── "I'm awake!" header — detect how long the bot was DOWN ────────────
+        # The supervisor writes data/last_alive.txt every health check. If the
+        # gap is large, the PC was asleep/off (e.g. the 25h Shabbat sleep).
+        awake_header = "🟢 <b>אני ער ופעיל!</b>"
+        try:
+            import os as _os_a, time as _time_a
+            _alive_path = _os_a.path.join(_os_a.path.dirname(__file__), "data", "last_alive.txt")
+            if _os_a.path.exists(_alive_path):
+                with open(_alive_path, "r", encoding="utf-8") as _f:
+                    _last = float(_f.read().strip() or 0)
+                _down_min = (_time_a.time() - _last) / 60.0
+                if _down_min >= 5:
+                    if _down_min >= 90:
+                        _dur = f"{_down_min/60:.1f} שעות"
+                    else:
+                        _dur = f"{_down_min:.0f} דקות"
+                    awake_header = f"🟢 <b>אני ער! חזרתי לפעולה</b>\n😴 הייתי כבוי במשך <b>{_dur}</b>"
+        except Exception:
+            pass
+
         # Build the message
         lines = [
-            f"🚀 <b>בוט הופעל בהצלחה</b>",
+            awake_header,
             f"━━━━━━━━━━━━━━━━━━━━━━━━",
             f"📅 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
             "",

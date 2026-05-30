@@ -1521,6 +1521,27 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             return "❌ שגיאה בחישוב — נסה שוב"
 
     # /activity_now — מה הבוט עושה ברגע זה
+    if cmd in ("/botstatus", "/bot", "מצב הבוט", "האם הבוט פעיל", "הבוט פעיל", "פעיל"):
+        # The bot is processing this command → it is, by definition, ACTIVE.
+        import time as _t_bs
+        lines = ["🤖 <b>מצב הבוט</b>", "━━━━━━━━━━━━━━━━", "🟢 <b>פעיל ועובד!</b>"]
+        try:
+            import psutil as _ps_bs
+            _up = _t_bs.time() - _ps_bs.Process().create_time()
+            _ups = f"{_up/3600:.1f} שעות" if _up >= 3600 else f"{_up/60:.0f} דקות"
+            lines.append(f"⏱️ זמן פעילות רצוף: <b>{_ups}</b>")
+        except Exception:
+            pass
+        _n_pos = len(context.get("open_positions", []))
+        if context.get("market_open"):
+            lines.append("🟢 השוק פתוח — סורק ומחפש הזדמנויות")
+        else:
+            lines.append("💤 השוק סגור — לומד, קורא חדשות ומנתח גרפים")
+        lines.append(f"📂 פוזיציות פתוחות: <b>{_n_pos}</b>")
+        lines.append("━━━━━━━━━━━━━━━━")
+        lines.append("✅ אם קיבלת הודעה זו — הבוט ער ומגיב כרגע")
+        return "\n".join(lines)
+
     if cmd in ("/activity_now", "/now", "מה אתה עושה", "מה הבוט עושה", "מה אתה עושה עכשיו"):
         try:
             import requests as _req
@@ -4746,6 +4767,7 @@ async def handle_telegram_update(update: dict) -> dict:
         "📈 מניות שלי":      "/manioth",
         "🔢 כמה עסקאות":     "/count",
         "🤖 מה אתה עושה":    "/activity_now",
+        "🤖 מצב הבוט":       "/botstatus",
         "🌟 הכי טובות":      "/best",
         "🌍 מצב השוק":       "/market",
         "🏆 מובילים היום":   "/gainers",

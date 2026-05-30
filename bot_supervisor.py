@@ -69,32 +69,69 @@ def acquire_single_instance_lock() -> bool:
         return True           # fail-open: never block the bot on a lock bug
 
 
+def touch_alive() -> None:
+    """
+    Write a heartbeat timestamp to data/last_alive.txt every health check.
+    On the next startup, the bot reads this to compute how long it was DOWN
+    (asleep/off) and announces "I'm awake — was down X hours" to Telegram.
+    """
+    try:
+        data_dir = BASE_DIR / "data"
+        data_dir.mkdir(exist_ok=True)
+        with open(data_dir / "last_alive.txt", "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+
 def prevent_windows_sleep():
     """
     AGGRESSIVE sleep prevention — prevents Windows from sleeping while supervisor runs.
-    Without this, the bot died at 23:02 last night when Windows went to sleep.
+
+    Uses TWO layers:
+    1. SetThreadExecutionState — prevents idle-timeout sleep
+    2. powercfg /change standby-timeout-ac 0 — disables AC sleep entirely
+
+    Layer 2 was added because SetThreadExecutionState does NOT block a
+    user-mode process that calls SetSuspendState() directly (e.g., Logitech
+    software, OEM utilities). The only defense against that is either admin
+    rights (to register a power request override) or disabling standby in
+    the active power scheme — which we can do without admin.
+
+    Root cause: the bot died at 19:01 on 2026-05-29 because a user-mode process
+    called SetSuspendState, ignoring the ES_SYSTEM_REQUIRED flag entirely.
     """
     if os.name != "nt":
         return
     try:
         import ctypes
-        ES_CONTINUOUS       = 0x80000000
-        ES_SYSTEM_REQUIRED  = 0x00000001
-        ES_DISPLAY_REQUIRED = 0x00000002
+        ES_CONTINUOUS        = 0x80000000
+        ES_SYSTEM_REQUIRED   = 0x00000001
         ES_AWAYMODE_REQUIRED = 0x00000040
 
-        # ES_CONTINUOUS = persist until cancelled
-        # ES_SYSTEM_REQUIRED = prevent system sleep
-        # ES_AWAYMODE_REQUIRED = stay alive even if user has "away mode" enabled
         result = ctypes.windll.kernel32.SetThreadExecutionState(
             ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
         )
         if result != 0:
-            log(f"[SLEEP_GUARD] Windows sleep prevention ACTIVE (state=0x{result:X})")
+            log(f"[SLEEP_GUARD] SetThreadExecutionState ACTIVE (0x{result:X})")
         else:
-            log(f"[SLEEP_GUARD] WARNING: Sleep prevention failed")
+            log("[SLEEP_GUARD] WARNING: SetThreadExecutionState failed")
     except Exception as e:
-        log(f"[SLEEP_GUARD] Could not prevent sleep: {e}")
+        log(f"[SLEEP_GUARD] ctypes failed: {e}")
+
+    # Layer 2: force the power scheme to never-standby (no admin needed)
+    try:
+        import subprocess as _sp
+        for cmd in [
+            "powercfg /change standby-timeout-ac 0",
+            "powercfg /change standby-timeout-dc 0",
+            "powercfg /change hibernate-timeout-ac 0",
+            "powercfg /change hibernate-timeout-dc 0",
+        ]:
+            _sp.run(cmd, shell=True, capture_output=True, timeout=10)
+        log("[SLEEP_GUARD] powercfg: AC/DC standby+hibernate = NEVER")
+    except Exception as e:
+        log(f"[SLEEP_GUARD] powercfg failed (non-fatal): {e}")
 
 
 def detect_resume_from_sleep(last_check_time: float) -> bool:
@@ -241,6 +278,7 @@ def main():
                     last_check_time = now
                     continue
             last_check_time = now
+            touch_alive()   # heartbeat marker for "was-down" detection on next start
 
             # ── Check 1: Did the bot crash? ─────────────────────────────
             ret = bot_proc.poll()
