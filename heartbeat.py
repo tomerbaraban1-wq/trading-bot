@@ -1619,7 +1619,9 @@ async def stop_loss_monitor():
                         logger.debug(f"[SCALE-IN] {ticker}: check failed: {_sc_err}")
 
                 except Exception as e:
-                    logger.error(f"Stop loss monitor error for {ticker}: {e}")
+                    # Include exception TYPE — some exceptions have an empty str(e),
+                    # which previously logged a useless blank message for this safety feature.
+                    logger.error(f"Stop loss monitor error for {ticker}: {type(e).__name__}: {e}")
                     _create_background_task(notify_error("stop_loss_fail", ticker, f"שגיאה"))
 
         except asyncio.CancelledError:
