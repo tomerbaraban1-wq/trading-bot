@@ -23,6 +23,15 @@ import threading
 import signal
 import faulthandler
 import traceback
+
+# Quiet benign numpy warnings from indicator math on empty/short data series.
+# These produce NaN, which the bot already treats as a safe skip — no need to
+# spam the logs (keeps real errors easy to spot).
+import warnings as _np_warn
+_np_warn.filterwarnings("ignore", message="Mean of empty slice")
+_np_warn.filterwarnings("ignore", message="invalid value encountered")
+_np_warn.filterwarnings("ignore", message="Degrees of freedom <= 0")
+_np_warn.filterwarnings("ignore", message="All-NaN slice encountered")
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════════════════
