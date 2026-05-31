@@ -938,7 +938,8 @@ async def _monitor_health():
             return {"status": "uninitialized", "alive": 0, "dead": 0}
         return await mon.get_status()
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.warning(f"monitor endpoint error: {e}")
+        return {"status": "error", "error": "internal monitor error"}
 
 
 @app.get("/monitor/alive")
@@ -959,7 +960,8 @@ async def _monitor_alive():
             "uptime_seconds": int(time.time() - START_TIME),
         }
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        logger.warning(f"monitor endpoint error: {e}")
+        return {"status": "error", "error": "internal monitor error"}
 
 
 # Setup graceful shutdown handlers for SIGTERM and SIGINT
