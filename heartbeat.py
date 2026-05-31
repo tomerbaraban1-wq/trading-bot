@@ -4954,6 +4954,111 @@ async def portfolio_update_loop():
         await asyncio.sleep(60 * 60)   # שלח כל שעה
 
 
+async def daily_full_report_loop():
+    """
+    USER-REQUESTED: comprehensive daily report to Telegram at 23:10 LOCAL time,
+    EVERY day — including weekends / market-closed. Covers: buys, sells (with P&L),
+    stocks scanned/analyzed, training runs, and company reports (Buffett) read.
+    """
+    import datetime as _dt
+    await asyncio.sleep(120)   # settle after startup
+    while True:
+        try:
+            now = _dt.datetime.now()   # local time (this PC = Israel)
+            target = now.replace(hour=23, minute=10, second=0, microsecond=0)
+            if target <= now:
+                target += _dt.timedelta(days=1)
+            remaining = (target - now).total_seconds()
+            while remaining > 0:
+                await asyncio.sleep(min(remaining, 300))
+                remaining = (target - _dt.datetime.now()).total_seconds()
+            await _send_full_daily_report()
+            await asyncio.sleep(120)   # avoid double-fire in the same minute
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[DAILY-REPORT] loop error: {e}")
+            await asyncio.sleep(600)
+
+
+async def _send_full_daily_report():
+    """Build and send the comprehensive end-of-day report to Telegram."""
+    import datetime as _dt, re as _re, os as _os
+    from collections import Counter
+    try:
+        today = _dt.datetime.now().date().isoformat()
+        today_utc = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+        _dates = {today, today_utc}
+
+        # ── Trades (from DB) ──────────────────────────────────────────
+        all_trades = await asyncio.to_thread(database.get_trade_history, None, 300)
+        def _is_today(ts):
+            return bool(ts) and str(ts)[:10] in _dates
+        buys  = [t for t in all_trades if _is_today(t.get("entry_time"))]
+        sells = [t for t in all_trades if _is_today(t.get("exit_time"))]
+        pnl   = sum((t.get("pnl_gross") or 0) for t in sells)
+
+        # ── Activity (parse today's log) ──────────────────────────────
+        scans = trainings = news = 0
+        buffett: dict = {}     # ticker -> score
+        scored: list = []      # tickers scored
+        try:
+            _lp = _os.path.join(_os.path.dirname(__file__), "trading_bot.log")
+            with open(_lp, "r", encoding="utf-8", errors="ignore") as _f:
+                for _ln in _f:
+                    if _ln[:10] not in _dates:
+                        continue
+                    if "AUTO-INVEST: Starting" in _ln:
+                        scans += 1
+                    elif "[TRAINING] Done" in _ln:
+                        trainings += 1
+                    elif "LIVE SENTIMENT" in _ln:
+                        news += 1
+                    elif "[BUFFETT]" in _ln:
+                        _m = _re.search(r"\[BUFFETT\]\s+([\w.\-]+):\s*score=(\d+)", _ln)
+                        if _m:
+                            buffett[_m.group(1)] = _m.group(2)
+                    elif "[SCORE]" in _ln:
+                        _m = _re.search(r"\[SCORE\]\s+([\w.\-]+):", _ln)
+                        if _m:
+                            scored.append(_m.group(1))
+        except Exception:
+            pass
+
+        open_trades = await asyncio.to_thread(database.get_open_trades)
+        try:
+            mkt_open = await asyncio.to_thread(broker.is_market_open)
+        except Exception:
+            mkt_open = False
+
+        # ── Build the message ─────────────────────────────────────────
+        L = [f"📋 <b>סיכום יומי — {today}</b>", "━━━━━━━━━━━━━━━━"]
+        L.append("🟢 <b>קניות:</b> " + (", ".join(t.get("ticker", "?") for t in buys) if buys else "אין היום"))
+        if sells:
+            L.append("🔴 <b>מכירות:</b> " + ", ".join(
+                f"{t.get('ticker','?')} ({(t.get('pnl_gross') or 0):+.0f}$)" for t in sells))
+        else:
+            L.append("🔴 <b>מכירות:</b> אין היום")
+        L.append(f"💰 <b>רווח/הפסד היום:</b> {pnl:+.2f}$")
+        L.append("━━━━━━━━━━━━━━━━")
+        L.append(f"🔍 סריקות: <b>{scans}</b>  |  🎓 אימונים: <b>{trainings}</b>  |  📰 חדשות: <b>{news}</b>")
+        if scored:
+            _top = [t for t, _c in Counter(scored).most_common(10)]
+            L.append("📊 <b>מניות שניתחתי:</b> " + ", ".join(_top))
+        if buffett:
+            L.append("📑 <b>דוחות חברות שקראתי:</b> " + ", ".join(
+                f"{t}({s})" for t, s in list(buffett.items())[:10]))
+        L.append("━━━━━━━━━━━━━━━━")
+        L.append(f"💼 פוזיציות פתוחות: <b>{len(open_trades)}</b>")
+        L.append("📈 יום מסחר" if mkt_open else "💤 הבורסה סגורה — התמקדתי בלמידה ומחקר")
+
+        await send_message("\n".join(L))
+        logger.info(f"[DAILY-REPORT] sent: {len(buys)} buys, {len(sells)} sells, "
+                    f"{scans} scans, {trainings} trainings, {len(buffett)} reports")
+    except Exception as e:
+        logger.warning(f"[DAILY-REPORT] build failed: {e}")
+
+
 async def daily_goal_progress_loop():
     """
     Send periodic updates on daily profit goal progress every 2 hours during market hours.

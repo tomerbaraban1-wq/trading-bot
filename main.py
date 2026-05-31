@@ -612,7 +612,7 @@ async def lifespan(app: FastAPI):
             return await _coro
 
     from heartbeat import (heartbeat_loop, heartbeat_cleanup_loop, sentiment_monitor, stop_loss_monitor,
-                           auto_invest_loop, keep_alive_loop, daily_summary_loop,
+                           auto_invest_loop, keep_alive_loop, daily_summary_loop, daily_full_report_loop,
                            weekly_report_loop, shadow_monitor_loop, portfolio_update_loop,
                            news_refresh_loop, news_monitor_loop, morning_briefing_loop,
                            position_alert_loop, backtest_learning_loop, eod_sweep_loop,
@@ -640,6 +640,7 @@ async def lifespan(app: FastAPI):
     auto_invest_task       = _spawn(auto_invest_loop(), "auto_invest_loop")
     keep_alive_task        = _spawn(keep_alive_loop(), "keep_alive_loop")
     daily_summary_task     = _spawn(daily_summary_loop(), "daily_summary_loop")
+    daily_report_task      = _spawn(daily_full_report_loop(), "daily_full_report_loop")
     weekly_report_task     = _spawn(weekly_report_loop(), "weekly_report_loop")
     backtest_task          = _spawn(backtest_learning_loop(), "backtest_learning_loop")
     training_task          = _spawn(market_closed_training_loop(), "market_closed_training_loop")
