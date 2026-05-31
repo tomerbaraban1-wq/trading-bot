@@ -4990,6 +4990,10 @@ async def _send_full_daily_report():
         today_utc = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
         _dates = {today, today_utc}
 
+        def _tv(_tk):
+            """Wrap a ticker as a clickable TradingView chart link (Telegram HTML)."""
+            return f'<a href="https://www.tradingview.com/chart/?symbol={_tk}">{_tk}</a>'
+
         # ── Trades (from DB) ──────────────────────────────────────────
         all_trades = await asyncio.to_thread(database.get_trade_history, None, 300)
         def _is_today(ts):
@@ -5033,10 +5037,10 @@ async def _send_full_daily_report():
 
         # ── Build the message ─────────────────────────────────────────
         L = [f"📋 <b>סיכום יומי — {today}</b>", "━━━━━━━━━━━━━━━━"]
-        L.append("🟢 <b>קניות:</b> " + (", ".join(t.get("ticker", "?") for t in buys) if buys else "אין היום"))
+        L.append("🟢 <b>קניות:</b> " + (", ".join(_tv(t.get("ticker", "?")) for t in buys) if buys else "אין היום"))
         if sells:
             L.append("🔴 <b>מכירות:</b> " + ", ".join(
-                f"{t.get('ticker','?')} ({(t.get('pnl_gross') or 0):+.0f}$)" for t in sells))
+                f"{_tv(t.get('ticker','?'))} ({(t.get('pnl_gross') or 0):+.0f}$)" for t in sells))
         else:
             L.append("🔴 <b>מכירות:</b> אין היום")
         L.append(f"💰 <b>רווח/הפסד היום:</b> {pnl:+.2f}$")
@@ -5044,10 +5048,10 @@ async def _send_full_daily_report():
         L.append(f"🔍 סריקות: <b>{scans}</b>  |  🎓 אימונים: <b>{trainings}</b>  |  📰 חדשות: <b>{news}</b>")
         if scored:
             _top = [t for t, _c in Counter(scored).most_common(10)]
-            L.append("📊 <b>מניות שניתחתי:</b> " + ", ".join(_top))
+            L.append("📊 <b>מניות שניתחתי:</b> " + ", ".join(_tv(t) for t in _top))
         if buffett:
             L.append("📑 <b>דוחות חברות שקראתי:</b> " + ", ".join(
-                f"{t}({s})" for t, s in list(buffett.items())[:10]))
+                f"{_tv(t)}({s})" for t, s in list(buffett.items())[:10]))
         L.append("━━━━━━━━━━━━━━━━")
         L.append(f"💼 פוזיציות פתוחות: <b>{len(open_trades)}</b>")
         L.append("📈 יום מסחר" if mkt_open else "💤 הבורסה סגורה — התמקדתי בלמידה ומחקר")
