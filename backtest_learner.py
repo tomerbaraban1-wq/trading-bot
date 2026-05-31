@@ -350,26 +350,49 @@ def _quick_score(row) -> int:
 
 
 def _find_optimal_threshold(signals: list[dict]) -> int:
-    """Find the MIN_BUY_SCORE that maximizes win rate with sufficient sample size."""
+    """Find the MIN_BUY_SCORE that maximizes RISK-ADJUSTED EXPECTANCY.
+
+    History/bug: the previous metric was ``win_rate × n^0.4``. That sample-count
+    term grows monotonically as the threshold drops (a lower bar always admits
+    MORE trades), so the optimiser ALWAYS collapsed onto the floor of its own
+    search range (45) — i.e. it made the bot maximally UN-selective on every
+    single training cycle, regardless of whether the low-score entries were
+    actually any good. Because heartbeat re-applies this every ~30 min, the bot
+    was silently degrading its own buy-quality bar over time.
+
+    Correct objective for an asymmetric system (big take-profit, small stop):
+    maximise expected return PER TRADE, not trade count. We use the mean forward
+    return minus a small confidence penalty (½·standard-error) so a lucky little
+    bucket just above MIN_SAMPLES can't win on noise. A higher score bar is only
+    chosen when higher-scored entries genuinely produced a better risk-adjusted
+    outcome — which is what "quality" actually means.
+    """
     if not signals:
         return 58
 
     best_score = 58
-    best_metric = 0.0
+    best_metric = -1e9
+    found = False
 
-    for threshold in range(45, 75):
-        bucket = [s for s in signals if s["simple_score"] >= threshold]
-        if len(bucket) < MIN_SAMPLES:
+    # Floor raised 45→50: 45 is the analysis-INCLUSION floor (signals scoring
+    # below it are never generated in _analyze_ticker), so the bot's live BUY
+    # bar must sit strictly above it and can never collapse back onto it.
+    for threshold in range(50, 75):
+        bucket = [s["forward_return"] for s in signals if s["simple_score"] >= threshold]
+        n = len(bucket)
+        if n < MIN_SAMPLES:
             continue
-        wins = sum(1 for s in bucket if s["forward_return"] >= WIN_THRESHOLD)
-        wr   = wins / len(bucket)
-        # Metric: win_rate × sqrt(sample_size) — rewards both quality and quantity
-        metric = wr * (len(bucket) ** 0.4)
+        mean = float(np.mean(bucket))
+        stderr = float(np.std(bucket)) / (n ** 0.5) if n > 1 else 0.0
+        # Risk-adjusted expectancy: reward genuine quality, distrust small/noisy
+        # buckets. NO unbounded sample-count reward → no pull toward the floor.
+        metric = mean - 0.5 * stderr
         if metric > best_metric:
             best_metric = metric
             best_score  = threshold
+            found = True
 
-    return best_score
+    return best_score if found else 58
 
 
 def _explain_chart(row: "pd.Series", ticker: str, outcome: str, ret_10d: float,
