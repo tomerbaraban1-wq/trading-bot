@@ -389,13 +389,15 @@ async def analyze_entry(ticker: str) -> EntryAnalysis:
         _data_likely_corrupt = (
             rr_ratio < 0.5 or vol_ratio < 0.3  # OR (was AND) — either is suspicious
         )
-        if _data_likely_corrupt and grade in ("B", "C", "D"):
-            # Also accept D grade when data is corrupt — composite_score already gates entry
+        if _data_likely_corrupt and grade in ("B", "C"):
+            # Data unreliable (yfinance glitch): bypass the R/R check ONLY for decent
+            # setups (B/C). QUALITY FIX: exclude weak D-grade — don't take low-quality
+            # entries when we can't even trust the data. Composite score still gates upstream.
             logger.info(
                 f"[PRO ENTRY] {ticker}: data likely corrupt (yfinance) "
-                f"RR={rr_ratio:.1f} vol={vol_ratio:.1f} — bypass PRO filter"
+                f"RR={rr_ratio:.1f} vol={vol_ratio:.1f} — bypass PRO filter (B/C only, D excluded)"
             )
-            should_enter = True  # accept — composite_score already validated quality
+            should_enter = True
 
         logger.info(
             f"[PRO ENTRY] {ticker}: grade={grade} score={overall_score:.0f} "
