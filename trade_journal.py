@@ -275,7 +275,7 @@ async def review_recent_trades(days: int = 7) -> list[TradeReview]:
         rows = conn.execute("""
             SELECT id, ticker, created_at, exit_time, pnl_gross,
                    entry_price, exit_price, rsi, macd, volume_ratio,
-                   exit_reason, quality_score
+                   exit_reason
             FROM trade_log
             WHERE status IN ('stopped', 'sold')
             AND exit_time >= ?
@@ -287,7 +287,8 @@ async def review_recent_trades(days: int = 7) -> list[TradeReview]:
         for row in rows:
             try:
                 (trade_id, ticker, entry_date, exit_date, pnl, entry_p, exit_p,
-                 rsi, macd, vol_ratio, exit_reason, quality) = row
+                 rsi, macd, vol_ratio, exit_reason) = row
+                quality = 70  # quality_score not stored in trade_log — default (code uses 'quality or 70')
 
                 # Calculate metrics
                 pnl_pct = ((exit_p - entry_p) / entry_p * 100) if entry_p else 0

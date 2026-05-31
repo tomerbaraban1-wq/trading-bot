@@ -103,8 +103,14 @@ async def get_benchmark_returns(benchmark_ticker: str, days: int = 90) -> list:
         if data.empty:
             return []
 
-        returns = data["Close"].pct_change().dropna()
-        return [float(r) for r in returns]
+        close = data["Close"]
+        # FIX: for a single ticker, yfinance >=0.2 may return a DataFrame (MultiIndex
+        # columns). Iterating it yields COLUMN NAMES (e.g. 'SPY') -> float('SPY') crashed.
+        # Squeeze to a Series and iterate the numeric values.
+        if hasattr(close, "squeeze"):
+            close = close.squeeze()
+        returns = close.pct_change().dropna()
+        return [float(r) for r in returns.to_numpy().flatten()]
 
     except Exception as e:
         logger.error(f"Failed to get benchmark returns for {benchmark_ticker}: {e}")

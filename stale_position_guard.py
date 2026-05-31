@@ -42,14 +42,27 @@ async def scan_stale_positions() -> list[dict]:
         now = datetime.now(timezone.utc)
 
         for p in positions:
-            trade = trade_map.get(p.symbol)
+            # FIX: position may be a dict (tv_paper broker) or an object (Alpaca).
+            # Previously assumed an object (p.symbol) → crashed on tv_paper dicts.
+            if isinstance(p, dict):
+                _sym   = p.get("ticker") or p.get("symbol")
+                _cur   = p.get("current_price")
+                _entry = p.get("avg_entry_price")
+                _plpc  = p.get("unrealized_plpc")
+            else:
+                _sym   = getattr(p, "symbol", None) or getattr(p, "ticker", None)
+                _cur   = getattr(p, "current_price", None)
+                _entry = getattr(p, "avg_entry_price", None)
+                _plpc  = getattr(p, "unrealized_plpc", None)
+
+            trade = trade_map.get(_sym)
             if not trade:
                 continue
 
             try:
-                cur_price = float(p.current_price)
-                entry_price = float(p.avg_entry_price)
-                unrealized_plpc = float(p.unrealized_plpc) * 100
+                cur_price = float(_cur)
+                entry_price = float(_entry)
+                unrealized_plpc = float(_plpc) * 100
 
                 # Calculate days held
                 entry_time = trade.get("entry_time")
@@ -96,7 +109,7 @@ async def scan_stale_positions() -> list[dict]:
 
                 if action:
                     recommendations.append({
-                        "ticker": p.symbol,
+                        "ticker": _sym,
                         "action": action,
                         "urgency": urgency,
                         "days_held": days_held,
@@ -108,7 +121,7 @@ async def scan_stale_positions() -> list[dict]:
                     })
 
             except Exception as e:
-                logger.debug(f"Stale check failed for {p.symbol}: {e}")
+                logger.debug(f"Stale check failed for {_sym}: {e}")
 
     except Exception as e:
         logger.error(f"Stale position scan failed: {e}")
