@@ -1593,7 +1593,7 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         lines.append(f"{pnl_icon} רווח/הפסד:  {_fmt_pnl(pnl)}")
         if realized != 0:
             lines.append(f"🏆 ממומש:       {_fmt_pnl(realized)}")
-        lines.append(f"📂 פוזיציות:   <b>{n_pos}/{max_pos}</b>")
+        lines.append(f"🛒 מניות שהבוט קנה: <b>{n_pos}</b>  (מקסימום {max_pos})")
         lines.append(f"{mkt_icon} שוק:          {'פתוח ✅' if mkt_open else 'סגור 🔴'}")
         if vix:
             vix_icon = "😌" if vix < 20 else ("😟" if vix < 28 else "😱")
