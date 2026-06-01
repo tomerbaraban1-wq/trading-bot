@@ -258,7 +258,7 @@ def get_encryption_key() -> bytes:
 
     try:
         return base64.urlsafe_b64decode(key_b64)
-    except:
+    except Exception:
         return hashlib.sha256(key_b64.encode()).digest()
 
 
@@ -755,5 +755,5 @@ def _table_exists(conn, table_name: str) -> bool:
             (table_name,)
         ).fetchone()
         return result is not None
-    except:
+    except Exception:
         return False

@@ -297,7 +297,7 @@ async def review_recent_trades(days: int = 7) -> list[TradeReview]:
                     entry_dt = datetime.fromisoformat(entry_date.replace("Z", "+00:00"))
                     exit_dt = datetime.fromisoformat(exit_date.replace("Z", "+00:00"))
                     holding_days = (exit_dt - entry_dt).total_seconds() / 86400
-                except:
+                except Exception:
                     holding_days = 0
 
                 # Grade entry and exit

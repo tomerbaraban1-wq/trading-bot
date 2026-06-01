@@ -87,7 +87,7 @@ def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
     secret_padded = secret + "=" * (-len(secret) % 8)
     try:
         secret_bytes = base64.b32decode(secret_padded.upper())
-    except:
+    except Exception:
         return False
 
     current_time = int(time.time())

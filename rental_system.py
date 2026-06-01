@@ -247,7 +247,7 @@ def validate_license_key(license_key: str, subscriber_id: str) -> dict:
             expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) > expiry:
                 return {"valid": False, "reason": "Subscription expired", "expired": True}
-        except:
+        except Exception:
             pass
 
         # Check status

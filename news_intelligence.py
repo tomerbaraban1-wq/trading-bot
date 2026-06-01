@@ -351,7 +351,7 @@ async def detect_catalysts(ticker: str) -> dict:
                 pub = datetime.fromisoformat(a.published_at.replace("Z", "+00:00"))
                 if pub > cutoff:
                     recent_articles.append(a)
-            except:
+            except Exception:
                 pass
 
         avg_sentiment = (sum(a.sentiment_score for a in recent_articles) / len(recent_articles)) if recent_articles else 0
@@ -413,7 +413,7 @@ async def scan_pre_market_news(watchlist: list[str]) -> dict:
                     "breaking_count": result.get("breaking_count", 0),
                     "recommendation": result.get("recommendation"),
                 })
-        except:
+        except Exception:
             continue
 
     # Sort by sentiment strength

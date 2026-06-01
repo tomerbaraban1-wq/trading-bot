@@ -317,7 +317,7 @@ async def cancel_subscriber(
         try:
             data = await request.json()
             reason = data.get("reason", "admin_action")
-        except:
+        except Exception:
             reason = "admin_action"
 
         if cancel_subscription(subscriber_id, reason):

@@ -151,7 +151,7 @@ async def analyze_sector_rotation() -> List[SectorPerformance]:
 
                 perf = ((data.iloc[-1] - data.iloc[0]) / data.iloc[0] * 100)
                 performances.append((sector_name, perf))
-            except:
+            except Exception:
                 continue
 
         # Sort by performance

@@ -430,7 +430,7 @@ def detect_candlestick_patterns(opens: list[float], highs: list[float], lows: li
                         strength=0.75,
                         description="Strong bearish reversal",
                     ))
-        except:
+        except Exception:
             pass
 
     return signals

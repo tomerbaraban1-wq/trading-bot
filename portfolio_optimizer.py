@@ -226,7 +226,7 @@ def calculate_diversification_score(weights: np.ndarray, returns_matrix: np.ndar
             # Lower correlation = better diversification
             corr_score = max(0, 40 * (1 - abs(avg_corr)))
             score += corr_score
-        except:
+        except Exception:
             score += 20  # Default
 
     return min(100, score)

@@ -65,7 +65,7 @@ def is_bot_running() -> bool:
                 data = response.json()
                 uptime = data.get("uptime", 0)
                 return True
-            except:
+            except Exception:
                 return True
         else:
             return False
@@ -100,7 +100,7 @@ def get_bot_process_info() -> dict:
                         "command": " ".join(parts[10:])
                     }
         return {"pid": None, "running": False}
-    except:
+    except Exception:
         return {"pid": None, "running": False}
 
 
@@ -114,7 +114,7 @@ def check_port_in_use() -> bool:
             timeout=5
         )
         return ":8000" in result.stdout
-    except:
+    except Exception:
         # Fallback: try to connect
         try:
             import socket
@@ -123,7 +123,7 @@ def check_port_in_use() -> bool:
             result = sock.connect_ex(("127.0.0.1", 8000))
             sock.close()
             return result == 0
-        except:
+        except Exception:
             return False
 
 

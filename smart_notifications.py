@@ -115,7 +115,7 @@ def is_quiet_hours() -> bool:
         else:
             return start_hour <= current_hour < end_hour
 
-    except:
+    except Exception:
         return False
 
 

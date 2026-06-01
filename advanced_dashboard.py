@@ -46,7 +46,7 @@ async def generate_advanced_dashboard_html() -> str:
                 for k in keys:
                     data = data[k]
                 return data
-            except:
+            except Exception:
                 return default
 
         win_rate = safe_get(perf_data, "by_ticker", "top_winners", default=[])
@@ -78,7 +78,7 @@ async def generate_advanced_dashboard_html() -> str:
                     <span class="meta">{w.get('win_rate', 0):.0f}% win | {w.get('trades', 0)} trades</span>
                 </div>
                 """
-            except:
+            except Exception:
                 pass
 
         # Build insights HTML
@@ -98,7 +98,7 @@ async def generate_advanced_dashboard_html() -> str:
                     <span style="color: {perf_color};">{perf:+.2f}%</span>
                 </div>
                 """
-            except:
+            except Exception:
                 pass
 
         # Build the dashboard HTML

@@ -115,7 +115,7 @@ async def calculate_pair_correlation(ticker1: str, ticker2: str, days: int = 60)
             diff = returns1 - returns2
             cointegration_score = 1 - abs(np.mean(diff) / np.std(diff)) if np.std(diff) > 0 else 0.5
             cointegration_score = max(0, min(1, cointegration_score))
-        except:
+        except Exception:
             cointegration_score = 0.5
 
         return {
