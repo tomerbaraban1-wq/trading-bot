@@ -1724,7 +1724,7 @@ async def notify_live_positions() -> None:
                 plpc = float(p.get('unrealized_plpc', 0)) * 100
                 cur  = float(p.get('current_price', 0))
                 avg  = float(p.get('avg_entry_price', 0))
-                qty  = float(p.qty)
+                qty  = float(p.get('qty', 0))
 
                 pl_emoji = "🟢" if pl >= 0 else "🔴"
                 lines.append(
@@ -1836,7 +1836,7 @@ async def send_portfolio_card() -> None:
 
         total_val  = sum(float(p.get('market_value', 0)) for p in positions)
         total_pnl  = sum(float(p.get('unrealized_pl', 0)) for p in positions)
-        total_cost = sum(float(p.cost_basis) for p in positions)
+        total_cost = sum(float(p.get('avg_entry_price', 0)) * float(p.get('qty', 0)) for p in positions)
         total_pct  = (total_pnl / total_cost * 100) if total_cost > 0 else 0
 
         pnl_emoji  = "🟢" if total_pnl >= 0 else "🔴"

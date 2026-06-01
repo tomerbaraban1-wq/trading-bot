@@ -78,7 +78,7 @@ async def find_tax_loss_harvest_opportunities() -> list[dict]:
         for p in positions:
             try:
                 unrealized_pnl = float(p.get('unrealized_pl', 0))
-                cost_basis = float(p.cost_basis)
+                cost_basis = float(p.get('avg_entry_price', 0)) * float(p.get('qty', 0))
 
                 if unrealized_pnl < 0:
                     loss_pct = (unrealized_pnl / cost_basis * 100) if cost_basis else 0

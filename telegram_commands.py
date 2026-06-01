@@ -629,7 +629,7 @@ async def handle_tv_watchlist_command(args: str = "") -> str:
             pl   = float(pos.get('unrealized_pl', 0))
             plpc = float(pos.get('unrealized_plpc', 0)) * 100
             cur  = float(pos.get('current_price', 0))
-            qty  = float(pos.qty)
+            qty  = float(pos.get('qty', 0))
             val  = float(pos.get('market_value', 0))
             em   = "🟢" if pl >= 0 else "🔴"
 
