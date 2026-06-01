@@ -46,8 +46,8 @@ async def get_market_breadth(market_index: str = "^GSPC") -> BreadthMetrics:
 
         # Get S&P 500 stocks
         sp500_list = [
-            "AAPL", "MSFT", "NVDA", "GOOGL", "AMAZON",  # Top 5
-            "META", "TSLA", "BERKB", "UNH", "JPM",       # Next 5
+            "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN",   # Top 5 (was "AMAZON" — invalid Yahoo symbol)
+            "META", "TSLA", "BRK-B", "UNH", "JPM",       # Next 5 (was "BERKB" — invalid Yahoo symbol)
             "JNJ", "WMT", "V", "KO", "PG", "MA", "HD", "MCD", "INTC", "NFLX"
         ]
 

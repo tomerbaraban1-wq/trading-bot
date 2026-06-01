@@ -5833,17 +5833,17 @@ async def ai_decision_loop():
                         try:
                             decision = await asyncio.wait_for(
                                 make_trading_decision(
-                                    ticker=p.symbol,
-                                    current_price=float(p.current_price),
+                                    ticker=p.get("ticker"),
+                                    current_price=float(p.get("current_price") or 0),
                                 ),
                                 timeout=30,
                             )
 
                             if decision.action in ("SELL", "STRONG_SELL"):
-                                high_risk_positions.append((p.symbol, decision))
+                                high_risk_positions.append((p.get("ticker"), decision))
 
                         except Exception as e:
-                            logger.debug(f"AI decision for {p.symbol} failed: {e}")
+                            logger.debug(f"AI decision for {p.get('ticker')} failed: {e}")
 
                     # Alert if any positions flagged for exit
                     if high_risk_positions:
@@ -5956,7 +5956,7 @@ async def multi_timeframe_loop():
                 # Check current positions for confluence
                 positions = await asyncio.to_thread(broker.get_positions)
                 if positions:
-                    tickers = [p.symbol for p in positions[:5]]
+                    tickers = [p.get("ticker") for p in positions[:5]]
                     opportunities = await asyncio.wait_for(
                         find_confluence_opportunities(tickers),
                         timeout=120,

@@ -266,7 +266,7 @@ async def get_portfolio_news() -> dict:
 
         all_articles = []
         for p in positions[:10]:  # Limit to 10 positions
-            articles = await fetch_yahoo_news(p.symbol, max_articles=5)
+            articles = await fetch_yahoo_news(p.get("ticker"), max_articles=5)
             all_articles.extend(articles)
 
         # Deduplicate by title
