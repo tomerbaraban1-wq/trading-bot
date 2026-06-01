@@ -459,7 +459,10 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
         _hist = _get_ohlcv(ticker, period="3mo")  # PERF: reuse the already-prefetched 3mo daily cache (cache hit, 0 network) instead of a separate 20d fetch. OBV uses only the last-5-bar change → identical.
         if len(_hist) >= 10:
             from indicators import _obv as _calc_obv
-            _obv_series = _calc_obv(_hist)
+            # BUGFIX: _obv expects lowercase columns (close/volume); get_ohlcv/history
+            # return capitalized (Close/Volume) -> it used to ALWAYS raise KeyError and
+            # silently fall to N/A (0 of 10 pts, never awarded). Pass a lowercased copy.
+            _obv_series = _calc_obv(_hist.rename(columns=str.lower))
             _price_chg = float(_hist["Close"].iloc[-1]) - float(_hist["Close"].iloc[-5])
             _obv_chg   = float(_obv_series.iloc[-1])   - float(_obv_series.iloc[-5])
             _obv_trend_up = _obv_chg > 0
