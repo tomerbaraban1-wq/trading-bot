@@ -455,7 +455,8 @@ def score_technicals(ticker: str) -> tuple[float, dict]:
     try:
         import yfinance as _yf
         import numpy as _np
-        _hist = _yf.Ticker(ticker).history(period="20d", interval="1d")
+        from yfinance_cache import get_ohlcv as _get_ohlcv
+        _hist = _get_ohlcv(ticker, period="3mo")  # PERF: reuse the already-prefetched 3mo daily cache (cache hit, 0 network) instead of a separate 20d fetch. OBV uses only the last-5-bar change → identical.
         if len(_hist) >= 10:
             from indicators import _obv as _calc_obv
             _obv_series = _calc_obv(_hist)
@@ -749,7 +750,8 @@ def get_composite_score(ticker: str, sentiment_score: int = 5) -> dict:
     # buying opportunities for mean-reversion).
     try:
         import yfinance as _yf_mom
-        _hist_mom = _yf_mom.Ticker(ticker).history(period="1mo", interval="1d")
+        from yfinance_cache import get_ohlcv as _get_ohlcv
+        _hist_mom = _get_ohlcv(ticker, period="3mo")  # PERF: reuse the already-prefetched 3mo daily cache (cache hit, 0 network) instead of a separate 1mo fetch. Uses last 21 closes → verified identical values.
         if len(_hist_mom) >= 20:
             _closes = _hist_mom["Close"].values
             _cur = float(_closes[-1])
