@@ -23,29 +23,26 @@ LOG_FILE = BASE_DIR / "supervisor.log"
 
 # Configuration
 HEALTH_CHECK_INTERVAL = 30        # check every 30 sec
-PROACTIVE_RESTART_HOURS = 8       # restart every 8 hours (but prefer a market-closed window)
-PROACTIVE_RESTART_MAX_HOURS = 26  # hard cap: never DEFER the proactive restart beyond this, even if the market stays open — keeps the socket-leak safeguard running at least daily
+DAILY_RESTART_HOUR_LOCAL = 0      # proactive restart ONCE per day at this local hour (0 = 00:00 midnight)
+LOCAL_TZ_NAME = "Asia/Jerusalem"  # user's timezone (Israel); zoneinfo handles DST automatically
 MAX_RESTARTS_PER_HOUR = 5         # crash loop protection
 PORT = 8000
 LOCK_PORT = 8765                  # single-instance lock for the supervisor itself
 
 
-def is_market_closed_now() -> bool:
-    """True when the US market (incl. pre/post extended hours) is CLOSED — a safe
-    window to restart the bot without interrupting live trading.
+def _local_now():
+    """Current wall-clock time in the user's timezone (Israel).
 
-    Self-contained UTC check (no imports of the bot's heavy modules, so the
-    supervisor stays lightweight and independent). The fully-closed window that
-    holds in BOTH US DST regimes (EST=UTC-5, EDT=UTC-4) is 01:00–08:00 UTC on
-    weekdays; the whole weekend (Sat/Sun, UTC) is closed for US equities. The
-    check is intentionally conservative: outside this window it returns False
-    (treat as 'open' → don't restart yet), so we never restart during trading.
+    zoneinfo handles DST automatically (verified available on this machine). Falls
+    back to a fixed +3h offset if the tz database is ever missing — a 1-hour DST
+    drift is harmless for a once-a-day maintenance restart.
     """
-    from datetime import timezone
-    nowu = datetime.now(timezone.utc)
-    if nowu.weekday() >= 5:        # Saturday (5) / Sunday (6) — US equities closed
-        return True
-    return 1 <= nowu.hour < 8      # weekday overnight US close window (DST-safe)
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(LOCAL_TZ_NAME))
+    except Exception:
+        from datetime import timezone, timedelta
+        return datetime.now(timezone(timedelta(hours=3)))
 
 # Holds the single-instance lock socket open for the whole process lifetime.
 _lock_socket = None
@@ -256,6 +253,7 @@ def main():
 
     bot_proc = start_bot()
     last_proactive_restart = time.time()
+    last_daily_restart_date = _local_now().date()   # init to today → first restart fires at the NEXT local midnight (not on startup)
     last_check_time = time.time()
     restart_times: list[float] = []
 
@@ -319,30 +317,26 @@ def main():
                 last_proactive_restart = now
                 continue
 
-            # ── Check 2: Proactive restart every PROACTIVE_RESTART_HOURS ──
-            # Restart ONLY while the US market is CLOSED, so we never interrupt
-            # live trading. A hard cap still forces the restart even if the market
-            # somehow stays open, so the socket-leak safeguard runs at least daily.
-            hours_since_restart = (now - last_proactive_restart) / 3600
-            if hours_since_restart >= PROACTIVE_RESTART_HOURS:
-                _mkt_closed = is_market_closed_now()
-                if _mkt_closed or hours_since_restart >= PROACTIVE_RESTART_MAX_HOURS:
-                    _why = "market closed" if _mkt_closed else f"{PROACTIVE_RESTART_MAX_HOURS:.0f}h hard cap"
-                    log(f"Proactive restart after {hours_since_restart:.1f}h "
-                        f"({_why}; prevents socket leak from yfinance)")
-                    try:
-                        bot_proc.terminate()
-                        bot_proc.wait(timeout=30)
-                    except Exception:
-                        bot_proc.kill()
-                        time.sleep(5)
+            # ── Check 2: Proactive restart ONCE per day at a fixed local time ──
+            # Restarts the bot daily at DAILY_RESTART_HOUR_LOCAL (Israel midnight)
+            # to prevent any long-uptime socket/memory leak from yfinance. Fires
+            # once per calendar day — the first health-check after the target hour.
+            _lnow = _local_now()
+            if _lnow.hour >= DAILY_RESTART_HOUR_LOCAL and last_daily_restart_date != _lnow.date():
+                log(f"Daily proactive restart at {_lnow:%H:%M} ({LOCAL_TZ_NAME}) "
+                    f"(prevents socket leak from yfinance)")
+                try:
+                    bot_proc.terminate()
+                    bot_proc.wait(timeout=30)
+                except Exception:
+                    bot_proc.kill()
+                    time.sleep(5)
 
-                    wait_for_port_free(PORT, max_wait=60)
-                    bot_proc = start_bot()
-                    last_proactive_restart = now
-                    continue
-                # else: market is OPEN and under the hard cap → DEFER the restart
-                # (don't interrupt trading); re-evaluate on the next health-check loop.
+                wait_for_port_free(PORT, max_wait=60)
+                bot_proc = start_bot()
+                last_daily_restart_date = _lnow.date()
+                last_proactive_restart = now
+                continue
 
             # ── Check 3: Is port actually listening? ─────────────────────
             if not is_port_listening(PORT):
