@@ -877,6 +877,45 @@ COMMAND_HANDLERS = {
 COMMAND_HANDLERS["drawdown"] = handle_drawdown_command
 
 
+async def handle_benchmark_command() -> str:
+    """Handle /sp500 — compare the bot's performance vs the S&P 500 (the real test)."""
+    try:
+        from benchmark_compare import compare_to_benchmark
+        spy = await compare_to_benchmark("SPY", days=30)
+        if spy.win_rate_vs_market == "insufficient_data" or (
+            spy.bot_return_pct == 0 and spy.benchmark_return_pct == 0
+        ):
+            return (
+                "📊 <b>הבוט מול S&amp;P 500</b>\n"
+                "━━━━━━━━━━━━━━━━\n"
+                "ℹ️ עדיין אין מספיק עסקאות סגורות להשוואה אמינה.\n"
+                "תן לבוט לרוץ עוד — זה הלוח שיגיד לך אם הוא מנצח את השוק."
+            )
+        beating = spy.bot_return_pct > spy.benchmark_return_pct
+        verdict = "🟢 מנצח את השוק!" if beating else "🔴 מפסיד לשוק"
+        note = (
+            "יפה — אבל צריך חודשים של נתונים כדי שזה יהיה אמין."
+            if beating else
+            "כרגע קניית מדד פשוטה (SPY) היתה עדיפה — נתון חשוב להחלטה על כסף אמיתי."
+        )
+        return (
+            "📊 <b>הבוט מול S&amp;P 500 (30 ימים)</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            f"🤖 תשואת הבוט: <b>{spy.bot_return_pct:+.2f}%</b>\n"
+            f"📈 תשואת S&amp;P 500: <b>{spy.benchmark_return_pct:+.2f}%</b>\n"
+            f"⚖️ פער: <b>{spy.bot_return_pct - spy.benchmark_return_pct:+.2f}%</b>\n"
+            f"⚡ אלפא (שנתי): {spy.alpha_pct:+.2f}%\n"
+            "━━━━━━━━━━━━━━━━\n"
+            f"📌 <b>{verdict}</b>\n"
+            f"💡 {note}"
+        )
+    except Exception as e:
+        return f"❌ שגיאה בהשוואה ל-S&amp;P 500: {type(e).__name__}"
+
+
+COMMAND_HANDLERS["benchmark"] = handle_benchmark_command
+
+
 async def handle_validate_command(args: str = "") -> str:
     """
     /validate — run 6-month backtest with current filters.
