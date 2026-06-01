@@ -485,7 +485,8 @@ def _llm_reply(user_message: str, context: dict, history: list | None = None) ->
             f"   💰 {_fmt_pnl(p['pnl'])}  |  🛑 Stop: {_fmt_price(stop)}\n"
             f"   ⏱ הוחזק: {held_str}"
         )
-    pos_text = "\n".join(pos_lines) if pos_lines else "אין פוזיציות פתוחות כרגע"
+    _pos_count = len(positions)
+    pos_text = (f"📊 הבוט קנה ומחזיק כרגע {_pos_count} מניות:\n" + "\n".join(pos_lines)) if pos_lines else "📭 הבוט לא מחזיק אף מניה כרגע (0 פוזיציות פתוחות)"
 
     # News
     news_text = " | ".join(context.get("latest_news", [])[:3]) or "אין חדשות"

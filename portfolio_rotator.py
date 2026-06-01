@@ -60,21 +60,21 @@ async def find_weakest_position() -> Optional[RotationCandidate]:
         candidates = []
         for pos in positions:
             try:
-                trade = next((t for t in open_trades if t["ticker"] == pos.symbol), None)
+                trade = next((t for t in open_trades if t["ticker"] == pos.get('ticker')), None)
                 if not trade:
                     continue
 
                 # Get current score
                 try:
                     score_result = await asyncio.wait_for(
-                        asyncio.to_thread(get_composite_score, pos.symbol, 5),
+                        asyncio.to_thread(get_composite_score, pos.get('ticker'), 5),
                         timeout=15,
                     )
                     score = score_result.get("composite_score", 50)
                 except Exception:
                     score = 50
 
-                plpc = float(pos.unrealized_plpc) * 100
+                plpc = float(pos.get('unrealized_plpc', 0)) * 100
 
                 # Days held
                 try:
@@ -104,7 +104,7 @@ async def find_weakest_position() -> Optional[RotationCandidate]:
                     rotate_reason = f"Down {plpc:.1f}% after {days_held:.0f} days"
 
                 candidates.append(RotationCandidate(
-                    ticker=pos.symbol,
+                    ticker=pos.get('ticker'),
                     trade_id=trade["id"],
                     score=score,
                     plpc=plpc,
@@ -114,7 +114,7 @@ async def find_weakest_position() -> Optional[RotationCandidate]:
                 ))
 
             except Exception as e:
-                logger.debug(f"Rotation scoring failed for {pos.symbol}: {e}")
+                logger.debug(f"Rotation scoring failed for {pos.get('ticker')}: {e}")
 
         if not candidates:
             return None
@@ -211,14 +211,14 @@ async def get_rotation_report() -> str:
         scored = []
         for pos in positions:
             try:
-                plpc = float(pos.unrealized_plpc) * 100
+                plpc = float(pos.get('unrealized_plpc', 0)) * 100
                 # Quick score
                 score_r = await asyncio.wait_for(
-                    asyncio.to_thread(get_composite_score, pos.symbol, 5),
+                    asyncio.to_thread(get_composite_score, pos.get('ticker'), 5),
                     timeout=10,
                 )
                 score = score_r.get("composite_score", 50)
-                scored.append((pos.symbol, score, plpc))
+                scored.append((pos.get('ticker'), score, plpc))
             except Exception:
                 pass
 

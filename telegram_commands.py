@@ -527,7 +527,7 @@ async def handle_positions_command() -> str:
         from datetime import datetime, timezone
         positions = await asyncio.to_thread(broker.get_positions)
         if not positions:
-            return "📊 <b>אין פוזיציות פתוחות</b>\n🤖 הבוט מחפש הזדמנויות..."
+            return "📊 <b>הבוט לא מחזיק אף מניה כרגע</b> (0 פוזיציות)\n🤖 הבוט מחפש הזדמנויות..."
 
         open_trades = await asyncio.to_thread(database.get_open_trades)
         trade_map = {t["ticker"]: t for t in (open_trades or [])}
@@ -536,10 +536,10 @@ async def handle_positions_command() -> str:
         total_pnl = sum(float(p.get('unrealized_pl', 0)) for p in positions)
         total_val = sum(float(p.get('market_value', 0)) for p in positions)
 
-        lines = ["📍 <b>פוזיציות פתוחות</b>", "━━━━━━━━━━━━━━━━"]
+        lines = [f"📍 <b>הבוט קנה ומחזיק {len(positions)} מניות</b>", "━━━━━━━━━━━━━━━━"]
         stale_tickers = []
 
-        for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
+        for p in sorted(positions, key=lambda x: float(x.get('unrealized_plpc', 0)), reverse=True):
             pl   = float(p.get('unrealized_pl', 0))
             plpc = float(p.get('unrealized_plpc', 0)) * 100
             cur  = float(p.get('current_price', 0))
@@ -623,17 +623,17 @@ async def handle_tv_watchlist_command(args: str = "") -> str:
         winners = sum(1 for p in positions if float(p.get('unrealized_pl', 0)) >= 0)
 
         # Sort: winners first, then by % gain
-        sorted_pos = sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)
+        sorted_pos = sorted(positions, key=lambda x: float(x.get('unrealized_plpc', 0)), reverse=True)
 
         for pos in sorted_pos:
-            pl   = float(pos.unrealized_pl)
-            plpc = float(pos.unrealized_plpc) * 100
-            cur  = float(pos.current_price)
+            pl   = float(pos.get('unrealized_pl', 0))
+            plpc = float(pos.get('unrealized_plpc', 0)) * 100
+            cur  = float(pos.get('current_price', 0))
             qty  = float(pos.qty)
-            val  = float(pos.market_value)
+            val  = float(pos.get('market_value', 0))
             em   = "🟢" if pl >= 0 else "🔴"
 
-            trade = trade_map.get(pos.symbol, {})
+            trade = trade_map.get(pos.get('ticker'), {})
             days_held = 0
             entry_price = 0.0
             try:
@@ -667,7 +667,7 @@ async def handle_tv_watchlist_command(args: str = "") -> str:
 
             # Row — ticker is a TradingView link
             lines.append(
-                f"{em} <b>{_tv_link(pos.symbol)}</b>\n"
+                f"{em} <b>{_tv_link(pos.get('ticker'))}</b>\n"
                 f"   ${cur:.2f} | <b>{plpc:+.1f}%</b> | ${pl:+.2f}"
                 f"{entry_str} | {age_str}{stop_info}"
             )
@@ -1208,7 +1208,7 @@ async def handle_partial_command(args: str = "") -> str:
                 ticker = trade["ticker"]
                 fired = _stages_fired.get(tid, set())
                 pos = pos_map.get(ticker)
-                plpc = float(pos.unrealized_plpc) * 100 if pos else 0
+                plpc = float(pos.get('unrealized_plpc', 0)) * 100 if pos else 0
 
                 stage_icons = []
                 for s in STAGES:

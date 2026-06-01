@@ -1012,12 +1012,12 @@ async def notify_morning_briefing() -> None:
                 lines.append("")
 
                 # Top 3 positions
-                sorted_pos = sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)
+                sorted_pos = sorted(positions, key=lambda x: float(x.get('unrealized_plpc', 0)), reverse=True)
                 for pos in sorted_pos[:3]:
-                    plpc = float(pos.unrealized_plpc) * 100
-                    pl = float(pos.unrealized_pl)
+                    plpc = float(pos.get('unrealized_plpc', 0)) * 100
+                    pl = float(pos.get('unrealized_pl', 0))
                     em = "🟢" if pl >= 0 else "🔴"
-                    tv_link = f'<a href="https://www.tradingview.com/chart/?symbol={pos.symbol}">{pos.symbol}</a>'
+                    tv_link = f'<a href="https://www.tradingview.com/chart/?symbol={pos.get('ticker')}">{pos.get('ticker')}</a>'
                     lines.append(f"  {em} {tv_link}  {plpc:+.1f}%  ${pl:+.2f}")
             else:
                 lines.append("📭 אין פוזיציות פתוחות — הבוט מחפש הזדמנויות")
@@ -1864,7 +1864,7 @@ async def send_portfolio_card() -> None:
 
         # Per position with stop distance
         trade_map = {t["ticker"]: t for t in (open_trades or [])}
-        for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
+        for p in sorted(positions, key=lambda x: float(x.get('unrealized_plpc', 0)), reverse=True):
             pl   = float(p.get('unrealized_pl', 0))
             plpc = float(p.get('unrealized_plpc', 0)) * 100
             cur  = float(p.get('current_price', 0))
