@@ -1004,8 +1004,8 @@ async def notify_morning_briefing() -> None:
             trade_map = {t["ticker"]: t for t in (open_trades or [])}
 
             if positions:
-                total_pnl = sum(float(p.unrealized_pl) for p in positions)
-                winners = sum(1 for p in positions if float(p.unrealized_pl) >= 0)
+                total_pnl = sum(float(p.get('unrealized_pl', 0)) for p in positions)
+                winners = sum(1 for p in positions if float(p.get('unrealized_pl', 0)) >= 0)
                 pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
                 lines.append(f"📍 <b>פוזיציות פתוחות: {len(positions)}</b>")
                 lines.append(f"{pnl_emoji} רווח/הפסד: <b>${total_pnl:+,.2f}</b> | 🏆 {winners}/{len(positions)} ברווח")
@@ -1469,7 +1469,7 @@ async def notify_correlation_analysis() -> None:
             await send_message("✅ לא יש פוזיציות פתוחות")
             return
 
-        tickers = [p.symbol for p in positions]
+        tickers = [p.get('ticker') for p in positions]
         correlation_risk = await get_position_correlation_risk(tickers)
 
         lines = [
@@ -1707,8 +1707,8 @@ async def notify_live_positions() -> None:
             await send_message("📊 <b>אין פוזיציות פתוחות כרגע</b>")
             return
 
-        total_value = sum(float(p.market_value) for p in positions)
-        total_pnl   = sum(float(p.unrealized_pl) for p in positions)
+        total_value = sum(float(p.get('market_value', 0)) for p in positions)
+        total_pnl   = sum(float(p.get('unrealized_pl', 0)) for p in positions)
 
         lines = [
             "📍 <b>פוזיציות פתוחות</b>",
@@ -1717,16 +1717,16 @@ async def notify_live_positions() -> None:
 
         for p in positions:
             try:
-                mv   = float(p.market_value)
-                pl   = float(p.unrealized_pl)
-                plpc = float(p.unrealized_plpc) * 100
-                cur  = float(p.current_price)
-                avg  = float(p.avg_entry_price)
+                mv   = float(p.get('market_value', 0))
+                pl   = float(p.get('unrealized_pl', 0))
+                plpc = float(p.get('unrealized_plpc', 0)) * 100
+                cur  = float(p.get('current_price', 0))
+                avg  = float(p.get('avg_entry_price', 0))
                 qty  = float(p.qty)
 
                 pl_emoji = "🟢" if pl >= 0 else "🔴"
                 lines.append(
-                    f"{pl_emoji} <b>{p.symbol}</b>  "
+                    f"{pl_emoji} <b>{p.get('ticker')}</b>  "
                     f"{qty:.0f}×${cur:.2f}  "
                     f"P&L: <b>${pl:+.2f}</b> ({plpc:+.1f}%)"
                 )
@@ -1734,7 +1734,7 @@ async def notify_live_positions() -> None:
                 # Show stop from DB if available
                 try:
                     open_trades = await asyncio.to_thread(database.get_open_trades)
-                    trade_rec = next((t for t in open_trades if t["ticker"] == p.symbol), None)
+                    trade_rec = next((t for t in open_trades if t["ticker"] == p.get('ticker')), None)
                     if trade_rec and trade_rec.get("atr_stop_price"):
                         stop = trade_rec["atr_stop_price"]
                         dist = (cur - stop) / cur * 100
@@ -1743,7 +1743,7 @@ async def notify_live_positions() -> None:
                     pass
 
             except Exception as e:
-                lines.append(f"  ⚠️ {p.symbol}: error ({e})")
+                lines.append(f"  ⚠️ {p.get('ticker')}: error ({e})")
 
         lines.extend([
             "━━━━━━━━━━━━━━━━",
@@ -1832,8 +1832,8 @@ async def send_portfolio_card() -> None:
             )
             return
 
-        total_val  = sum(float(p.market_value) for p in positions)
-        total_pnl  = sum(float(p.unrealized_pl) for p in positions)
+        total_val  = sum(float(p.get('market_value', 0)) for p in positions)
+        total_pnl  = sum(float(p.get('unrealized_pl', 0)) for p in positions)
         total_cost = sum(float(p.cost_basis) for p in positions)
         total_pct  = (total_pnl / total_cost * 100) if total_cost > 0 else 0
 
@@ -1865,15 +1865,15 @@ async def send_portfolio_card() -> None:
         # Per position with stop distance
         trade_map = {t["ticker"]: t for t in (open_trades or [])}
         for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
-            pl   = float(p.unrealized_pl)
-            plpc = float(p.unrealized_plpc) * 100
-            cur  = float(p.current_price)
+            pl   = float(p.get('unrealized_pl', 0))
+            plpc = float(p.get('unrealized_plpc', 0)) * 100
+            cur  = float(p.get('current_price', 0))
             icon = "🟢" if pl >= 0 else "🔴"
-            trade = trade_map.get(p.symbol, {})
+            trade = trade_map.get(p.get('ticker'), {})
             stop  = trade.get("atr_stop_price")
             stop_str = f" | 🛑{((cur-stop)/cur*100):.1f}%↓" if stop else ""
             lines.append(
-                f"{icon} <b>{p.symbol}</b>  "
+                f"{icon} <b>{p.get('ticker')}</b>  "
                 f"${cur:.2f}  {plpc:+.1f}%"
                 f"{stop_str}"
             )

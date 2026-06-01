@@ -320,7 +320,7 @@ async def handle_confluence_command() -> str:
 
         # Get watchlist
         positions = await asyncio.to_thread(broker.get_positions)
-        watchlist = [p.symbol for p in positions[:8]]
+        watchlist = [p.get('ticker') for p in positions[:8]]
 
         if not watchlist:
             return "📊 No positions to analyze. Add positions first."
@@ -533,20 +533,20 @@ async def handle_positions_command() -> str:
         trade_map = {t["ticker"]: t for t in (open_trades or [])}
         now = datetime.now(timezone.utc)
 
-        total_pnl = sum(float(p.unrealized_pl) for p in positions)
-        total_val = sum(float(p.market_value) for p in positions)
+        total_pnl = sum(float(p.get('unrealized_pl', 0)) for p in positions)
+        total_val = sum(float(p.get('market_value', 0)) for p in positions)
 
         lines = ["📍 <b>פוזיציות פתוחות</b>", "━━━━━━━━━━━━━━━━"]
         stale_tickers = []
 
         for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True):
-            pl   = float(p.unrealized_pl)
-            plpc = float(p.unrealized_plpc) * 100
-            cur  = float(p.current_price)
+            pl   = float(p.get('unrealized_pl', 0))
+            plpc = float(p.get('unrealized_plpc', 0)) * 100
+            cur  = float(p.get('current_price', 0))
             em   = "🟢" if pl >= 0 else "🔴"
 
             # Days held
-            trade = trade_map.get(p.symbol, {})
+            trade = trade_map.get(p.get('ticker'), {})
             days_held = 0
             try:
                 et = trade.get("entry_time")
@@ -560,7 +560,7 @@ async def handle_positions_command() -> str:
 
             age_icon = " ⚠️" if days_held > 5 else " 🕐" if days_held > 2 else ""
             if days_held > 5:
-                stale_tickers.append(p.symbol)
+                stale_tickers.append(p.get('ticker'))
 
             # Stop distance
             atr_stop = trade.get("atr_stop_price")
@@ -568,7 +568,7 @@ async def handle_positions_command() -> str:
 
             # Ticker is a clickable TradingView link
             lines.append(
-                f"{em} <b>{_tv_link(p.symbol)}</b>  ${cur:.2f}  "
+                f"{em} <b>{_tv_link(p.get('ticker'))}</b>  ${cur:.2f}  "
                 f"<b>{plpc:+.1f}%</b>  ${pl:+.2f}  "
                 f"{days_held:.0f}d{age_icon}{stop_str}"
             )
@@ -618,9 +618,9 @@ async def handle_tv_watchlist_command(args: str = "") -> str:
             "",
         ]
 
-        total_pnl = sum(float(p.unrealized_pl) for p in positions)
-        total_val = sum(float(p.market_value) for p in positions)
-        winners = sum(1 for p in positions if float(p.unrealized_pl) >= 0)
+        total_pnl = sum(float(p.get('unrealized_pl', 0)) for p in positions)
+        total_val = sum(float(p.get('market_value', 0)) for p in positions)
+        winners = sum(1 for p in positions if float(p.get('unrealized_pl', 0)) >= 0)
 
         # Sort: winners first, then by % gain
         sorted_pos = sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)
@@ -698,13 +698,13 @@ async def handle_top_command() -> str:
         if not positions:
             return "📊 אין פוזיציות"
 
-        sorted_pos = sorted(positions, key=lambda p: float(p.unrealized_plpc), reverse=True)
+        sorted_pos = sorted(positions, key=lambda p: float(p.get('unrealized_plpc', 0)), reverse=True)
         lines = ["🏆 <b>ביצועים היום</b>", "━━━━━━━━━━━━"]
         for p in sorted_pos[:8]:
-            plpc = float(p.unrealized_plpc) * 100
-            pl   = float(p.unrealized_pl)
+            plpc = float(p.get('unrealized_plpc', 0)) * 100
+            pl   = float(p.get('unrealized_pl', 0))
             em   = "🟢" if pl >= 0 else "🔴"
-            lines.append(f"{em} {p.symbol}: {plpc:+.1f}% (${pl:+.2f})")
+            lines.append(f"{em} {p.get('ticker')}: {plpc:+.1f}% (${pl:+.2f})")
         return "\n".join(lines)
     except Exception as e:
         return f"❌ Error: {e}"
@@ -779,7 +779,7 @@ async def handle_sector_command() -> str:
             return "📊 אין פוזיציות פתוחות"
 
         from sector_guard import get_portfolio_sector_distribution
-        tickers = [p.symbol for p in positions]
+        tickers = [p.get('ticker') for p in positions]
         distribution = get_portfolio_sector_distribution(tickers)
 
         lines = ["🏭 <b>פיזור סקטורים</b>", "━━━━━━━━━━━━"]
@@ -1192,7 +1192,7 @@ async def handle_partial_command(args: str = "") -> str:
         stats = get_partial_exit_stats()
         open_trades = await asyncio.to_thread(database.get_open_trades)
         positions = await asyncio.to_thread(broker.get_positions)
-        pos_map = {p.symbol: p for p in (positions or [])}
+        pos_map = {p.get('ticker'): p for p in (positions or [])}
 
         lines = [
             "💰 <b>Partial Exit Status</b>",

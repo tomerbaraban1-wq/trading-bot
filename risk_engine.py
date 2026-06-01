@@ -366,14 +366,14 @@ async def analyze_portfolio_risk() -> dict:
 
         # Get current positions for concentration analysis
         positions = await asyncio.to_thread(broker.get_positions)
-        total_value = sum(float(p.market_value) for p in positions) if positions else 0
+        total_value = sum(float(p.get('market_value', 0)) for p in positions) if positions else 0
 
         concentration = {}
         if positions and total_value > 0:
             for p in positions:
-                pct = (float(p.market_value) / total_value * 100)
+                pct = (float(p.get('market_value', 0)) / total_value * 100)
                 if pct > 25:  # Concentration risk threshold
-                    concentration[p.symbol] = {
+                    concentration[p.get('ticker')] = {
                         "pct_of_portfolio": pct,
                         "warning": "⚠️ Over 25% of portfolio - high concentration risk"
                     }

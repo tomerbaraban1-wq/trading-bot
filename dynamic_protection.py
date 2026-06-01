@@ -372,8 +372,8 @@ async def analyze_all_position_protections() -> list[dict]:
         recommendations = []
         for p in positions:
             try:
-                entry_price = float(p.avg_entry_price)
-                current_price = float(p.current_price)
+                entry_price = float(p.get('avg_entry_price', 0))
+                current_price = float(p.get('current_price', 0))
 
                 # Estimate days held (would need actual purchase date from DB)
                 days_held = 5  # Placeholder
@@ -382,7 +382,7 @@ async def analyze_all_position_protections() -> list[dict]:
                 current_stop = entry_price * 0.98  # Default 2% stop
 
                 analysis = await analyze_position_protection(
-                    ticker=p.symbol,
+                    ticker=p.get('ticker'),
                     entry_price=entry_price,
                     current_price=current_price,
                     current_stop=current_stop,
@@ -393,7 +393,7 @@ async def analyze_all_position_protections() -> list[dict]:
                     recommendations.append(analysis)
 
             except Exception as e:
-                logger.debug(f"Protection analysis for {p.symbol} failed: {e}")
+                logger.debug(f"Protection analysis for {p.get('ticker')} failed: {e}")
 
         return recommendations
 

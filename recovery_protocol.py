@@ -71,11 +71,11 @@ async def tighten_stops_after_loss() -> list[str]:
         trade_map = {t["ticker"]: t for t in (open_trades or [])}
 
         for p in positions:
-            trade = trade_map.get(p.symbol)
+            trade = trade_map.get(p.get('ticker'))
             if not trade:
                 continue
 
-            cur_price = float(p.current_price)
+            cur_price = float(p.get('current_price', 0))
             cur_stop = trade.get("atr_stop_price")
             if not cur_stop:
                 continue
@@ -92,9 +92,9 @@ async def tighten_stops_after_loss() -> list[str]:
                     new_stop,
                     trade.get("high_watermark", cur_price),
                 )
-                tightened.append(p.symbol)
+                tightened.append(p.get('ticker'))
                 logger.info(
-                    f"[RECOVERY] {p.symbol}: tightened stop "
+                    f"[RECOVERY] {p.get('ticker')}: tightened stop "
                     f"${cur_stop:.2f} → ${new_stop:.2f}"
                 )
 

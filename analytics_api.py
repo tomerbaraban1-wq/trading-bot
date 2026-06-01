@@ -340,7 +340,7 @@ async def optimize_portfolio_endpoint(
     try:
         import broker
         positions = await asyncio.to_thread(broker.get_positions)
-        tickers = [p.symbol for p in positions]
+        tickers = [p.get('ticker') for p in positions]
 
         if not tickers:
             return {"error": "No positions to optimize"}

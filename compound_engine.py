@@ -294,7 +294,7 @@ async def get_compounding_strategy() -> dict:
 
         # Get current portfolio value
         positions = await asyncio.to_thread(broker.get_positions)
-        portfolio_value = sum(float(p.market_value) for p in positions) if positions else 0
+        portfolio_value = sum(float(p.get('market_value', 0)) for p in positions) if positions else 0
 
         # Get current performance
         perf = await asyncio.to_thread(track_live_performance)

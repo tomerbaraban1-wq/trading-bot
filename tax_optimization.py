@@ -77,7 +77,7 @@ async def find_tax_loss_harvest_opportunities() -> list[dict]:
 
         for p in positions:
             try:
-                unrealized_pnl = float(p.unrealized_pl)
+                unrealized_pnl = float(p.get('unrealized_pl', 0))
                 cost_basis = float(p.cost_basis)
 
                 if unrealized_pnl < 0:
@@ -85,7 +85,7 @@ async def find_tax_loss_harvest_opportunities() -> list[dict]:
 
                     if loss_pct < -5:
                         opportunities.append({
-                            "ticker": p.symbol,
+                            "ticker": p.get('ticker'),
                             "unrealized_loss": unrealized_pnl,
                             "loss_pct": loss_pct,
                             "tax_benefit_estimate": abs(unrealized_pnl) * 0.20,

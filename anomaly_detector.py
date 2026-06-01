@@ -350,7 +350,7 @@ async def scan_portfolio_anomalies() -> dict:
         if not positions:
             return {"anomalies": [], "count": 0}
 
-        tickers = [p.symbol for p in positions[:10]]  # Limit
+        tickers = [p.get('ticker') for p in positions[:10]]  # Limit
         anomalies = []
 
         # Scan each position

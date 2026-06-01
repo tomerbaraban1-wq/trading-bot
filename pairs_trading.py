@@ -329,7 +329,7 @@ async def calculate_portfolio_beta() -> dict:
         spy_returns = spy_data.pct_change().dropna()
 
         # Calculate weighted beta
-        total_value = sum(float(p.market_value) for p in positions)
+        total_value = sum(float(p.get('market_value', 0)) for p in positions)
         if total_value == 0:
             return {"error": "Zero portfolio value"}
 
@@ -338,8 +338,8 @@ async def calculate_portfolio_beta() -> dict:
 
         for p in positions:
             try:
-                weight = float(p.market_value) / total_value
-                ticker_data = yf.download(p.symbol, start=start_date, end=end_date, progress=False, auto_adjust=True)["Close"]
+                weight = float(p.get('market_value', 0)) / total_value
+                ticker_data = yf.download(p.get('ticker'), start=start_date, end=end_date, progress=False, auto_adjust=True)["Close"]
                 ticker_returns = ticker_data.pct_change().dropna()
 
                 # Align indices
@@ -353,11 +353,11 @@ async def calculate_portfolio_beta() -> dict:
 
                 if variance > 0:
                     beta = covariance / variance
-                    individual_betas[p.symbol] = float(beta)
+                    individual_betas[p.get('ticker')] = float(beta)
                     weighted_beta += weight * beta
 
             except Exception as e:
-                logger.debug(f"Beta calc for {p.symbol} failed: {e}")
+                logger.debug(f"Beta calc for {p.get('ticker')} failed: {e}")
 
         # Interpretation
         if weighted_beta > 1.3:

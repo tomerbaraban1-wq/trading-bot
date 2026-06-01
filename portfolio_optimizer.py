@@ -334,12 +334,12 @@ async def analyze_rebalancing_needs() -> dict:
             return {"error": "No positions"}
 
         # Current allocation
-        total_value = sum(float(p.market_value) for p in positions)
+        total_value = sum(float(p.get('market_value', 0)) for p in positions)
         if total_value == 0:
             return {"error": "Zero portfolio value"}
 
         current_allocation = {
-            p.symbol: float(p.market_value) / total_value
+            p.get('ticker'): float(p.get('market_value', 0)) / total_value
             for p in positions
         }
 
