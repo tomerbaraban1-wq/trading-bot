@@ -170,6 +170,8 @@ async def send_menu() -> bool:
             [{"text": "🤖 מצב הבוט"},    {"text": "🔢 כמה עסקאות"}],
             # Row 4: today + all commands
             [{"text": "📅 מה היה היום"}, {"text": "📋 כל הפקודות"}],
+            # Row 5: S&P comparison (the real test) + positions with holdings count
+            [{"text": "📊 מול S&P 500"}, {"text": "📍 פוזיציות"}],
         ],
         "resize_keyboard": True,
         "persistent": True,

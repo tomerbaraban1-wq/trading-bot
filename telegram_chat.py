@@ -4785,6 +4785,7 @@ async def handle_telegram_update(update: dict) -> dict:
         "📈 מניות + TradingView": "/מניות",
         "💰 P&L מהיר":       "/top",
         "📍 פוזיציות":       "/positions",
+        "📊 מול S&P 500":    "/sp500",
         "📊 ביצועים":        "/performance",
         "⚖️ סיכון":          "/risk",
         "🌍 שוק עכשיו":      "/market",
