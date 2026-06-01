@@ -48,7 +48,7 @@ async def send_hourly_pulse() -> None:
 
         cash = float(b.get("cash_available", 0))
         equity = float(b.get("equity", 0))
-        open_pnl = sum(float(p.unrealized_pl) for p in (positions or []))
+        open_pnl = sum(float(p.get("unrealized_pl", 0) or 0) for p in (positions or []))
         n_pos = len(positions or [])
 
         now_il = datetime.now(timezone.utc) + timedelta(hours=3)
@@ -57,10 +57,11 @@ async def send_hourly_pulse() -> None:
         pnl_em = "🟢" if open_pnl >= 0 else "🔴"
         pos_lines = ""
         if positions:
-            for p in sorted(positions, key=lambda x: float(x.unrealized_plpc), reverse=True)[:3]:
-                plpc = float(p.unrealized_plpc) * 100
+            for p in sorted(positions, key=lambda x: float(x.get("unrealized_plpc", 0) or 0), reverse=True)[:3]:
+                plpc = float(p.get("unrealized_plpc", 0) or 0) * 100
                 em = "📈" if plpc >= 0 else "📉"
-                tv = f'<a href="https://www.tradingview.com/chart/?symbol={p.symbol}">{p.symbol}</a>'
+                _tk = p.get("ticker", "?")
+                tv = f'<a href="https://www.tradingview.com/chart/?symbol={_tk}">{_tk}</a>'
                 pos_lines += f"\n  {em} {tv} {plpc:+.1f}%"
 
         await send_message(

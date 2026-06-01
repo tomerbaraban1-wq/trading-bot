@@ -148,15 +148,17 @@ async def announce_scan_done(n_passed: int, n_failed: int, top_picks: list[str] 
 
 
 async def announce_training_start(mode: str, tickers: list[str]) -> None:
-    """🧠 Bot starts learning from history."""
-    sample = ", ".join(tickers[:6])
+    """🧠 Bot starts learning from history — each ticker is a clickable TradingView chart link."""
+    def _tv(t):
+        return f'<a href="https://www.tradingview.com/chart/?symbol={t}">{t}</a>'
+    sample = " · ".join(_tv(t) for t in tickers[:6])
     if len(tickers) > 6:
         sample += f" + {len(tickers) - 6} עוד"
     await broadcast(
         "training_start",
         f"🧠 <b>מתחיל אימון — {mode}</b>  <i>({_il_time_str()})</i>\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"📋 מניות: {sample}\n"
+        f"📈 מניות (לחץ לגרף TradingView):\n{sample}\n"
         f"⏳ מנתח היסטוריה...",
         priority=Priority.INFO,
     )

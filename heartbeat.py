@@ -5177,8 +5177,8 @@ async def market_closed_training_loop():
                     _create_background_task(send_message(
                         f"🧠 <b>מתחיל אימון — {mode_label}</b>\n"
                         f"━━━━━━━━━━━━━━━━\n"
-                        f"📋 מניות לניתוח:\n"
-                        + "\n".join(f"   • {t}" for t in tickers)
+                        f"📈 מניות לניתוח (לחץ לגרף):\n"
+                        + "\n".join(f'   • <a href="https://www.tradingview.com/chart/?symbol={t}">{t}</a>' for t in tickers)
                         + f"\n\n⏳ מנתח היסטוריה של כל מניה..."
                     ))
 
