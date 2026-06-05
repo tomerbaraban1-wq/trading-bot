@@ -82,19 +82,18 @@ async def _fetch_updates(session: aiohttp.ClientSession, token: str, offset: int
             # Special handling for 409 (webhook conflict)
             if resp.status == 409:
                 _consecutive_409 += 1
-                if _consecutive_409 == 1:
-                    logger.warning(f"[POLLING] 409 conflict — webhook is active, polling cannot run")
-                elif _consecutive_409 >= _MAX_409_BEFORE_PAUSE:
-                    # After repeated 409s — take over by deleting webhook
-                    logger.warning(f"[POLLING] {_consecutive_409}x consecutive 409 — taking over from webhook")
-                    if await _delete_webhook(token):
-                        _consecutive_409 = 0
-                    else:
-                        # Couldn't delete — pause for 60s
-                        _pause_until_ts = _t.time() + 60
-                        logger.warning("[POLLING] Pausing polling for 60s")
-                # Wait 2s before next attempt (don't spam)
-                await asyncio.sleep(2)
+                # AGGRESSIVE takeover: delete the conflicting webhook on the FIRST
+                # 409 (was: wait for 5 → ~10-15s of lost commands). A second instance
+                # (e.g. a Render deploy) keeps re-registering a webhook that steals
+                # the user's commands from local polling — reclaim within ~1-2s.
+                logger.warning("[POLLING] 409 conflict — webhook active; reclaiming polling NOW")
+                if await _delete_webhook(token):
+                    _consecutive_409 = 0
+                else:
+                    # Couldn't delete — short cool-down, then retry
+                    _pause_until_ts = _t.time() + 30
+                    logger.warning("[POLLING] deleteWebhook failed — retrying in 30s")
+                await asyncio.sleep(1)   # brief pause, then reclaim
             else:
                 logger.warning(f"[POLLING] getUpdates returned {resp.status}: {body[:100]}")
             return []
