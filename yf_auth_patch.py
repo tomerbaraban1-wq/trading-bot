@@ -31,8 +31,8 @@ import time
 logger = logging.getLogger("yf_auth_patch")
 
 # Minimum spacing between yfinance HTTP requests (process-wide). Smooths the
-# startup burst that trips Yahoo's rate limit. Modest so scans stay fast.
-_MIN_INTERVAL = 0.10  # seconds
+# bursts that trip Yahoo's rate limit. Modest so scans stay fast.
+_MIN_INTERVAL = 0.15  # seconds (tuned up from 0.10 to cut residual 401 bursts)
 
 _throttle_lock = threading.Lock()
 _last_call = [0.0]
@@ -87,16 +87,21 @@ def install() -> bool:
                                       params=params, timeout=timeout, data=data)
 
         # Still unauthorized after yfinance's own retry → the cached crumb/cookie
-        # is stale. Clear it and retry ONCE with genuinely fresh credentials.
-        if getattr(resp, "status_code", 200) in (401, 403):
+        # is stale (or a heavy burst is being rate-limited). Clear it and retry up
+        # to TWICE with fresh credentials and a growing backoff, so requests caught
+        # in a burst get a couple of chances to recover before giving up.
+        attempt = 0
+        while getattr(resp, "status_code", 200) in (401, 403) and attempt < 2:
+            attempt += 1
             _reset_auth(self)
-            logger.info("yf patch: %s -> reset crumb+cookie, retrying with fresh auth",
-                        resp.status_code)
+            time.sleep(0.3 * attempt)  # 0.3s, then 0.6s — let Yahoo settle
+            logger.info("yf patch: %s -> reset crumb+cookie, retry #%d",
+                        resp.status_code, attempt)
             try:
-                return _orig_make_request(self, url, request_method, body=body,
+                resp = _orig_make_request(self, url, request_method, body=body,
                                           params=params, timeout=timeout, data=data)
             except Exception:
-                return resp  # callers already degrade gracefully on a bad response
+                break  # callers already degrade gracefully on failure
         return resp
 
     try:
