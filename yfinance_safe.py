@@ -22,6 +22,15 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Reuse the singleton crumb/cookie reset from the OHLCV cache so both data paths
+# self-heal from Yahoo's 401 "Invalid Crumb" the same way. Kept optional so this
+# module still works on its own if yfinance_cache is unavailable.
+try:
+    from yfinance_cache import reset_yf_auth as _reset_yf_auth
+except Exception:  # pragma: no cover
+    def _reset_yf_auth() -> bool:
+        return False
+
 # Negative result cache: ticker → expiry_ts
 _negative_cache: dict[str, float] = {}
 _NEGATIVE_TTL = 300   # 5 minutes — don't retry failed tickers too often
@@ -61,6 +70,7 @@ def get_ticker_info_safe(ticker: str, max_retries: int = 2) -> Optional[dict]:
             last_error = str(e)
 
         if attempt < max_retries:
+            _reset_yf_auth()              # refresh a possibly-stale crumb before retry
             # Exponential backoff: 1s, 2s
             time.sleep(2 ** (attempt - 1))
 
@@ -94,6 +104,7 @@ def get_price_safe(ticker: str) -> Optional[float]:
                 return float(p)
     except Exception as e:
         logger.debug(f"[YF-SAFE] {ticker} price failed: {e}")
+        _reset_yf_auth()              # crumb may be stale — refresh for the next ticker
         _negative_cache[ticker] = time.time() + _NEGATIVE_TTL
 
     return None

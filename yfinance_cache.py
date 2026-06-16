@@ -41,6 +41,34 @@ _TTL_SECONDS = 300
 _stats = {"hits": 0, "misses": 0}
 
 
+def reset_yf_auth() -> bool:
+    """Clear yfinance's cached crumb+cookie so the NEXT request re-authenticates.
+
+    Yahoo periodically invalidates the per-process crumb; after that, every call
+    returns HTTP 401 "Invalid Crumb" until the process restarts. yfinance stores
+    the crumb+cookie on an internal *singleton* (``YfData``), so clearing those
+    two fields once self-heals EVERY yfinance call in the whole process — not
+    just this module. Verified: a fresh fetch re-auths automatically afterwards.
+
+    Best-effort and defensive: never raises, even if yfinance internals change.
+    Returns True if the reset was applied.
+    """
+    try:
+        from yfinance import data as _yfdata
+        inst = _yfdata.YfData()  # singleton instance yfinance uses internally
+        applied = False
+        for _attr in ("_crumb", "_cookie"):   # NOT _cookie_lock / _cookie_strategy
+            if hasattr(inst, _attr):
+                setattr(inst, _attr, None)
+                applied = True
+        if applied:
+            logger.info("[CACHE] reset yfinance crumb/cookie — will re-auth on next call")
+        return applied
+    except Exception as e:
+        logger.debug(f"[CACHE] reset_yf_auth no-op: {e}")
+        return False
+
+
 def get_ohlcv(
     ticker: str,
     period: str = "3mo",
@@ -99,6 +127,7 @@ def get_ohlcv(
             df = yf.download(ticker, **kwargs, auto_adjust=True, progress=False)
             if df is None or df.empty:
                 last_err = "empty result (possible rate-limit / 401)"
+                reset_yf_auth()                   # refresh a possibly-stale crumb before retry
                 time.sleep(0.4 * (attempt + 1))   # brief backoff, let yfinance refresh its crumb
                 continue
 
@@ -115,6 +144,7 @@ def get_ohlcv(
 
         except Exception as e:
             last_err = str(e)
+            reset_yf_auth()                       # refresh a possibly-stale crumb before retry
             time.sleep(0.4 * (attempt + 1))
 
     # All attempts failed — fall back to last-known-good data if we have any.
@@ -189,6 +219,7 @@ def prefetch_batch(tickers: list[str], period: str = "3mo") -> None:
                 logger.debug(f"[CACHE] prefetch: {ticker} extract failed — {e}")
 
     except Exception as e:
+        reset_yf_auth()   # a stale crumb is the usual cause — refresh for the next call
         logger.warning(f"[CACHE] batch prefetch failed — {e}")
 
 

@@ -34,6 +34,13 @@ _np_warn.filterwarnings("ignore", message="Degrees of freedom <= 0")
 _np_warn.filterwarnings("ignore", message="All-NaN slice encountered")
 from pathlib import Path
 
+# ── yfinance hardening ──────────────────────────────────────────────────────
+# Install the global yfinance crumb self-heal + request throttle BEFORE any
+# module makes a Yahoo request. One chokepoint (YfData._make_request) covers
+# every call site, including direct yf.Ticker(...) calls that bypass the
+# yfinance_cache / yfinance_safe wrappers. See yf_auth_patch.py.
+import yf_auth_patch  # noqa: F401  (auto-installs on import)
+
 # ═══════════════════════════════════════════════════════════════════════════
 # CRASH PREVENTION LAYER 0: Process-level safety nets
 # These run BEFORE anything else — catch crashes at the lowest level.
