@@ -156,10 +156,31 @@ def _save_error_patterns(patterns: list[ErrorPattern]) -> None:
                 discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Keep ONE row per error_type. Previously this INSERTed the same patterns
+        # every learning cycle with no dedup, which bloated the table with hundreds
+        # of identical rows (e.g. 'unclassified_loss' ×100s). Collapse any existing
+        # duplicates, enforce uniqueness, then UPSERT the current snapshot.
+        conn.execute(
+            "DELETE FROM error_patterns WHERE id NOT IN "
+            "(SELECT MAX(id) FROM error_patterns GROUP BY error_type)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_error_patterns_type "
+            "ON error_patterns(error_type)"
+        )
         for pattern in patterns[:5]:
             conn.execute(
-                "INSERT INTO error_patterns VALUES (NULL,?,?,?,?,?,CURRENT_TIMESTAMP)",
-                (pattern.error_type, pattern.frequency, pattern.avg_loss, pattern.severity, pattern.suggested_fix)
+                """INSERT INTO error_patterns
+                       (error_type, frequency, avg_loss, severity, suggested_fix, discovered_at)
+                   VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+                   ON CONFLICT(error_type) DO UPDATE SET
+                       frequency     = excluded.frequency,
+                       avg_loss      = excluded.avg_loss,
+                       severity      = excluded.severity,
+                       suggested_fix = excluded.suggested_fix,
+                       discovered_at = CURRENT_TIMESTAMP""",
+                (pattern.error_type, pattern.frequency, pattern.avg_loss,
+                 pattern.severity, pattern.suggested_fix)
             )
         conn.commit()
     except Exception as e:
