@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _client = None
 _sentiment_cache: dict = {}
 _cache_lock = threading.Lock()  # guards _sentiment_cache across threads
-CACHE_TTL = int(os.getenv("NEWS_CACHE_TTL", "3600"))  # Extended to 1h to save Groq tokens
+CACHE_TTL = max(int(os.getenv("NEWS_CACHE_TTL", "3600")), 3600)  # >=1h floor — protects the Groq daily token budget; a stale .env duplicate (NEWS_CACHE_TTL=1800) was silently forcing 30min, doubling token burn and exhausting the daily limit
 _SENTIMENT_CACHE_MAX = 100  # max entries to prevent memory growth
 
 # ── Groq rate limiter — max 1 call per 3 seconds ─────────────────────────────
