@@ -43,7 +43,7 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-LOOKBACK_DAYS:    int   = int(os.getenv("BACKTEST_LOOKBACK_DAYS",  "1250")) # ~5y: spans the 2020 & 2022 crashes so each training cycle learns from DOWN markets, not just the last bull year (a 6y stress-test put the optimal buy threshold at ~73 vs the 1-year run's ~50)
+LOOKBACK_DAYS:    int   = int(os.getenv("BACKTEST_LOOKBACK_DAYS",  "252"))  # 1 year (note: live value is set in .env = 504; user declined longer windows for load reasons)
 HOLD_PERIOD:      int   = int(os.getenv("BACKTEST_HOLD_DAYS",      "5"))    # 5-day forward return (shorter = more signals)
 WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "1.5"))  # 1.5% = win (realistic)
 LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-1.5"))  # -1.5% = loss (symmetric)
