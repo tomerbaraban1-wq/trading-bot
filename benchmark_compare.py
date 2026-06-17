@@ -63,11 +63,17 @@ async def get_bot_returns(days: int = 90) -> list:
 
         start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
-        # Get daily P&L aggregated
+        # Get daily P&L aggregated.
+        # FIX: this bot's closed-trade statuses are time_exit / smart_sell /
+        # momentum_exit / stop_loss / closed — never 'stopped'/'sold', so the old
+        # filter matched ZERO trades and the benchmark always read 0% (the daily
+        # heartbeat loop then logged nothing). Use status != 'open' to capture
+        # every closed trade.
         rows = conn.execute("""
             SELECT date(exit_time) as day, SUM(pnl_gross) as daily_pnl
             FROM trade_log
-            WHERE status IN ('stopped', 'sold')
+            WHERE status != 'open'
+            AND exit_time IS NOT NULL
             AND exit_time >= ?
             GROUP BY day
             ORDER BY day
