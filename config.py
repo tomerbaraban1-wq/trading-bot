@@ -113,7 +113,7 @@ class Settings:
     # ── Entry quality filters — מאוזן בין כניסה לאיכות ──────────────────
     MIN_BUY_SCORE: int = int(os.getenv("MIN_BUY_SCORE", "55"))              # 60→55: bot scoring stocks at 51-58 due to overbought market
     MAX_BB_POSITION: float = float(os.getenv("MAX_BB_POSITION", "0.97"))    # 0.92→0.97: market BB at 89-107%, only block extreme tops
-    MIN_VOLUME_RATIO: float = float(os.getenv("MIN_VOLUME_RATIO", "0.50"))  # 0.75→0.50: market data unreliable (yfinance), allow lower
+    MIN_VOLUME_RATIO: float = max(float(os.getenv("MIN_VOLUME_RATIO", "0.50")), 0.80)  # >=0.80 floor: the low 0.50/0.70 was a workaround for unreliable yfinance volume (FIXED today) + one QCOM outlier. 11,614 learning records show volume <0.8 wins only 26%, >=1.2 wins 53%. See LEARNING_INSIGHTS_2026-06-17.md
     REQUIRE_ABOVE_SMA50: bool = os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() in ("true", "1", "yes")
     MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))
 
