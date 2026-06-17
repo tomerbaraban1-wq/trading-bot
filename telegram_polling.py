@@ -33,6 +33,14 @@ _consecutive_409 = 0
 _MAX_409_BEFORE_PAUSE = 5    # after 5 conflicts, auto-disable webhook
 _pause_until_ts = 0.0          # epoch seconds — pause polling until this time
 
+# Throttle the (otherwise very noisy) 409 warnings. A second instance elsewhere
+# (e.g. a cloud/Render copy) may keep re-setting a webhook every few minutes; left
+# unthrottled this floods the log with a line every couple of seconds. Summarise
+# at most once per _LOG_409_EVERY seconds.
+_last_409_log_ts = 0.0
+_suppressed_409_count = 0
+_LOG_409_EVERY = 300           # seconds
+
 
 async def _delete_webhook(token: str) -> bool:
     """Force-delete an existing webhook so polling can take over.
@@ -43,17 +51,30 @@ async def _delete_webhook(token: str) -> bool:
             async with s.post(url, json={"drop_pending_updates": False},
                               timeout=aiohttp.ClientTimeout(total=10)) as r:
                 if r.status == 200:
-                    logger.warning("[POLLING] Auto-deleted stale webhook (409 → polling takeover)")
+                    logger.debug("[POLLING] Auto-deleted stale webhook (409 → polling takeover)")
                     return True
     except Exception as e:
         logger.warning(f"[POLLING] deleteWebhook failed: {e}")
     return False
 
 
+async def _webhook_suppressor(token: str) -> None:
+    """Belt-and-suspenders for local mode: periodically delete any webhook that a
+    second instance (e.g. a cloud/Render copy) registers, narrowing the window in
+    which it can intercept incoming messages. The reactive 409 handler in
+    _fetch_updates already covers the common case; this just tightens it."""
+    while _running:
+        await asyncio.sleep(30)
+        try:
+            await _delete_webhook(token)
+        except Exception:
+            pass
+
+
 async def _fetch_updates(session: aiohttp.ClientSession, token: str, offset: int) -> list:
     """Call getUpdates and return list of update objects.
     Auto-recovers from 409 conflicts by deleting the conflicting webhook."""
-    global _consecutive_409, _pause_until_ts
+    global _consecutive_409, _pause_until_ts, _last_409_log_ts, _suppressed_409_count
     import time as _t
 
     # If we're in cool-down, skip the call entirely
@@ -83,10 +104,22 @@ async def _fetch_updates(session: aiohttp.ClientSession, token: str, offset: int
             if resp.status == 409:
                 _consecutive_409 += 1
                 # AGGRESSIVE takeover: delete the conflicting webhook on the FIRST
-                # 409 (was: wait for 5 → ~10-15s of lost commands). A second instance
-                # (e.g. a Render deploy) keeps re-registering a webhook that steals
-                # the user's commands from local polling — reclaim within ~1-2s.
-                logger.warning("[POLLING] 409 conflict — webhook active; reclaiming polling NOW")
+                # 409. A second instance (e.g. a Render deploy) keeps re-registering
+                # a webhook that steals commands from local polling — reclaim fast.
+                # The warning is throttled so a chronic remote conflict does not
+                # flood the log with a line every couple of seconds.
+                _now = _t.time()
+                if _now - _last_409_log_ts >= _LOG_409_EVERY:
+                    _extra = f" (+{_suppressed_409_count} more since)" if _suppressed_409_count else ""
+                    logger.warning(
+                        "[POLLING] Telegram 409 conflict%s — another instance (likely a "
+                        "cloud/Render copy) keeps setting a webhook. Reclaiming polling. "
+                        "Permanent fix: stop the second instance.", _extra
+                    )
+                    _last_409_log_ts = _now
+                    _suppressed_409_count = 0
+                else:
+                    _suppressed_409_count += 1
                 if await _delete_webhook(token):
                     _consecutive_409 = 0
                 else:
@@ -127,6 +160,11 @@ async def polling_loop():
 
     logger.info("[POLLING] Started — listening for Telegram messages...")
     _running = True
+
+    # Belt-and-suspenders: proactively clear any webhook a second instance sets,
+    # so incoming messages reach local polling with minimal delay (the reactive
+    # 409 handler already covers the common case).
+    asyncio.create_task(_webhook_suppressor(token))
 
     async with aiohttp.ClientSession() as session:
         while _running:
