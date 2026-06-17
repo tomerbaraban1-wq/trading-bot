@@ -206,8 +206,18 @@ def start_bot() -> subprocess.Popen:
         wait_for_port_free(PORT, max_wait=30)
 
     log(f"Starting bot...")
-    out_file = open(BASE_DIR / "bot_background.log", "a", encoding="utf-8")
-    err_file = open(BASE_DIR / "bot_background_err.log", "a", encoding="utf-8")
+    # These capture the worker's raw stdout/stderr and otherwise grow unbounded
+    # (the structured logs live in trading_bot.log, which is already rotated).
+    # Truncate each on start if it has grown past ~5 MB so they can't bloat.
+    def _capped(name, cap=5 * 1024 * 1024):
+        p = BASE_DIR / name
+        try:
+            mode = "w" if (p.exists() and p.stat().st_size > cap) else "a"
+        except Exception:
+            mode = "a"
+        return open(p, mode, encoding="utf-8")
+    out_file = _capped("bot_background.log")
+    err_file = _capped("bot_background_err.log")
 
     # CREATE_NO_WINDOW (0x08000000): no console window.
     # CREATE_NEW_PROCESS_GROUP (0x00000200): isolate from the parent's console
