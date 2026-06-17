@@ -215,9 +215,15 @@ def start_bot() -> subprocess.Popen:
     #   This was the #1 historical crash ("Ctrl+C / terminal סגר", exit 0xC000013A).
     creation_flags = (0x08000000 | 0x00000200) if os.name == "nt" else 0
 
+    # SECURITY: bind to localhost only by default, so the dashboard/API is NOT
+    # reachable from other devices on the network (or the internet via a forwarded
+    # port). The user reaches it via http://localhost:8000 on this same machine;
+    # Telegram works over outbound polling, so it is unaffected. Set BIND_HOST=
+    # 0.0.0.0 only if you truly need LAN access — and then put it behind auth.
+    bind_host = os.getenv("BIND_HOST", "127.0.0.1")
     proc = subprocess.Popen(
         [PYTHON_EXE, "-m", "uvicorn", "main:app",
-         "--host", "0.0.0.0", "--port", str(PORT)],
+         "--host", bind_host, "--port", str(PORT)],
         cwd=str(BASE_DIR),
         stdout=out_file,
         stderr=err_file,
