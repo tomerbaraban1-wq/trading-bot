@@ -2941,8 +2941,16 @@ async def auto_invest_loop():
                         # The bot will retry in the next 5-minute cycle. No Telegram alert needed.
                         logger.warning(f"AUTO-INVEST: {ticker} timed out — skipping (will retry next cycle)")
                     except Exception as e:
-                        logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
-                        _create_background_task(notify_error("order_failed", ticker, f"שגיאה"))
+                        # "Insufficient virtual cash" just means the bot is fully
+                        # invested — expected behaviour, not an error. Log it quietly
+                        # and DON'T fire a Telegram failure alert (was spamming the
+                        # user on every buy attempt while fully invested).
+                        _es = str(e).lower()
+                        if "insufficient" in _es and "cash" in _es:
+                            logger.info(f"AUTO-INVEST: {ticker} skipped — fully invested (no cash)")
+                        else:
+                            logger.error(f"AUTO-INVEST: Error on {ticker}: {e}")
+                            _create_background_task(notify_error("order_failed", ticker, f"שגיאה"))
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
