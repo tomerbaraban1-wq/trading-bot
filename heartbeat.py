@@ -5165,8 +5165,14 @@ async def market_closed_training_loop():
 
             from backtest_learner import run_backtest, apply_insights
             from scanner import get_watchlist as _gwl
-            # שוק פתוח = ניתוח קצר על 10 מניות; שוק סגור = ניתוח עמוק על 20
-            tickers = _gwl()[:10] if is_open else _gwl()[:20]
+            # Train on a ROTATING random sample of the (now ~236-stock) universe
+            # instead of the same fixed first 10-20 names every cycle. Over many
+            # cycles this covers the whole universe → far more representative
+            # training and much less overfitting to the same handful of stocks.
+            import random as _rnd
+            _wl = _gwl()
+            _n = 25 if is_open else 30   # run_backtest caps at 30 internally
+            tickers = _rnd.sample(_wl, _n) if len(_wl) > _n else _wl
             mode_label = "קל (שוק פתוח)" if is_open else "מלא (שוק סגור)"
             logger.info(f"[TRAINING] Running backtest — mode={mode_label}, {len(tickers)} tickers")
 
