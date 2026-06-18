@@ -85,10 +85,10 @@ def refresh_large_cap_list() -> None:
 
     # Parallel market-cap checks with hard timeout — prevents hanging the bot
     import concurrent.futures as _cf
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=20) as ex:
         futures = {ex.submit(_check, t): t for t in all_tickers}
         try:
-            _cf.wait(futures, timeout=60)   # max 60 seconds total
+            _cf.wait(futures, timeout=150)   # was 60s — too short to market-cap-check ~540 tickers, which capped the universe at ~90. 150s + 20 workers lets the full S&P500+Nasdaq100 be evaluated
         except Exception:
             pass
         # Cancel any still-running futures
