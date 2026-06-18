@@ -315,7 +315,7 @@ def _get_price_change(ticker: str) -> tuple[float, float]:
 
 
 # פילטר שווי שוק מינימלי (ניתן לשינוי)
-MIN_MARKET_CAP = 100_000_000_000  # $100 מיליארד
+MIN_MARKET_CAP = int(os.getenv("MIN_MARKET_CAP_USD", "20000000000"))  # $20B default (was $100B — far too narrow: only ~80 mega-caps, the most efficient/hardest-to-beat names). $20B ≈ ~300 quality large-caps across all sectors = a much broader hunting ground, still safe & liquid (no small-caps). Tune via MIN_MARKET_CAP_USD env.
 
 # Start background refresh AFTER all module-level names are defined
 # (WATCHLIST + MIN_MARKET_CAP must exist before the thread can reference them)
