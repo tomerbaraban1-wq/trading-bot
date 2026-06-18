@@ -96,11 +96,17 @@ def refresh_large_cap_list() -> None:
             f.cancel()
 
     with _dynamic_list_lock:
-        _dynamic_list.clear()
-        _dynamic_list.extend(result)
+        prev = len(_dynamic_list)
+        # Robustness: a slow/rate-limited yfinance day can verify only a handful of
+        # names. Don't let that collapse the universe — adopt the new list only if
+        # it's reasonably sized; otherwise keep the last good one.
+        if prev == 0 or len(result) >= max(50, int(0.6 * prev)):
+            _dynamic_list.clear()
+            _dynamic_list.extend(result)
+            logger.info(f"Dynamic watchlist: {len(result)} stocks above ${MIN_MARKET_CAP/1e9:.0f}B market cap")
+        else:
+            logger.warning(f"Dynamic watchlist: refresh yielded only {len(result)} — kept previous {prev} to avoid collapsing the universe")
         _dynamic_list_date = today
-
-    logger.info(f"Dynamic watchlist: {len(result)} stocks above ${MIN_MARKET_CAP/1e9:.0f}B market cap")
 
 
 def get_watchlist() -> list[str]:
