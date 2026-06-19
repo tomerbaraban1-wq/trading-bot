@@ -16,7 +16,7 @@ def get_connection() -> sqlite3.Connection:
         Path(settings.DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(settings.DATABASE_PATH)
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA busy_timeout=15000")  # 15s (was 5s): with synchronous=FULL writes are slow, and under concurrent load 5s wasn't enough — callers hit "database is locked". 15s lets a writer wait out a slow durable commit instead of failing.
 
         # Apply durability setting based on configuration
         if settings.HARDENED_DURABILITY:
