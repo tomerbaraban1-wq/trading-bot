@@ -136,7 +136,7 @@ def audit_log(chat_id: str, command: str, status: str = "executed", extra: str =
     try:
         import sqlite3
         from config import settings
-        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=5)
+        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=15)  # 15s (was 5s): match database.py busy_timeout so audit-log writes wait out a busy DB instead of failing with "database is locked"
         c = conn.cursor()
         # Ensure table exists
         c.execute("""
@@ -165,7 +165,7 @@ def get_recent_audit(chat_id: str, limit: int = 20) -> list[dict]:
     try:
         import sqlite3
         from config import settings
-        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=5)
+        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=15)  # 15s (was 5s): match database.py busy_timeout so audit-log writes wait out a busy DB instead of failing with "database is locked"
         c = conn.cursor()
         c.execute(
             """SELECT command, status, extra, created_at
