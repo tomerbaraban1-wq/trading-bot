@@ -2981,6 +2981,26 @@ async def auto_invest_loop():
 
                 logger.info(f"AUTO-INVEST: Done. Bought {bought} stocks. Cash left: ${remaining:.2f}")
 
+                # ── Step-by-step feed: report EVERY scan cycle ────────────────
+                # When a scan buys nothing the user otherwise hears nothing, so they
+                # can't tell the bot is working. Send a short "scan ran, nothing passed"
+                # note (buys already send their own rich message below). Throttled to
+                # 60s + skipped in quiet hours by the broadcaster, and wrapped so a
+                # notify failure can NEVER break the trading loop.
+                if not bought:
+                    try:
+                        import activity_broadcaster as _ab
+                        _create_background_task(_ab.broadcast(
+                            "scan_summary",
+                            f"🔎 <b>סבב סריקה הושלם</b>  <i>({_ab._il_time_str()})</i>\n"
+                            f"━━━━━━━━━━━━━━━━\n"
+                            f"➖ אף מניה לא עברה את הרף הפעם\n"
+                            f"💰 מזומן זמין: ${remaining:,.0f}  |  ⏳ סורק שוב בקרוב",
+                            priority=_ab.Priority.QUIET,
+                        ))
+                    except Exception as _sc_err:
+                        logger.debug(f"scan summary notify skipped: {_sc_err}")
+
                 # ── Send ONE combined Telegram message for all buys ───────────
                 if _bought_list:
                     try:
