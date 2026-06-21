@@ -18,11 +18,12 @@ def get_connection() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=15000")  # 15s (was 5s): with synchronous=FULL writes are slow, and under concurrent load 5s wasn't enough — callers hit "database is locked". 15s lets a writer wait out a slow durable commit instead of failing.
 
-        # Apply durability setting based on configuration
-        if settings.HARDENED_DURABILITY:
-            conn.execute("PRAGMA synchronous=FULL")  # Hardened durability for critical data
-        else:
-            conn.execute("PRAGMA synchronous=NORMAL")  # Balanced performance/safety
+        # Durability: NORMAL (not FULL). With WAL, synchronous=FULL fsyncs on EVERY
+        # commit — that held the write lock long enough that the heartbeat hit
+        # "database is locked" every ~5-min cycle. NORMAL + WAL is still crash-safe
+        # for the app (only an OS crash / power loss could drop the very last write)
+        # and is plenty for a PAPER bot. Revisit FULL only if you go to real money.
+        conn.execute("PRAGMA synchronous=NORMAL")
 
         conn.row_factory = sqlite3.Row
         _local.conn = conn
