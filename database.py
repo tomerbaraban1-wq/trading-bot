@@ -573,12 +573,22 @@ def get_journal_entries(ticker: str | None = None, limit: int = 10) -> list[dict
 
 def save_heartbeat(open_positions: int, budget_used_pct: float,
                    total_equity: float, notes: str = ""):
-    conn = get_connection()
-    conn.execute(
-        "INSERT INTO heartbeat_log (open_positions, budget_used_pct, total_equity, notes) VALUES (?, ?, ?, ?)",
-        (open_positions, budget_used_pct, total_equity, notes),
-    )
-    conn.commit()
+    # Best-effort diagnostic write. Under heavy weekend backtest-learning load the
+    # write lock can be held longer than busy_timeout. A missed heartbeat row is
+    # harmless, so swallow "database is locked" quietly instead of raising — raising
+    # here used to abort the WHOLE heartbeat cycle (incl. the Telegram status update).
+    try:
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO heartbeat_log (open_positions, budget_used_pct, total_equity, notes) VALUES (?, ?, ?, ?)",
+            (open_positions, budget_used_pct, total_equity, notes),
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.debug(f"save_heartbeat skipped (db busy): {e}")
+            return
+        raise
 
 
 def get_last_heartbeat() -> dict | None:

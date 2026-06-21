@@ -43,6 +43,11 @@ _smart_sell_low_count: dict[str, int] = {}
 # Stop-raise alert deduplication: ticker → last alert pct
 _position_alert_sent: dict[str, float] = {}
 
+# Latest learning result — surfaced in the periodic heartbeat status so every
+# "bot is alive" message tells the user precisely what the bot last learned
+# (win rate, optimal buy score, when). Updated at the end of each training cycle.
+_LAST_TRAINING: dict = {}
+
 # Momentum exit: track last 3 prices per ticker to detect declining trend
 _price_history: dict[str, list] = {}   # ticker → [price1, price2, price3] (oldest→newest)
 # Price-target alerts already fired: "TICKER:PRICE" strings
@@ -199,12 +204,22 @@ async def heartbeat_loop():
                 logger.warning("HEARTBEAT: database.get_open_trades timed out — skipping this cycle")
                 continue
 
-            database.save_heartbeat(
-                open_positions=len(open_trades),
-                budget_used_pct=status.get("budget_used_pct", 0),
-                total_equity=status.get("positions_value", 0) + status.get("cash_available", 0),
-                notes=f"Open: {[t['ticker'] for t in open_trades]}" if open_trades else "No open positions",
-            )
+            # Run the diagnostic write off the event loop with a timeout so a busy DB
+            # can never block the loop or abort the rest of the heartbeat (Telegram
+            # status, risk checks). Best-effort — a skipped heartbeat row is harmless.
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        database.save_heartbeat,
+                        open_positions=len(open_trades),
+                        budget_used_pct=status.get("budget_used_pct", 0),
+                        total_equity=status.get("positions_value", 0) + status.get("cash_available", 0),
+                        notes=f"Open: {[t['ticker'] for t in open_trades]}" if open_trades else "No open positions",
+                    ),
+                    timeout=12,
+                )
+            except Exception as _sh_err:
+                logger.debug(f"HEARTBEAT: save_heartbeat skipped ({_sh_err})")
 
             equity = status.get('positions_value', 0) + status.get('cash_available', 0)
             budget_pct = status.get('budget_used_pct', 0)
@@ -284,7 +299,19 @@ async def heartbeat_loop():
                     if _is_market_open:
                         _activity = f"🔍 סורק מניות כל {settings.SCAN_INTERVAL_MIN} דק' — מחפש הזדמנויות"
                     else:
+                        # Surface the latest learning RESULT so every heartbeat tells
+                        # the user exactly what the bot learned — not just "training".
                         _activity = "🧠 מתאמן על היסטוריית מסחר ולומד דפוסים"
+                        if _LAST_TRAINING.get("ts"):
+                            import time as _lt2
+                            _age_min = int((_lt2.time() - _LAST_TRAINING["ts"]) / 60)
+                            _age_str = f"לפני {_age_min} דק'" if _age_min < 90 else f"לפני {_age_min // 60} שע'"
+                            _activity += (
+                                f"\n📊 למידה אחרונה ({_age_str}): "
+                                f"הצלחה {_LAST_TRAINING['win_rate']:.0f}% "
+                                f"על {_LAST_TRAINING['tickers']} מניות "
+                                f"→ ציון קנייה אופטימלי {_LAST_TRAINING['optimal_score']}"
+                            )
 
                     # Israel time for context
                     from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
@@ -5134,6 +5161,7 @@ async def market_closed_training_loop():
 
     _last_own_sim_date  = None
     _last_tg_notify_ts  = 0.0   # last time we sent Telegram training update
+    _last_news_react_ts = 0.0   # last time we recorded news-reaction snapshots
 
     while True:
         is_open = False   # safe default — used at end of iteration in sleep()
@@ -5157,6 +5185,31 @@ async def market_closed_training_loop():
                         f"הצלחה={own_summary['win_rate']:.0f}% | "
                         f"תשואה={own_summary['avg_return']:+.2f}%"
                     )
+
+            # ── Phase 2: לימוד תגובת חדשות (אמיתי, ללא הטיית בחירה) ──────
+            # הערכת תצפיות שהבשילו (1/5/10 ימים) זולה — רצה כל מחזור.
+            try:
+                from news_reaction_learner import evaluate_matured_snapshots as _evms
+                _nr_ev = await asyncio.wait_for(asyncio.to_thread(_evms), timeout=180)
+                if _nr_ev:
+                    logger.info(f"[TRAINING] News-reaction: evaluated {_nr_ev} matured snapshots")
+            except Exception as _nre:
+                logger.debug(f"[TRAINING] news-reaction eval skipped: {_nre}")
+
+            # תיעוד תצפיות חדש עולה מכסת LLM — לכן מצומצם לכל 3 שעות (NEWS_REACTION_INTERVAL_SEC).
+            import time as _nt
+            if _nt.time() - _last_news_react_ts >= int(_os.getenv("NEWS_REACTION_INTERVAL_SEC", "10800")):
+                _last_news_react_ts = _nt.time()
+                try:
+                    from news_reaction_learner import record_news_snapshot as _rns, learn_news_reaction as _lnr
+                    _nr_rec = await asyncio.wait_for(asyncio.to_thread(_rns), timeout=300)
+                    _nr_ins = await asyncio.to_thread(_lnr)
+                    logger.info(
+                        f"[TRAINING] News-reaction: recorded {_nr_rec} snapshots | "
+                        f"{_nr_ins.get('verdict', _nr_ins.get('status', '...'))}"
+                    )
+                except Exception as _nre2:
+                    logger.debug(f"[TRAINING] news-reaction record skipped: {_nre2}")
 
             # ── אימון רץ תמיד — גם בשוק פתוח (קל יותר) וגם בסגור (מלא) ──
             is_open = await asyncio.wait_for(
@@ -5216,6 +5269,20 @@ async def market_closed_training_loop():
                 f"optimal_score={result.optimal_min_score}"
             )
 
+            # Stash the latest learning result so the periodic heartbeat status can
+            # tell the user precisely what the bot just learned (mutate-only — no
+            # `global` needed since _LAST_TRAINING is a module-level dict).
+            try:
+                import time as _lt_time
+                _LAST_TRAINING.update({
+                    "win_rate": float(result.overall_win_rate),
+                    "optimal_score": int(result.optimal_min_score),
+                    "tickers": int(result.tickers_analyzed),
+                    "ts": _lt_time.time(),
+                })
+            except Exception:
+                pass
+
             # ── שלח תוצאות לטלגרם אם שלחנו "מתחיל אימון" — באותו מחזור ────
             if _send_telegram_results:
                 own_summary_fresh = await asyncio.wait_for(
@@ -5263,11 +5330,16 @@ async def market_closed_training_loop():
         except Exception as e:
             logger.error(f"[TRAINING] Training error: {e}")
 
-        # Loop: 5 min during market hours, 1 min when closed (cache prevents heavy load)
-        # Market open:   5 min (quick learning during active hours)
-        # Market closed: 15 min (no rush — don't hammer yfinance all night)
-        # Previous value of 60s when closed caused 240% CPU usage!
-        await asyncio.sleep(300 if is_open else 900)
+        # CPU saver: a historical backtest barely changes intraday, and does
+        # NOT change at all overnight (the data is static when market is shut).
+        # Re-running 25-30 ticker backtests every 5 min was pure waste.
+        #   Open  : 15 min  (was 5)  — plenty fresh for "learning"
+        #   Closed: 30 min  (was 15) — data is frozen, so go easy
+        # Tunable via env. (The old 60s here once caused 240% CPU.)
+        import os as _os_iv
+        _open_iv   = int(_os_iv.getenv("TRAIN_INTERVAL_OPEN_SEC",   "900"))
+        _closed_iv = int(_os_iv.getenv("TRAIN_INTERVAL_CLOSED_SEC", "1800"))
+        await asyncio.sleep(_open_iv if is_open else _closed_iv)
 
 
 async def backtest_learning_loop():
@@ -5386,6 +5458,21 @@ async def continuous_learning_loop():
             # Send summary to trader (hourly during market hours)
             if results.get("error_patterns") or results.get("live_performance", {}).get("recommendations"):
                 summary = get_learning_summary()
+                # Append the REAL news→reaction learning, but only once it has
+                # matured data (status 'ok') — avoids spamming "collecting data".
+                try:
+                    from news_reaction_learner import learn_news_reaction, get_news_reaction_summary
+                    if learn_news_reaction().get("status") == "ok":
+                        summary += "\n\n" + get_news_reaction_summary()
+                except Exception:
+                    pass
+                # Append deepest learning — which indicators actually predict.
+                try:
+                    from feature_edge_learner import learn_feature_edges, get_feature_edge_summary
+                    if learn_feature_edges().get("status") == "ok":
+                        summary += "\n\n" + get_feature_edge_summary()
+                except Exception:
+                    pass
                 _create_background_task(send_message(summary))
                 logger.info("[LEARNING] Insights sent to trader")
 
