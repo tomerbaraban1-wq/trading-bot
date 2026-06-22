@@ -5244,7 +5244,12 @@ async def market_closed_training_loop():
             # training and much less overfitting to the same handful of stocks.
             import random as _rnd
             _wl = _gwl()
-            _n = 25 if is_open else 30   # run_backtest caps at 30 internally
+            # Market closed = bot has nothing else to do → train on MANY stocks in
+            # parallel (run_backtest now analyzes them concurrently). Market open =
+            # lighter sample so training doesn't compete with live scanning for yfinance.
+            _n_open   = int(_os.getenv("TRAIN_TICKERS_OPEN",   "25"))
+            _n_closed = int(_os.getenv("TRAIN_TICKERS_CLOSED", "60"))
+            _n = _n_open if is_open else _n_closed
             tickers = _rnd.sample(_wl, _n) if len(_wl) > _n else _wl
             mode_label = "קל (שוק פתוח)" if is_open else "מלא (שוק סגור)"
             logger.info(f"[TRAINING] Running backtest — mode={mode_label}, {len(tickers)} tickers")
