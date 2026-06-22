@@ -2995,9 +2995,9 @@ async def auto_invest_loop():
                         # parallel and sequential scan paths (the sort keys on [1]).
                         _top = ""
                         try:
-                            _cands = sorted(_scored_candidates, key=lambda x: x[1], reverse=True)[:5]
+                            _cands = sorted(_scored_candidates, key=lambda x: x[1], reverse=True)[:15]
                             if _cands:
-                                _top = "📊 המועמדים הכי טובים שבדקתי:\n" + "\n".join(
+                                _top = f"📊 {len(_scored_candidates)} מניות נבדקו — הטופ שלהן:\n" + "\n".join(
                                     f"  • {c[0]}: {c[1]:.0f}/100" for c in _cands
                                 ) + "\n"
                         except Exception:
