@@ -360,13 +360,27 @@ def close_trade(trade_id: int, exit_price: float, pnl_gross: float,
 
 
 def update_trade_stop(trade_id: int, atr_stop_price: float, high_watermark: float) -> None:
-    """Persist the current trailing stop price and high-watermark for an open trade."""
-    conn = get_connection()
-    conn.execute(
-        "UPDATE trade_log SET atr_stop_price=?, high_watermark=? WHERE id=?",
-        (atr_stop_price, high_watermark, trade_id),
-    )
-    conn.commit()
+    """Persist the current trailing stop price and high-watermark for an open trade.
+
+    Best-effort under heavy market-hours DB contention. This is an IDEMPOTENT write
+    (fixed values WHERE id), and a raised trailing stop that misses one cycle is
+    re-computed and re-persisted on the next 60s stop_loss_monitor pass. So on a
+    transient 'database is locked' we swallow it quietly instead of letting it bubble
+    up — which previously logged a scary 'Stop loss monitor error' AND made the monitor
+    skip the rest of that trade's exit checks (take-profit, smart-sell) for the cycle.
+    """
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE trade_log SET atr_stop_price=?, high_watermark=? WHERE id=?",
+            (atr_stop_price, high_watermark, trade_id),
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.debug(f"update_trade_stop skipped for #{trade_id} (db busy) — re-persists next cycle")
+            return
+        raise
 
 
 def get_open_trades() -> list[dict]:
