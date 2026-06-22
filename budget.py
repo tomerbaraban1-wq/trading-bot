@@ -274,8 +274,12 @@ def _get_account_equity() -> tuple[float, float]:
 
     if err:
         raise err[0]
-    if not result:
-        raise TimeoutError("broker.get_account timed out after 15s")
+    # Require BOTH fetches. On a PARTIAL timeout (e.g. get_account returned but
+    # get_positions then hung past 15s) `result` is non-empty yet missing
+    # 'positions' — the unpack below would raise KeyError mid buy-sizing. Raise a
+    # clean TimeoutError instead (same control flow: caller treats both as failure).
+    if 'account' not in result or 'positions' not in result:
+        raise TimeoutError("broker.get_account/get_positions timed out after 15s")
 
     account   = result['account']
     positions = result['positions']
