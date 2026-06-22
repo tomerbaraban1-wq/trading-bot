@@ -49,6 +49,8 @@ WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "1.5"))  # 1
 LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-1.5"))  # -1.5% = loss (symmetric)
 MIN_SAMPLES:      int   = int(os.getenv("BACKTEST_MIN_SAMPLES",    "20"))   # min entries for insight
 CACHE_TTL:        int   = int(os.getenv("BACKTEST_CACHE_TTL",      "1800"))   # 30min — re-trains every 30min while market closed
+MAX_TICKERS:      int   = int(os.getenv("BACKTEST_MAX_TICKERS",    "30"))   # how many tickers to analyze per run (was hardcoded 30)
+PARALLEL_WORKERS: int   = max(1, int(os.getenv("BACKTEST_PARALLEL_WORKERS", "6")))  # analyze this many tickers CONCURRENTLY — _analyze_ticker is I/O-bound (yfinance), so a thread pool overlaps the downloads/compute for a big speedup. Caches are thread-safe; the yfinance throttle keeps fetches polite.
 
 # ── Result types ──────────────────────────────────────────────────────────────
 @dataclass
@@ -119,31 +121,48 @@ def run_backtest(tickers: list[str], lookback_days: int = LOOKBACK_DAYS) -> Back
     indicator_wins: dict[str, list[float]] = {}  # indicator_condition -> list of forward returns
     per_ticker: list[dict] = []  # per-ticker stats for Telegram reporting
 
-    for ticker in tickers[:30]:  # cap at 30 to save memory/time
-        try:
-            signals = _analyze_ticker(ticker, lookback_days)
-            all_signals.extend(signals)
+    # ── Analyze tickers IN PARALLEL ───────────────────────────────────────────
+    # _analyze_ticker is I/O-bound (the yfinance download dominates), so a thread
+    # pool overlaps the slow fetches across tickers — the bot now trains on several
+    # stocks at once instead of one-by-one. Safe: the caches it touches
+    # (yfinance_cache, atr_stop, indicators) are thread-safe, yf_auth_patch throttles
+    # the actual HTTP calls, and each _analyze_ticker is socket-timeout bounded.
+    import concurrent.futures as _cf
+    _targets = tickers[:MAX_TICKERS]
+    _workers = min(PARALLEL_WORKERS, len(_targets)) or 1
+    _ticker_signals: dict[str, list] = {}
+    with _cf.ThreadPoolExecutor(max_workers=_workers, thread_name_prefix="backtest") as _ex:
+        _futs = {_ex.submit(_analyze_ticker, t, lookback_days): t for t in _targets}
+        for _fut in _futs:
+            t = _futs[_fut]
+            try:
+                _ticker_signals[t] = _fut.result() or []
+            except Exception as exc:
+                logger.debug(f"[BACKTEST] {t}: {exc}")
+                _ticker_signals[t] = []
+    logger.info(f"[BACKTEST] analyzed {len(_targets)} tickers with {_workers} parallel workers")
 
-            # Per-ticker stats
-            if signals:
-                t_returns = [s["forward_return"] for s in signals]
-                t_wins = sum(1 for r in t_returns if r >= WIN_THRESHOLD)
-                per_ticker.append({
-                    "ticker":     ticker,
-                    "signals":    len(signals),
-                    "win_rate":   round(t_wins / len(signals) * 100, 1),
-                    "avg_return": round(float(np.mean(t_returns)), 2),
-                })
+    # ── Aggregate results (single-threaded — fast list appends, order-stable) ──
+    for ticker in _targets:
+        signals = _ticker_signals.get(ticker, [])
+        all_signals.extend(signals)
 
-            # Track indicator performance
-            for sig in signals:
-                for ind_key, ind_val in sig.get("indicators", {}).items():
-                    k = f"{ind_key}={ind_val}"
-                    indicator_wins.setdefault(k, []).append(sig["forward_return"])
+        # Per-ticker stats
+        if signals:
+            t_returns = [s["forward_return"] for s in signals]
+            t_wins = sum(1 for r in t_returns if r >= WIN_THRESHOLD)
+            per_ticker.append({
+                "ticker":     ticker,
+                "signals":    len(signals),
+                "win_rate":   round(t_wins / len(signals) * 100, 1),
+                "avg_return": round(float(np.mean(t_returns)), 2),
+            })
 
-        except Exception as exc:
-            logger.debug(f"[BACKTEST] {ticker}: {exc}")
-            continue
+        # Track indicator performance
+        for sig in signals:
+            for ind_key, ind_val in sig.get("indicators", {}).items():
+                k = f"{ind_key}={ind_val}"
+                indicator_wins.setdefault(k, []).append(sig["forward_return"])
 
     if not all_signals:
         logger.warning("[BACKTEST] No signals generated")
