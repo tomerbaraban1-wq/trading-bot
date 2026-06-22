@@ -2990,11 +2990,24 @@ async def auto_invest_loop():
                 if not bought:
                     try:
                         import activity_broadcaster as _ab
+                        # Show the bot's actual "thinking": the top stocks it considered
+                        # this scan. Defensive — [0]=ticker, [1]=score hold for BOTH the
+                        # parallel and sequential scan paths (the sort keys on [1]).
+                        _top = ""
+                        try:
+                            _cands = sorted(_scored_candidates, key=lambda x: x[1], reverse=True)[:5]
+                            if _cands:
+                                _top = "📊 המועמדים הכי טובים שבדקתי:\n" + "\n".join(
+                                    f"  • {c[0]}: {c[1]:.0f}/100" for c in _cands
+                                ) + "\n"
+                        except Exception:
+                            _top = ""
                         _create_background_task(_ab.broadcast(
                             "scan_summary",
                             f"🔎 <b>סבב סריקה הושלם</b>  <i>({_ab._il_time_str()})</i>\n"
                             f"━━━━━━━━━━━━━━━━\n"
-                            f"➖ אף מניה לא עברה את הרף הפעם\n"
+                            f"{_top}"
+                            f"➖ אף מניה לא עברה את רף הקנייה הפעם\n"
                             f"💰 מזומן זמין: ${remaining:,.0f}  |  ⏳ סורק שוב בקרוב",
                             priority=_ab.Priority.QUIET,
                         ))
