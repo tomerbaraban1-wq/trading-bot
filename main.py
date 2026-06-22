@@ -213,12 +213,18 @@ logger.info("[LOG_FILTER] Suppressed verbose loggers: yfinance, httpx, urllib3")
 START_TIME = time.time()
 
 
-@asynccontextmanager
 def _asyncio_exception_handler(loop, context):
     """
     Global asyncio exception handler — catches ALL unhandled coroutine exceptions.
     Prevents silent failures and logs with full context.
     Without this, many async errors are swallowed by asyncio silently.
+
+    NOTE: must stay a plain (loop, context) -> None callable. It is registered via
+    loop.set_exception_handler() below. It was previously decorated with
+    @asynccontextmanager, which turned it into a context-manager factory — so asyncio
+    called it, got a CM object back, and the body never ran (the handler was silently
+    dead, and benign network-close errors it was meant to filter leaked to the default
+    handler as noise). Do NOT re-add that decorator.
     """
     exc = context.get("exception")
     msg = context.get("message", "Unknown asyncio error")
