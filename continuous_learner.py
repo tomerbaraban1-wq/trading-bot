@@ -203,69 +203,117 @@ class SentimentCorrelation:
     recommendation: str
 
 
+# Entry sentiment >= this (out of 10) counts as "bullish news at entry"
+SENTIMENT_BULLISH_THRESHOLD = float(os.getenv("SENTIMENT_BULLISH_THRESHOLD", "6"))
+# Need at least this many trades before a correlation is meaningful
+SENTIMENT_MIN_SAMPLES = int(os.getenv("SENTIMENT_MIN_SAMPLES", "5"))
+
+
 def learn_sentiment_correlation() -> dict[str, SentimentCorrelation]:
     """
-    Measure: for each ticker, did bullish sentiment actually predict wins?
+    REAL measurement (no more placeholder): did a higher entry sentiment score
+    actually lead to better trade outcomes?
 
-    Computes correlation between:
-      - Entry sentiment score (from Discord community)
-      - Trade outcome (win vs loss)
+    Uses the sentiment_score logged on every trade at entry
+    (trade_log.sentiment_score, 0-10) vs. the realized pnl_gross — i.e. it
+    answers "when we bought on good news, did the price actually reward us?"
 
-    Returns per-ticker confidence scores.
+    Honesty note: this only covers stocks we actually BOUGHT (we have no
+    outcome for stocks we skipped), so there is selection bias — but it is
+    REAL measured data from the past, not assumed numbers.
     """
     try:
         import database
+        from collections import defaultdict
         conn = database.get_connection()
 
-        # Check if we have sentiment data stored
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS trade_sentiment (
-                trade_id INTEGER,
-                ticker TEXT,
-                entry_sentiment_score REAL,
-                exit_reason TEXT,
-                pnl_gross REAL,
-                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # Get closed trades grouped by ticker
-        ticker_results = {}
+        # Every trade that is no longer open and has a logged entry sentiment.
+        # (Old code filtered status IN ('stopped','sold') — status values this bot
+        #  actually writes are closed/time_exit/stop_loss/..., so it matched nothing.)
         rows = conn.execute("""
-            SELECT ticker, COUNT(*) as total_trades,
-                   SUM(CASE WHEN pnl_gross > 0 THEN 1 ELSE 0 END) as wins
+            SELECT ticker, sentiment_score, pnl_gross
             FROM trade_log
-            WHERE status IN ('stopped', 'sold')
-            GROUP BY ticker
-            HAVING total_trades >= 5
+            WHERE status != 'open'
+              AND sentiment_score IS NOT NULL
+              AND pnl_gross   IS NOT NULL
         """).fetchall()
 
-        for ticker, total, win_count in rows:
-            win_rate = (win_count / total * 100) if total > 0 else 0
+        by_ticker: dict[str, list[tuple[float, float]]] = defaultdict(list)
+        all_samples: list[tuple[float, float]] = []
+        for ticker, sent, pnl in rows:
+            try:
+                s, p = float(sent), float(pnl)
+            except (TypeError, ValueError):
+                continue
+            by_ticker[ticker].append((s, p))
+            all_samples.append((s, p))
 
-            # For now, estimate sentiment correlation (in future, would use stored sentiment scores)
-            # Placeholder: assume 60% win rate with sentiment, 45% without
-            correlation = SentimentCorrelation(
-                ticker=ticker,
-                sentiment_threshold=6.5,  # bullish if >= 6.5 (out of 10)
-                win_rate_with_sentiment=win_rate + 5,  # estimate +5% when sentiment is bullish
-                win_rate_without_sentiment=max(0, win_rate - 5),
-                correlation_strength=0.1 * min(1, total / 50),  # strength based on sample size
-                sample_count=total,
-                recommendation=(
-                    "Trust sentiment — it helps!" if win_rate > 55
-                    else "Sentiment needs more data" if total < 10
-                    else "Be cautious with sentiment signals"
-                ),
+        def _measure(name: str, data: list[tuple[float, float]]) -> SentimentCorrelation | None:
+            if len(data) < SENTIMENT_MIN_SAMPLES:
+                return None
+
+            sentiments = np.array([d[0] for d in data], dtype=float)
+            wins       = np.array([1.0 if d[1] > 0 else 0.0 for d in data], dtype=float)
+
+            bullish  = [p for s, p in data if s >= SENTIMENT_BULLISH_THRESHOLD]
+            non_bull = [p for s, p in data if s <  SENTIMENT_BULLISH_THRESHOLD]
+            wr_with    = (sum(1 for p in bullish  if p > 0) / len(bullish)  * 100) if bullish  else 0.0
+            wr_without = (sum(1 for p in non_bull if p > 0) / len(non_bull) * 100) if non_bull else 0.0
+
+            # Real point-biserial correlation between sentiment and win/loss.
+            # corrcoef is undefined if either series has zero variance.
+            if sentiments.std() > 0 and wins.std() > 0:
+                corr = float(np.corrcoef(sentiments, wins)[0, 1])
+            else:
+                corr = 0.0
+
+            if corr >= 0.2:
+                rec = "✅ הסנטימנט עוזר באמת — אפשר לסמוך עליו"
+            elif corr <= -0.2:
+                rec = "🔴 סנטימנט גבוה דווקא קשור להפסד — להפחית משקל"
+            elif abs(corr) < 0.1:
+                rec = "⚪ לסנטימנט אין יתרון מדיד — לא מנבא תוצאה"
+            else:
+                rec = "🟡 קשר חלש — צריך עוד נתונים"
+
+            return SentimentCorrelation(
+                ticker=name,
+                sentiment_threshold=SENTIMENT_BULLISH_THRESHOLD,
+                win_rate_with_sentiment=round(wr_with, 1),
+                win_rate_without_sentiment=round(wr_without, 1),
+                correlation_strength=round(abs(corr), 3),
+                sample_count=len(data),
+                recommendation=rec,
             )
-            ticker_results[ticker] = correlation
 
-        logger.info(
-            f"[SENTIMENT LEARNER] Analyzed {len(ticker_results)} tickers | "
-            f"Avg correlation={np.mean([c.correlation_strength for c in ticker_results.values()]):.2f}"
-        )
+        results: dict[str, SentimentCorrelation] = {}
 
-        return ticker_results
+        # Overall across all trades — the most statistically meaningful figure.
+        overall = _measure("OVERALL", all_samples)
+        if overall:
+            results["OVERALL"] = overall
+
+        # Per-ticker, where we have enough samples.
+        for ticker, data in by_ticker.items():
+            c = _measure(ticker, data)
+            if c:
+                results[ticker] = c
+
+        if "OVERALL" in results:
+            ov = results["OVERALL"]
+            logger.info(
+                f"[SENTIMENT LEARNER] REAL: {len(all_samples)} trades | "
+                f"corr={ov.correlation_strength:.2f} | "
+                f"WR bullish={ov.win_rate_with_sentiment:.0f}% vs "
+                f"non={ov.win_rate_without_sentiment:.0f}% | {ov.recommendation}"
+            )
+        else:
+            logger.info(
+                f"[SENTIMENT LEARNER] Not enough trades with logged sentiment yet "
+                f"({len(all_samples)} samples, need >={SENTIMENT_MIN_SAMPLES})"
+            )
+
+        return results
 
     except Exception as e:
         logger.error(f"Sentiment correlation learning failed: {e}")

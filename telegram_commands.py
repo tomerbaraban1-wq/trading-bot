@@ -1152,6 +1152,42 @@ COMMAND_HANDLERS["tv_pine"] = handle_tv_pine_command
 COMMAND_HANDLERS["pine"] = handle_tv_pine_command
 
 
+# ── Learning visibility: news-reaction (Phase 2) + continuous learning ───────
+async def handle_newslearn_command(args: str = "") -> str:
+    """/newslearn — what the bot learned about news → price reaction."""
+    try:
+        from news_reaction_learner import get_news_reaction_summary
+        return await asyncio.to_thread(get_news_reaction_summary)
+    except Exception as e:
+        return f"❌ שגיאה בקריאת לימוד החדשות: {e}"
+
+
+async def handle_learn_command(args: str = "") -> str:
+    """/learn — continuous-learning summary (errors, sentiment correlation, live perf)."""
+    try:
+        from continuous_learner import get_learning_summary
+        return await asyncio.to_thread(get_learning_summary)
+    except Exception as e:
+        return f"❌ שגיאה בקריאת מצב הלמידה: {e}"
+
+
+COMMAND_HANDLERS["newslearn"] = handle_newslearn_command
+COMMAND_HANDLERS["learn"] = handle_learn_command
+COMMAND_HANDLERS["learning"] = handle_learn_command
+
+
+async def handle_edges_command(args: str = "") -> str:
+    """/edges — deepest learning: which indicators actually predict wins."""
+    try:
+        from feature_edge_learner import get_feature_edge_summary
+        return await asyncio.to_thread(get_feature_edge_summary)
+    except Exception as e:
+        return f"❌ שגיאה בלימוד העומק: {e}"
+
+
+COMMAND_HANDLERS["edges"] = handle_edges_command
+
+
 async def handle_scale_stats_command(args: str = "") -> str:
     """/scale — show position scaling status."""
     try:

@@ -66,17 +66,29 @@ def log_trade_open(
     _broker_price = order_result.get("price")
     actual_price  = float(_broker_price if _broker_price and _broker_price > 0 else payload.price)
 
+    # Capture the FULL indicator snapshot at entry so the bot can later learn
+    # which indicators actually predict outcomes. Previously macd_signal /
+    # bb_position / volume_ratio were hardcoded None → the learner was blind to
+    # them (bb_position was 0% populated). Best-effort + cached (5min), so it
+    # adds no real latency at buy time and never blocks a trade.
+    _ind: dict = {}
+    try:
+        from indicators import get_current_indicators
+        _ind = get_current_indicators(payload.ticker.upper()) or {}
+    except Exception as _ie:
+        logger.debug(f"[TRADE-LOG] indicator snapshot failed for {payload.ticker}: {_ie}")
+
     trade = {
         "ticker":               payload.ticker.upper(),
         "action":               payload.action.value,
         "qty":                  qty,
         "entry_price":          actual_price,
         "trailing_stop_pct":    None,
-        "rsi":                  payload.rsi,
-        "macd":                 payload.macd,
-        "macd_signal":          None,
-        "bb_position":          None,
-        "volume_ratio":         None,
+        "rsi":                  payload.rsi  if payload.rsi  is not None else _ind.get("rsi"),
+        "macd":                 payload.macd if payload.macd is not None else _ind.get("macd"),
+        "macd_signal":          _ind.get("macd_signal"),
+        "bb_position":          _ind.get("bb_position"),
+        "volume_ratio":         _ind.get("volume_ratio"),
         "sentiment_score":      sentiment.score     if sentiment else None,
         "sentiment_reasoning":  sentiment.reasoning if sentiment else None,
     }
