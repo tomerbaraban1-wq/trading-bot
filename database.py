@@ -729,30 +729,52 @@ def get_shadow_trade_history(limit: int = 100) -> list[dict]:
 
 
 def update_shadow_stop(shadow_id: int, new_stop: float, new_wm: float) -> None:
-    """Update trailing stop price and high watermark for an open shadow trade."""
-    conn = get_connection()
-    conn.execute(
-        "UPDATE shadow_trades SET atr_stop_price=?, high_watermark=? WHERE id=?",
-        (new_stop, new_wm, shadow_id),
-    )
-    conn.commit()
+    """Update trailing stop price and high watermark for an open shadow trade.
+
+    Best-effort: shadow trades are a DIAGNOSTIC 'what-if' track and this is an
+    idempotent UPDATE re-applied each cycle, so a transient 'database is locked'
+    under heavy market-hours load is swallowed quietly instead of bubbling an error.
+    """
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE shadow_trades SET atr_stop_price=?, high_watermark=? WHERE id=?",
+            (new_stop, new_wm, shadow_id),
+        )
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.debug(f"update_shadow_stop skipped for #{shadow_id} (db busy)")
+            return
+        raise
 
 
 # ===== Slippage Log =====
 
 def save_slippage(row: dict) -> int:
-    """Persist one slippage observation. Returns the new row id."""
-    conn = get_connection()
-    cur = conn.execute(
-        """INSERT INTO slippage_log
-           (ticker, side, qty, signal_price, fill_price,
-            slip_pct, abs_slip_pct, slip_bps, slip_per_share, total_slip_usd)
-           VALUES (:ticker, :side, :qty, :signal_price, :fill_price,
-                   :slip_pct, :abs_slip_pct, :slip_bps, :slip_per_share, :total_slip_usd)""",
-        row,
-    )
-    conn.commit()
-    return cur.lastrowid
+    """Persist one slippage observation. Returns the new row id (or -1 if skipped).
+
+    Best-effort: slippage logging is DIAGNOSTIC (it feeds the rolling-average alert),
+    so a transient 'database is locked' under heavy market-hours load is swallowed
+    quietly (returns -1) instead of bubbling a 'DB write failed' warning.
+    """
+    try:
+        conn = get_connection()
+        cur = conn.execute(
+            """INSERT INTO slippage_log
+               (ticker, side, qty, signal_price, fill_price,
+                slip_pct, abs_slip_pct, slip_bps, slip_per_share, total_slip_usd)
+               VALUES (:ticker, :side, :qty, :signal_price, :fill_price,
+                       :slip_pct, :abs_slip_pct, :slip_bps, :slip_per_share, :total_slip_usd)""",
+            row,
+        )
+        conn.commit()
+        return cur.lastrowid
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower():
+            logger.debug("save_slippage skipped (db busy)")
+            return -1
+        raise
 
 
 def get_rolling_slippage(n: int = 20) -> float:
