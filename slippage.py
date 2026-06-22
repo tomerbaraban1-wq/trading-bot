@@ -42,7 +42,11 @@ ROLLING_N:       int   = int(os.getenv("SLIPPAGE_ROLLING_N",         "20"))    #
 
 # ── ATR cache (5-minute TTL) ──────────────────────────────────────────────────
 import time as _time
+import threading
 _atr_cache: dict[str, tuple[float, float]] = {}   # ticker → (atr_pct, ts)
+_atr_lock = threading.Lock()   # guard _atr_cache: concurrent order threads can hit the
+                               # eviction path → "dict changed size"/KeyError without it
+                               # (mirrors the lock already used in atr_stop.py)
 _ATR_TTL = 300
 
 
@@ -53,9 +57,10 @@ def _fetch_atr_pct(ticker: str) -> float:
     Falls back to MAX_SLIP_PCT / 100 on error.
     """
     now = _time.time()
-    cached = _atr_cache.get(ticker)
-    if cached and now - cached[1] < _ATR_TTL:
-        return cached[0]
+    with _atr_lock:
+        cached = _atr_cache.get(ticker)
+        if cached and now - cached[1] < _ATR_TTL:
+            return cached[0]
 
     try:
         t    = yf.Ticker(ticker)
@@ -80,11 +85,13 @@ def _fetch_atr_pct(ticker: str) -> float:
         logger.warning(f"[SLIPPAGE] ATR fetch failed for {ticker}: {e} — using max_slip")
         atr_pct = MAX_SLIP_PCT / 100
 
-    # Cap cache at 150 entries — evict oldest if full
-    if len(_atr_cache) >= 150:
-        oldest = min(_atr_cache.items(), key=lambda x: x[1][1])
-        del _atr_cache[oldest[0]]
-    _atr_cache[ticker] = (atr_pct, now)
+    # Cap cache at 150 entries — evict oldest if full. Under lock so min()+del+write
+    # is atomic vs concurrent order threads (mirrors atr_stop.py).
+    with _atr_lock:
+        if len(_atr_cache) >= 150:
+            oldest = min(_atr_cache.items(), key=lambda x: x[1][1])
+            del _atr_cache[oldest[0]]
+        _atr_cache[ticker] = (atr_pct, now)
     return atr_pct
 
 
