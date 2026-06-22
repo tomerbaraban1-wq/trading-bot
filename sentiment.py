@@ -108,6 +108,13 @@ def _get_client() -> OpenAI:
         _client = OpenAI(
             api_key=settings.GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1",
+            # Fail FAST instead of the SDK default (2 retries with ~20s exponential
+            # backoff). Once the Groq daily token limit is hit, retrying is pointless
+            # — it just stalls command handling (e.g. /newscheck) and makes the bot
+            # look "frozen". With max_retries=0 + a hard timeout we drop straight to
+            # the keyword-sentiment fallback and stay responsive.
+            max_retries=0,
+            timeout=20.0,
         )
     return _client
 
