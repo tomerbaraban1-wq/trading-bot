@@ -49,7 +49,7 @@ WIN_THRESHOLD:    float = float(os.getenv("BACKTEST_WIN_PCT",       "1.5"))  # 1
 LOSS_THRESHOLD:   float = float(os.getenv("BACKTEST_LOSS_PCT",      "-1.5"))  # -1.5% = loss (symmetric)
 MIN_SAMPLES:      int   = int(os.getenv("BACKTEST_MIN_SAMPLES",    "20"))   # min entries for insight
 CACHE_TTL:        int   = int(os.getenv("BACKTEST_CACHE_TTL",      "1800"))   # 30min — re-trains every 30min while market closed
-MAX_TICKERS:      int   = int(os.getenv("BACKTEST_MAX_TICKERS",    "100"))  # hard cap on tickers analyzed per run — generous headroom so you can train on MANY at once (raise the caller's TRAIN_TICKERS_CLOSED up to here)
+MAX_TICKERS:      int   = int(os.getenv("BACKTEST_MAX_TICKERS",    "300"))  # hard cap on tickers analyzed per run — 300 is generous headroom that covers the ENTIRE quality universe (S&P500+Nasdaq100 ≈ 500 distinct, ~236 after the market-cap filter). Set TRAIN_TICKERS_CLOSED up to here to train on everything at once. (No real benefit past the actual universe size — there simply aren't 1000 quality US large-caps.)
 PARALLEL_WORKERS: int   = max(1, int(os.getenv("BACKTEST_PARALLEL_WORKERS", "10")))  # analyze this many tickers CONCURRENTLY — _analyze_ticker is I/O-bound (yfinance), so a thread pool overlaps the downloads/compute for a big speedup. Caches are thread-safe; yf_auth_patch throttles the actual HTTP so it stays polite. (Beyond ~10 the 0.15s global throttle becomes the bottleneck.)
 
 # ── Result types ──────────────────────────────────────────────────────────────
