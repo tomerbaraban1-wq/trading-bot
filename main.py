@@ -162,10 +162,21 @@ class _SecretMaskingFilter(logging.Filter):
     """Mask API keys and tokens in log output."""
     _PATTERNS = [
         (r'(ghp_)[A-Za-z0-9]{36}',        r'\1***'),
-        (r'(gsk_)[A-Za-z0-9]{50,}',        r'\1***'),
+        (r'(gsk_)[A-Za-z0-9]{20,}',        r'\1***'),   # Groq key (relaxed 50→20: catch shorter keys too)
         (r'(\d{9,10}:AA)[A-Za-z0-9_-]{30,}', r'\1***'),   # Telegram token
         (r'(secret=)[^&\s"]+',              r'\1***'),
         (r'(ALPACA_SECRET_KEY=)\S+',        r'\1***'),
+        # ── Defense-in-depth: mask DB/API secrets that could otherwise leak in a log
+        #    line (e.g. a connection string printed in an error). Targeted so they
+        #    never touch legitimate content.
+        (r'(postgres(?:ql)?://[^:/\s]+:)[^@\s]+(@)', r'\1***\2'),  # Postgres/Neon URL password
+        (r'(?i)(NEON_PASSWORD=)\S+',        r'\1***'),
+        (r'(?i)(GROQ_API_KEY=)\S+',         r'\1***'),
+        (r'(?i)(WEBHOOK_SECRET=)\S+',       r'\1***'),
+        (r'(?i)(TELEGRAM_BOT_TOKEN=)\S+',   r'\1***'),
+        (r'(?i)(password=)[^&\s"\']+',      r'\1***'),  # generic key=value passwords
+        (r'(Bearer\s+)[A-Za-z0-9._\-]{20,}', r'\1***'),
+        (r'(sk-)[A-Za-z0-9]{20,}',          r'\1***'),   # OpenAI-style keys
     ]
     def filter(self, record):
         import re
