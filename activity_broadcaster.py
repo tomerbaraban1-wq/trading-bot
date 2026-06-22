@@ -62,11 +62,22 @@ _THROTTLE = {
 
 
 def _is_quiet_hours() -> bool:
-    """1 AM – 7 AM Israel time = quiet hours (only critical msgs)."""
+    """Quiet hours = non-critical Telegram messages are silenced.
+
+    DISABLED by default — the user asked for a full 24/7 step-by-step feed, and the
+    nightly 1 AM–7 AM silence looked like the bot was "pausing" (it isn't: it runs
+    ~360-540 actions/hour all night, it just wasn't narrating). To restore the night
+    silence, set QUIET_HOURS_ENABLED=true (optionally QUIET_HOURS_START / _END, 0-23).
+    """
+    import os
+    if os.getenv("QUIET_HOURS_ENABLED", "false").strip().lower() not in ("true", "1", "yes"):
+        return False
     now_utc = datetime.now(timezone.utc)
     il_off = 3 if 3 <= now_utc.month <= 10 else 2
     h = (now_utc + timedelta(hours=il_off)).hour
-    return 1 <= h < 7
+    start = int(os.getenv("QUIET_HOURS_START", "1"))
+    end = int(os.getenv("QUIET_HOURS_END", "7"))
+    return start <= h < end
 
 
 def _il_time_str() -> str:
