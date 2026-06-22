@@ -1544,7 +1544,10 @@ async def activity_feed(limit: int = 30):
                     break
 
     except Exception as e:
-        return [{"type":"error","icon":"⚠️","text":str(e),"ts":""}]
+        # Don't leak internal exception text to this UNAUTHENTICATED endpoint —
+        # log it server-side (secret-masked) and return a generic message.
+        logger.warning(f"[ACTIVITY] feed build failed: {e}")
+        return [{"type":"error","icon":"⚠️","text":"שגיאה בטעינת הפיד","ts":""}]
 
     return events
 
