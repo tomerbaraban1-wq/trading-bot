@@ -57,11 +57,16 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         endpoint = request.url.path
 
-        # ── Localhost bypass — trust 127.0.0.1 and ::1 completely ────────
-        # Internal keep-alive pings and health checks come from localhost.
-        # Blocking them causes "Temporarily blocked" on /ping and /health.
+        # ── Localhost bypass — trust ONLY the real TCP peer, never a header ──
+        # Internal keep-alive pings and health checks come from localhost, and we
+        # trust them. BUT base that on request.client.host (the actual TCP peer),
+        # NOT client_ip — client_ip comes from _get_client_ip(), which honours the
+        # X-Forwarded-For header. Trusting that header would let a remote attacker
+        # send "X-Forwarded-For: 127.0.0.1" to bypass EVERY check below (rate limit,
+        # injection detection, IP blocking). The TCP peer cannot be spoofed.
         _TRUSTED_LOCAL = {"127.0.0.1", "::1", "localhost"}
-        if client_ip in _TRUSTED_LOCAL:
+        _real_peer = request.client.host if request.client else ""
+        if _real_peer in _TRUSTED_LOCAL:
             return await call_next(request)
 
         try:
