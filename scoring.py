@@ -26,12 +26,22 @@ _premarket_gap_cache: dict[str, tuple[float, dict]] = {}
 _PREMARKET_GAP_TTL = 30 * 60
 
 def _evict_cache(cache: dict, max_size: int = _MAX_CACHE_SIZE) -> None:
-    """Remove oldest entries when cache exceeds max_size."""
-    if len(cache) > max_size:
-        # Remove oldest 20% of entries
-        to_remove = sorted(cache.items(), key=lambda x: x[1][0])[:max_size // 5]
-        for k, _ in to_remove:
-            cache.pop(k, None)
+    """Remove oldest entries when cache exceeds max_size.
+
+    Concurrency-tolerant: the live scan scores tickers in PARALLEL, so another
+    thread can mutate this shared cache while we iterate it here. `sorted(items())`
+    would then raise 'dict changed size during iteration'. Take a snapshot and, if
+    we still race, skip this round (it gets evicted next call) — never raise into
+    the scoring path. (cache.pop(k, None) is already KeyError-safe.)
+    """
+    try:
+        if len(cache) > max_size:
+            # Remove oldest 20% of entries (snapshot the items first)
+            to_remove = sorted(list(cache.items()), key=lambda x: x[1][0])[:max_size // 5]
+            for k, _ in to_remove:
+                cache.pop(k, None)
+    except RuntimeError:
+        pass  # 'dict changed size' under concurrent access — harmless, retry next call
 
 
 def get_premarket_gap(ticker: str) -> dict | None:
