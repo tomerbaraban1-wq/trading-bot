@@ -56,6 +56,19 @@ def _pct_change(symbol: str) -> float | None:
         return None
 
 
+def _vix_level() -> float | None:
+    """Current VIX (fear index) LEVEL. None on failure. A high/spiking VIX overnight
+    is risk-off even when the equity indices look calm."""
+    try:
+        import yfinance as yf
+        h = yf.Ticker("^VIX").history(period="2d")
+        if h is None or len(h) < 1:
+            return None
+        return float(h["Close"].iloc[-1])
+    except Exception:
+        return None
+
+
 def get_global_pulse(force: bool = False) -> dict:
     """
     Compute the global risk verdict from the open overseas markets + S&P futures.
@@ -80,17 +93,31 @@ def get_global_pulse(force: bool = False) -> dict:
     wsum = sum(_WEIGHTS.get(k, 1.0) for k in detail) or 1.0
     score = sum(detail[k] * _WEIGHTS.get(k, 1.0) for k in detail) / wsum
 
+    # Equity-index caution
     if score <= -1.0:
-        verdict, caution = "risk_off", 0.5    # overseas selling hard → halve US risk
+        caution = 0.5     # overseas selling hard → halve US risk
     elif score <= -0.4:
-        verdict, caution = "cautious", 0.75
-    elif score >= 0.8:
-        verdict, caution = "risk_on", 1.0     # positive abroad — stay NORMAL (never >1)
+        caution = 0.75
     else:
-        verdict, caution = "neutral", 1.0
+        caution = 1.0
+
+    # VIX (fear index) — a LEVEL-based caution that catches stress even when the
+    # equity indices look calm. Take the MORE cautious of the two signals.
+    vix = _vix_level()
+    if vix is not None:
+        detail["VIX"] = round(vix, 1)
+        if   vix >= 32: caution = min(caution, 0.5)
+        elif vix >= 26: caution = min(caution, 0.65)
+        elif vix >= 21: caution = min(caution, 0.85)
+
+    # Derive the verdict from the FINAL caution so the label matches what we act on.
+    if   caution <= 0.5:  verdict = "risk_off"
+    elif caution <= 0.75: verdict = "cautious"
+    elif score >= 0.8:    verdict = "risk_on"   # positive abroad + calm VIX
+    else:                 verdict = "neutral"
 
     result = {"verdict": verdict, "score": round(score, 2), "caution_mult": caution,
-              "detail": detail, "ts": now}
+              "vix": detail.get("VIX"), "detail": detail, "ts": now}
     with _lock:
         _cache.update(result)
     logger.info(f"[GLOBAL PULSE] {verdict} (score={score:+.2f}%, caution×{caution}) | {detail}")
