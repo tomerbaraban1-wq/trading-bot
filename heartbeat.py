@@ -3956,6 +3956,46 @@ async def daily_ai_insights_loop():
             await asyncio.sleep(3600)
 
 
+async def global_pulse_loop():
+    """
+    Global Market Pulse — while the US market is CLOSED, read the open overseas
+    markets (S&P futures + Nikkei/FTSE/DAX/Hang Seng) and report the risk verdict to
+    Telegram. The cached caution multiplier (<=1.0) is read by the position sizer so
+    the bot opens the US session more cautiously after an overseas sell-off. Reports
+    when the verdict CHANGES (e.g. neutral->cautious) plus a periodic heartbeat.
+    """
+    await asyncio.sleep(150)   # 2.5 min after startup
+    _last_verdict = None
+    _last_sent = 0.0
+    while True:
+        try:
+            _is_open = False
+            try:
+                _is_open = await asyncio.wait_for(
+                    asyncio.to_thread(broker.is_market_open), timeout=10
+                )
+            except Exception:
+                pass
+            if not _is_open:
+                import global_pulse as _gp
+                import time as _gt
+                pulse = await asyncio.to_thread(_gp.get_global_pulse, True)
+                _verdict = pulse.get("verdict")
+                _now = _gt.time()
+                _changed  = (_verdict != _last_verdict)
+                _periodic = (_now - _last_sent >= 7200)   # 2h heartbeat
+                if _verdict not in (None, "unknown") and (_changed or _periodic):
+                    _last_verdict = _verdict
+                    _last_sent = _now
+                    _create_background_task(send_message(_gp.format_telegram()))
+            await asyncio.sleep(15 * 60)   # re-check every 15 min
+        except asyncio.CancelledError:
+            raise
+        except Exception as _gpe:
+            logger.debug(f"[GLOBAL PULSE] loop error: {_gpe}")
+            await asyncio.sleep(15 * 60)
+
+
 async def weekend_research_loop():
     """
     לולאת מחקר לסופי שבוע — הבוט לומד עומק כשהשוק סגור.

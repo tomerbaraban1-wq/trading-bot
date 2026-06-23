@@ -374,6 +374,19 @@ def compute_position_size(
     if streak_mult >= 0.80 and qty * entry_price < MIN_NOTIONAL and cash >= MIN_NOTIONAL:
         qty = MIN_NOTIONAL / entry_price
 
+    # ── Step 6d: Global-pulse caution ─────────────────────────────────────────
+    # After an overseas/overnight sell-off (Nikkei/FTSE/DAX/HSI + S&P futures down),
+    # the US is likely to open weak — scale the position DOWN. The multiplier is
+    # always <= 1.0, so this only REDUCES risk, never raises it.
+    try:
+        from global_pulse import get_cached_caution_mult
+        _gp_caution = get_cached_caution_mult()
+        if _gp_caution < 1.0:
+            qty = round(qty * _gp_caution, 6)
+            logger.info(f"[SIZING] global-pulse caution ×{_gp_caution} (overseas weakness)")
+    except Exception:
+        pass
+
     # ── Step 7: Kelly Criterion overlay ──────────────────────────────────────
     kelly_qty  = qty      # start with unconstrained qty
     kelly_f    = kelly_fraction()
