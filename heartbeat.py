@@ -5276,7 +5276,24 @@ async def market_closed_training_loop():
             _n_open   = int(_os.getenv("TRAIN_TICKERS_OPEN",   "25"))
             _n_closed = int(_os.getenv("TRAIN_TICKERS_CLOSED", "60"))
             _n = _n_open if is_open else _n_closed
-            tickers = _rnd.sample(_wl, _n) if len(_wl) > _n else _wl
+            # When the US market is CLOSED, devote a slice of the training to big
+            # international large-caps from exchanges open in the meantime — London
+            # FTSE (.L) and Tokyo Nikkei (.T). yfinance fetches them by suffix; the
+            # indicators are scale/currency-invariant, so this just enriches the
+            # indicator-effectiveness learning with more diverse markets. (We still
+            # TRADE US only; technical patterns transfer best on liquid large-caps.)
+            # Disable by setting TRAIN_INTL_TICKERS="".
+            _intl = [t.strip() for t in _os.getenv("TRAIN_INTL_TICKERS",
+                "AZN.L,SHEL.L,HSBA.L,ULVR.L,BP.L,GSK.L,RIO.L,BARC.L,LLOY.L,VOD.L,"      # London FTSE 100
+                "7203.T,6758.T,9984.T,8306.T,6861.T,9432.T,8035.T").split(",") if t.strip()]  # Tokyo Nikkei
+            if (not is_open) and _intl:
+                _n_intl = min(len(_intl), max(5, _n // 4))        # ~25% international, >=5
+                _us_n   = max(0, _n - _n_intl)
+                _us_s   = _rnd.sample(_wl, _us_n) if len(_wl) > _us_n else list(_wl)
+                _intl_s = _rnd.sample(_intl, _n_intl) if len(_intl) > _n_intl else list(_intl)
+                tickers = _us_s + _intl_s
+            else:
+                tickers = _rnd.sample(_wl, _n) if len(_wl) > _n else _wl
             mode_label = "קל (שוק פתוח)" if is_open else "מלא (שוק סגור)"
             logger.info(f"[TRAINING] Running backtest — mode={mode_label}, {len(tickers)} tickers")
 
