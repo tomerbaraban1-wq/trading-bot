@@ -197,7 +197,14 @@ def close_position(
             f"reason={reason}"
         )
     except Exception as exc:
-        logger.error(f"[SHADOW] close_position failed for #{shadow_trade_id}: {exc}")
+        # Transient "database is locked" under heavy market-hours load is non-critical
+        # for this DIAGNOSTIC shadow ("what-if") track — log it quietly instead of as a
+        # real error. Everything else stays a real error. (Matches 1d75c47 / the
+        # best-effort write fixes.)
+        if "database is locked" in str(exc).lower():
+            logger.debug(f"[SHADOW] close_position #{shadow_trade_id} skipped (db busy this cycle)")
+        else:
+            logger.error(f"[SHADOW] close_position failed for #{shadow_trade_id}: {exc}")
 
 
 def compare() -> dict:
