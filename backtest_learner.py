@@ -243,17 +243,25 @@ def apply_insights() -> dict:
             return {"applied": False, "reason": "No backtest results available"}
         optimal = _result_cache.optimal_min_score
 
-    # Only apply if statistically meaningful and different from current
+    # Smooth, don't jump. The raw optimal swings cycle-to-cycle (we've seen 51..71)
+    # because each training cycle scores a different RANDOM sample of the universe;
+    # applying the raw value lets sample NOISE yank the live buy-bar around. Blend
+    # toward it (EMA, 30% weight) so the bar tracks the PERSISTENT signal: a one-off
+    # noisy optimal only nudges it, while a genuine sustained shift still moves it
+    # over a few cycles. Clamp to the optimiser's own [50,74] search range.
     current_score = int(os.getenv("MIN_BUY_SCORE", "58"))
-    if abs(optimal - current_score) < 3:
-        return {"applied": False, "reason": f"Optimal ({optimal}) close to current ({current_score}) — no change needed"}
+    blended = max(50, min(74, round(0.70 * current_score + 0.30 * optimal)))
+    if blended == current_score:
+        return {"applied": False,
+                "reason": f"Smoothed optimal ({optimal}→{blended}) ≈ current ({current_score})"}
 
-    os.environ["MIN_BUY_SCORE"] = str(optimal)
-    logger.info(f"[BACKTEST] Applied: MIN_BUY_SCORE {current_score} → {optimal}")
+    os.environ["MIN_BUY_SCORE"] = str(blended)
+    logger.info(f"[BACKTEST] Applied (smoothed): MIN_BUY_SCORE {current_score} → {blended} (raw optimal={optimal})")
     return {
         "applied": True,
         "old_score": current_score,
-        "new_score": optimal,
+        "new_score": blended,
+        "raw_optimal": optimal,
         "win_rate": _result_cache.overall_win_rate,
     }
 
