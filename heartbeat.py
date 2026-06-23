@@ -95,11 +95,17 @@ def _create_background_task(coro):
         if not t.cancelled():
             exc = t.exception()
             if exc is not None:
-                # Log the error so we know about it, but don't crash
-                logger.error(
-                    f"[BG_TASK] Background task failed silently: "
-                    f"{type(exc).__name__}: {exc}"
-                )
+                # A transient "database is locked" in a fire-and-forget task (a
+                # notification / diagnostic write that lost a race for the DB under
+                # heavy market-hours load) is non-critical — log it at debug. Every
+                # other failure stays an error so real bugs remain visible.
+                if "database is locked" in str(exc).lower():
+                    logger.debug(f"[BG_TASK] background task hit transient db-lock ({type(exc).__name__})")
+                else:
+                    logger.error(
+                        f"[BG_TASK] Background task failed silently: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
 
     task.add_done_callback(_on_done)
     return task
