@@ -2172,12 +2172,40 @@ async def auto_invest_loop():
                         except Exception:
                             pass
 
-                        sentiment = await _asyncio.wait_for(
-                            _asyncio.to_thread(score_sentiment, ticker), timeout=60
-                        )
+                        # ── Sentiment pre-gate (provably-safe Groq budget saver) ──────
+                        # Sentiment has a FIXED weight of 0.15 and sent_score∈[0,100].
+                        # From the neutral baseline (score=5 → sent_score≈44.4) the BEST
+                        # possible sentiment adds at most (100-44.4)*0.15 ≈ +8.3 pts to the
+                        # composite (MACD/sector/RS adjustments are sentiment-independent and
+                        # identical in both passes). So if the neutral-sentiment composite is
+                        # more than ~8.4 below the buy threshold, NO sentiment value can lift it
+                        # to a BUY (should_buy needs composite ≥ min_score) — the Groq call
+                        # cannot change the outcome, so we skip it. This NEVER changes a buy/skip
+                        # decision; it only stops wasting the rate-limited sentiment budget on
+                        # technically-hopeless tickers, so the Groq reads that DO happen are real
+                        # (not rate-limited neutral-5) on the candidates where sentiment matters.
+                        import time as _t_pregate
+                        from models import SentimentResult as _SentRes
                         composite = await _asyncio.wait_for(
-                            _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=60
+                            _asyncio.to_thread(get_composite_score, ticker, 5), timeout=60
                         )
+                        _min_buy = float(composite.get("min_score", 70) or 70)
+                        _SENT_MAX_LIFT = 8.4   # (100 - 44.4) * 0.15, rounded up
+                        if composite["composite_score"] + _SENT_MAX_LIFT < _min_buy:
+                            # Hopeless regardless of sentiment — keep the neutral result, skip Groq.
+                            sentiment = _SentRes(
+                                ticker=ticker, score=5, headlines=[],
+                                reasoning="sentiment skipped — technically below buy range",
+                                timestamp=_t_pregate.time(),
+                            )
+                        else:
+                            # Marginal/strong candidate — spend a REAL sentiment read and rescore.
+                            sentiment = await _asyncio.wait_for(
+                                _asyncio.to_thread(score_sentiment, ticker), timeout=60
+                            )
+                            composite = await _asyncio.wait_for(
+                                _asyncio.to_thread(get_composite_score, ticker, sentiment.score), timeout=60
+                            )
                         score = composite["composite_score"]
                         logger.info(f"AUTO-INVEST: {ticker} → {score}/100 ({'✅ BUY' if composite['should_buy'] else '❌ SKIP'})")
 

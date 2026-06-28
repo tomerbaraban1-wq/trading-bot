@@ -1,4 +1,4 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # TradingBot Watchdog — runs from Windows Task Scheduler every 2 minutes.
 # Survives sleep/resume and session death (unlike the cmd-window :loop).
 #
@@ -11,7 +11,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 $ErrorActionPreference = 'SilentlyContinue'
 
-$dir = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$dir = $PSScriptRoot
 $py  = "C:\Users\תומר\AppData\Local\Programs\Python\Python313\python.exe"
 $log = "$dir\watchdog_task.log"
 

@@ -1,11 +1,11 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # Setup auto-restart — creates Windows Scheduled Tasks for bot stability
 # Run this ONCE to create both:
 #   1. Daily restart at 04:00 (prevents socket leak buildup)
 #   2. Health check every 5 min (restarts if dead)
 # ═══════════════════════════════════════════════════════════════════════════
 
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== Setting up auto-restart tasks ===" -ForegroundColor Cyan
@@ -34,7 +34,7 @@ $task2Name = "TradingBotHealthCheck"
 
 # Create the health check script
 $healthScript = @'
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 $port = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Where-Object {$_.State -eq 'Listen'}
 if (-not $port) {
     # Bot is down — start it

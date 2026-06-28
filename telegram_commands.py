@@ -1472,5 +1472,10 @@ def get_command_list() -> str:
 /doctor — Full system diagnostic
 /tv — TradingView integration
 
+<b>🧠 למידה (אמיתית, מדודה):</b>
+/learn — סיכום למידה: טעויות, סנטימנט, ביצועים
+/newslearn — מה הבוט למד על חדשות ← תגובת מחיר
+/edges — לימוד עומק: אילו אינדיקטורים באמת מנבאים
+
 <i>💡 /מניות = לחץ על שם מניה לגרף ב-TradingView</i>
 """

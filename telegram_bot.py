@@ -172,6 +172,8 @@ async def send_menu() -> bool:
             [{"text": "📅 מה היה היום"}, {"text": "📋 כל הפקודות"}],
             # Row 5: S&P comparison (the real test) + positions with holdings count
             [{"text": "📊 מול S&P 500"}, {"text": "📍 פוזיציות"}],
+            # Row 6: learning insights — what the bot actually learned (real, measured)
+            [{"text": "🧠 למידה"}, {"text": "📰 לימוד חדשות"}, {"text": "🔬 מה מנבא"}],
         ],
         "resize_keyboard": True,
         "persistent": True,

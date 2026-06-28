@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM ═══════════════════════════════════════════════════════════════════════════
 REM הפעלת הבוט כ-Windows Service דרך NSSM
 REM יתרון: לא תלוי בטרמינל, לא נופל מ-Ctrl+C, לא תלוי בLogin של המשתמש
@@ -31,9 +31,9 @@ nssm remove TradingBot confirm >nul 2>nul
 REM התקן שירות חדש
 echo Installing TradingBot service...
 nssm install TradingBot "C:\Python\python.exe" "-m uvicorn main:app --host 0.0.0.0 --port 8000"
-nssm set TradingBot AppDirectory "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
-nssm set TradingBot AppStdout "C:\Users\תומר\Pictures\קלוד קוד\trading-bot\service_stdout.log"
-nssm set TradingBot AppStderr "C:\Users\תומר\Pictures\קלוד קוד\trading-bot\service_stderr.log"
+nssm set TradingBot AppDirectory "C:\Users\תומר\Pictures\קלוד קוד\מנהל ההשקעות שלך 💼"
+nssm set TradingBot AppStdout "C:\Users\תומר\Pictures\קלוד קוד\מנהל ההשקעות שלך 💼\service_stdout.log"
+nssm set TradingBot AppStderr "C:\Users\תומר\Pictures\קלוד קוד\מנהל ההשקעות שלך 💼\service_stderr.log"
 nssm set TradingBot AppRotateFiles 1
 nssm set TradingBot AppRotateBytes 10485760
 nssm set TradingBot Start SERVICE_AUTO_START

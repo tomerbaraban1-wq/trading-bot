@@ -1,9 +1,9 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # Auto-Restart Monitor — runs forever, restarts bot if it crashes
 # This is the PRACTICAL solution given that yfinance leak can't be fully fixed
 # ═══════════════════════════════════════════════════════════════════════════
 
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 $LogPath = "$BotPath\auto_restart.log"
 
 function Write-MonLog([string]$msg) {

@@ -1,9 +1,9 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # Scheduled Restart — restart bot every 8 hours to prevent socket exhaustion
 # This is the pragmatic solution given yfinance 1.4.0 leaks via curl_cffi
 # ═══════════════════════════════════════════════════════════════════════════
 
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 $RestartIntervalHours = 8
 
 function Get-BotPid {

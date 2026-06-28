@@ -1,4 +1,4 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # אבחון מי הורג את הבוט (אנטי-וירוס? Windows? משתמש?)
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -10,7 +10,7 @@ Write-Host ""
 
 # 1. בדיקת Windows Defender
 Write-Host "[1/4] Checking Windows Defender exclusions..."
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 try {
     $exclusions = Get-MpPreference | Select-Object -ExpandProperty ExclusionPath
     if ($exclusions -contains $BotPath) {

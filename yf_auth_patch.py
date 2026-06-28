@@ -57,6 +57,22 @@ def _throttle() -> None:
         _last_call[0] = time.monotonic()
 
 
+class _DropRecovered401Noise(logging.Filter):
+    """Drop yfinance's OWN recovered-401 ERROR spam ('Invalid Crumb',
+    'unable to access this feature'). The _make_request patch above retries
+    and recovers these (hundreds of 'yf patch retry' logs), so logging them at
+    ERROR just buries the few GENUINE failures. Real messages like 'no price
+    data' / 'possibly delisted' contain neither phrase and pass through."""
+    _NOISE = ("Invalid Crumb", "unable to access this feature")
+
+    def filter(self, record: logging.LogRecord) -> bool:  # True = keep the line
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(n in msg for n in self._NOISE)
+
+
 def install() -> bool:
     """Install the patch. Returns True if applied, False if already patched/failed."""
     global _patched
@@ -107,7 +123,13 @@ def install() -> bool:
     try:
         YfData._make_request = _patched_make_request
         _patched = True
-        logger.info("yf patch installed: crumb self-heal on 401/403 + %dms throttle",
+        # Quiet yfinance's own recovered-401 ERROR spam so genuine errors are
+        # visible in the log (the patch above already recovers these).
+        try:
+            logging.getLogger("yfinance").addFilter(_DropRecovered401Noise())
+        except Exception:
+            pass
+        logger.info("yf patch installed: crumb self-heal on 401/403 + %dms throttle + log denoise",
                     int(_MIN_INTERVAL * 1000))
         return True
     except Exception as e:  # pragma: no cover

@@ -1,11 +1,11 @@
-# ═══════════════════════════════════════════════════════════════════════════
+﻿# ═══════════════════════════════════════════════════════════════════════════
 # Stability Monitor — 30 minute deep test
 # Tracks: CloseWait, Memory, Handles, Threads + auto-restart if dead
 # ═══════════════════════════════════════════════════════════════════════════
 
 param([int]$DurationMinutes = 30, [int]$CheckInterval = 180)
 
-$BotPath = "C:\Users\תומר\Pictures\קלוד קוד\trading-bot"
+$BotPath = $PSScriptRoot
 $ReportFile = "$BotPath\stability_report.txt"
 $ExpectedPid = 20420  # Current bot PID
 

@@ -130,7 +130,13 @@ def check_cpu_usage() -> HealthMetric:
     try:
         import psutil
         process = psutil.Process(os.getpid())
-        cpu_pct = process.cpu_percent(interval=0.1)
+        raw_pct = process.cpu_percent(interval=0.1)
+        # psutil sums CPU across cores, so one busy thread can read >100% on a
+        # multi-core box. Normalize to % of TOTAL machine capacity so a brief
+        # 1-core backtest burst (~100% raw = 25% on 4 cores) isn't a false
+        # 'critical' that triggers needless auto-recovery / restarts.
+        ncpu = psutil.cpu_count() or 1
+        cpu_pct = round(raw_pct / ncpu, 1)
 
         if cpu_pct > 90:
             status = "critical"
@@ -210,33 +216,42 @@ def check_database_health() -> HealthMetric:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def check_alpaca_health() -> HealthMetric:
-    """Check Alpaca API connectivity."""
+    """Check the ACTIVE broker's connectivity/latency.
+
+    Probes whatever broker is active via broker.is_market_open(). For a LOCAL
+    paper broker (tv_paper) this is pure time-math with no network — so a
+    transient failure here is NOT a real outage and must not escalate to
+    'critical' (which would trigger needless auto-recovery / restarts).
+    """
+    from config import settings
+    _broker = (getattr(settings, "ACTIVE_BROKER", "") or "").lower()
+    _is_local = "paper" in _broker or _broker.startswith("tv")
     try:
         import broker
         start = time.time()
         await asyncio.wait_for(asyncio.to_thread(broker.is_market_open), timeout=5)
         latency_ms = (time.time() - start) * 1000
 
-        if latency_ms > 3000:
-            status = "warning"
-        else:
-            status = "healthy"
+        status = "warning" if latency_ms > 3000 else "healthy"
 
         return HealthMetric(
-            name="alpaca_latency_ms",
+            name="broker_latency_ms",
             value=latency_ms,
             unit="ms",
             status=status,
             threshold_warning=2000,
             threshold_critical=5000,
         )
-    except Exception as e:
-        record_error("alpaca")
+    except Exception:
+        record_error("broker")
+        # Local paper broker has no network dependency — a hiccup here is not a
+        # real outage, so don't false-alarm 'critical' (only a real remote
+        # broker being unreachable warrants critical).
         return HealthMetric(
-            name="alpaca_latency_ms",
+            name="broker_latency_ms",
             value=9999,
             unit="ms",
-            status="critical",
+            status=("warning" if _is_local else "critical"),
             threshold_warning=2000,
             threshold_critical=5000,
         )
@@ -338,8 +353,8 @@ async def run_health_check() -> HealthReport:
                     # Auto-recovery actions
                     if metric.name == "memory_mb":
                         auto_recovery_actions.append("Clear caches and request GC")
-                    elif metric.name == "alpaca_latency_ms":
-                        auto_recovery_actions.append("Will retry Alpaca calls with backoff")
+                    elif metric.name == "broker_latency_ms":
+                        auto_recovery_actions.append("Will retry broker calls with backoff")
 
                 elif metric.status == "warning":
                     warning_count += 1
