@@ -176,8 +176,14 @@ async def polling_loop():
                     _last_update_id = update_id + 1  # acknowledge this update
 
                     try:
-                        await handle_telegram_update(update)
+                        # Hard timeout per update: a single hung handler (stuck
+                        # network call inside a command) must never freeze the
+                        # whole polling loop — that outage looks like "the bot
+                        # ignores me" while everything else keeps running.
+                        await asyncio.wait_for(handle_telegram_update(update), timeout=180)
                         logger.debug(f"[POLLING] Processed update {update_id}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"[POLLING] Handler TIMED OUT (180s) for update {update_id} — skipped, polling continues")
                     except Exception as e:
                         logger.error(f"[POLLING] Handler error for update {update_id}: {e}")
 

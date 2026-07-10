@@ -401,9 +401,24 @@ async def lifespan(app: FastAPI):
     _polling_task = None
     try:
         from telegram_polling import is_local_mode, polling_loop as _polling_loop
+
+        async def _polling_guard():
+            # Keep Telegram listening alive forever: the loop once died
+            # silently and commands went dark until a manual restart. If it
+            # ever crashes or exits, relaunch it after a short pause.
+            while True:
+                try:
+                    await _polling_loop()
+                    logger.warning("[POLLING] Loop exited unexpectedly — restarting in 30s")
+                except asyncio.CancelledError:
+                    raise  # clean shutdown
+                except Exception as _e:
+                    logger.error(f"[POLLING] Loop crashed: {_e} — restarting in 30s")
+                await asyncio.sleep(30)
+
         if is_local_mode():
-            logger.info("[POLLING] Local mode — starting Telegram polling loop")
-            _polling_task = asyncio.create_task(_polling_loop())
+            logger.info("[POLLING] Local mode — starting Telegram polling loop (guarded)")
+            _polling_task = asyncio.create_task(_polling_guard())
         else:
             logger.info("[POLLING] Cloud mode — using webhook")
     except Exception as _poll_err:
