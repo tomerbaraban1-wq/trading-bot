@@ -1,4 +1,6 @@
-FROM python:3.11-slim
+# 3.13 = the exact runtime the bot has run on locally for months (verified);
+# the 3.11 image crashed on boot after the July 2026 feature push.
+FROM python:3.13-slim
 
 WORKDIR /app
 
