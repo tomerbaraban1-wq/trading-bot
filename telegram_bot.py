@@ -535,12 +535,14 @@ async def notify_trade_close(
 
     # Reason emoji mapping
     reason_emoji = {
-        "take_profit": "🎯 Take Profit",
-        "stop_loss_hit": "🛑 Stop Loss",
-        "smart_sell": "🤖 Smart Sell",
-        "emergency_exit": "🚨 Emergency Exit",
+        "take_profit": "🎯 הגיע ליעד הרווח",
+        "stop_loss_hit": "🛑 סטופ-לוס (הגנה מהפסד)",
+        "smart_sell": "🤖 מכירה חכמה",
+        "emergency_exit": "🚨 יציאת חירום",
         "time_exit": "⏰ זמן מקסימלי",
-        "stale_restart": "🔄 Restart",
+        "stale_restart": "🔄 סנכרון אחרי הפעלה מחדש",
+        "momentum_exit": "📉 המומנטום נחלש",
+        "partial_tp": "💰 מימוש רווח חלקי",
     }.get(reason, f"📌 {reason}" if reason else "")
 
     # TradingView link on sell too

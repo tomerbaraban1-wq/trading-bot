@@ -41,26 +41,32 @@ async def handle_health_command() -> str:
             "critical": "🔴",
         }
 
+        _status_he = {"healthy": "תקין", "degraded": "ירוד", "critical": "קריטי"}
         lines = [
-            f"{emoji_map.get(report.overall_status, '⚪')} <b>System Health: {report.overall_status.upper()}</b>",
+            f"{emoji_map.get(report.overall_status, '⚪')} <b>בריאות המערכת: {_status_he.get(report.overall_status, report.overall_status)}</b>",
             "━━━━━━━━━━━━━━━━━━",
             "",
         ]
 
         # Show key metrics
+        _metric_he = {
+            "memory_mb": "זיכרון (MB)", "cpu_pct": "מעבד (%)",
+            "db_latency_ms": "מסד נתונים (ms)", "broker_latency_ms": "ברוקר (ms)",
+            "telegram_latency_ms": "טלגרם (ms)", "yahoo_latency_ms": "נתוני שוק (ms)",
+        }
         for name, metric in list(report.metrics.items())[:8]:
             status_emoji = emoji_map.get(metric["status"], "⚪")
-            lines.append(f"{status_emoji} {name}: {metric['value']:.2f} {metric['unit']}")
+            lines.append(f"{status_emoji} {_metric_he.get(name, name)}: {metric['value']:.2f} {metric['unit']}")
 
         if report.issues:
-            lines.extend(["", "<b>⚠️ Issues:</b>"])
+            lines.extend(["", "<b>⚠️ בעיות:</b>"])
             for issue in report.issues[:5]:
                 lines.append(f"  • {issue}")
 
         return "\n".join(lines)
 
     except Exception as e:
-        return f"❌ Health check error: {e}"
+        return f"❌ שגיאה בבדיקת בריאות: {e}"
 
 
 async def handle_performance_command() -> str:
@@ -71,10 +77,10 @@ async def handle_performance_command() -> str:
         report = await generate_attribution_report(days=30)
 
         if "error" in report:
-            return f"❌ Performance error: {report['error']}"
+            return f"❌ שגיאה בדוח ביצועים: {report['error']}"
 
         lines = [
-            "📊 <b>Performance Report (30 days)</b>",
+            "📊 <b>דוח ביצועים (30 יום)</b>",
             "━━━━━━━━━━━━━━━━━━",
             "",
         ]
@@ -82,28 +88,28 @@ async def handle_performance_command() -> str:
         # Top winners
         winners = report.get("by_ticker", {}).get("top_winners", [])
         if winners:
-            lines.append("<b>🏆 Top Winners:</b>")
+            lines.append("<b>🏆 המנצחות הגדולות:</b>")
             for w in winners[:3]:
-                lines.append(f"  • {w['ticker']}: ${w['pnl']:+.2f} ({w['win_rate']:.0f}% win, {w['trades']} trades)")
+                lines.append(f"  • {w['ticker']}: ${w['pnl']:+.2f} ({w['win_rate']:.0f}% הצלחה, {w['trades']} עסקאות)")
 
         # Top losers
         losers = report.get("by_ticker", {}).get("top_losers", [])
         if losers:
-            lines.extend(["", "<b>💔 Top Losers:</b>"])
+            lines.extend(["", "<b>💔 המפסידות הגדולות:</b>"])
             for l in losers[:3]:
-                lines.append(f"  • {l['ticker']}: ${l['pnl']:.2f} ({l['win_rate']:.0f}% win)")
+                lines.append(f"  • {l['ticker']}: ${l['pnl']:.2f} ({l['win_rate']:.0f}% הצלחה)")
 
         # Insights
         insights = report.get("insights", [])
         if insights:
-            lines.extend(["", "<b>💡 Key Insights:</b>"])
+            lines.extend(["", "<b>💡 תובנות מרכזיות:</b>"])
             for insight in insights[:5]:
                 lines.append(f"  {insight}")
 
         return "\n".join(lines)
 
     except Exception as e:
-        return f"❌ Performance error: {e}"
+        return f"❌ שגיאה בדוח ביצועים: {e}"
 
 
 async def handle_news_command() -> str:
@@ -114,12 +120,12 @@ async def handle_news_command() -> str:
         news = await get_portfolio_news()
 
         if "error" in news:
-            return f"❌ News fetch error: {news['error']}"
+            return f"❌ שגיאה בשליפת חדשות: {news['error']}"
 
         lines = [
-            "📰 <b>Portfolio News Summary</b>",
+            "📰 <b>סיכום חדשות התיק</b>",
             "━━━━━━━━━━━━━━━━",
-            f"📰 Total articles: {news.get('total_articles', 0)}",
+            f"📰 סה\"כ כתבות: {news.get('total_articles', 0)}",
             "",
         ]
 
@@ -129,29 +135,29 @@ async def handle_news_command() -> str:
             bullish = sentiment.get("bullish", 0)
             bearish = sentiment.get("bearish", 0)
             neutral = sentiment.get("neutral", 0)
-            lines.append(f"🟢 Bullish: {bullish} | 🔴 Bearish: {bearish} | ⚪ Neutral: {neutral}")
+            lines.append(f"🟢 חיובי: {bullish} | 🔴 שלילי: {bearish} | ⚪ ניטרלי: {neutral}")
             lines.append("")
 
         # Catalysts
         catalysts = news.get("catalysts", [])
         if catalysts:
-            lines.append("<b>🎯 Catalysts:</b>")
+            lines.append("<b>🎯 קטליזטורים (אירועים מזיזי-מחיר):</b>")
             for cat in catalysts[:3]:
                 tickers = ", ".join(cat.get("tickers", []))
                 lines.append(f"  • {tickers}: {cat['title'][:60]}...")
-                lines.append(f"    Impact: {cat.get('impact', 0):.1f}/10")
+                lines.append(f"    עוצמת השפעה: {cat.get('impact', 0):.1f}/10")
 
         # Breaking
         breaking = news.get("breaking_news", [])
         if breaking:
-            lines.extend(["", "<b>🚨 Breaking:</b>"])
+            lines.extend(["", "<b>🚨 חדשות חמות:</b>"])
             for art in breaking[:3]:
                 lines.append(f"  • {art['title'][:80]}")
 
-        return "\n".join(lines) if len(lines) > 4 else "📰 No significant news"
+        return "\n".join(lines) if len(lines) > 4 else "📰 אין חדשות משמעותיות"
 
     except Exception as e:
-        return f"❌ News error: {e}"
+        return f"❌ שגיאה בחדשות: {e}"
 
 
 async def handle_ai_decision_command(ticker: str) -> str:
@@ -183,31 +189,35 @@ async def handle_ai_decision_command(ticker: str) -> str:
             "STRONG_SELL": "🔴🔴",
         }.get(decision.action, "⚪")
 
+        _action_he = {
+            "STRONG_BUY": "קנייה חזקה", "BUY": "קנייה", "HOLD": "החזקה",
+            "SELL": "מכירה", "STRONG_SELL": "מכירה חזקה",
+        }.get(decision.action, decision.action)
         lines = [
-            f"{action_emoji} <b>AI Decision: {ticker}</b>",
+            f"{action_emoji} <b>החלטת AI: {ticker}</b>",
             "━━━━━━━━━━━━━━━━",
-            f"Action: {decision.action}",
-            f"Confidence: {decision.confidence:.0%}",
-            f"Expected Return: {decision.expected_return:+.2f}%",
-            f"Risk Score: {decision.risk_score:.0f}/100",
-            f"Position Size: {decision.position_size_pct:.1f}% of capital",
+            f"פעולה: <b>{_action_he}</b>",
+            f"ביטחון: {decision.confidence:.0%}",
+            f"תשואה צפויה: {decision.expected_return:+.2f}%",
+            f"ציון סיכון: {decision.risk_score:.0f}/100",
+            f"גודל פוזיציה: {decision.position_size_pct:.1f}% מההון",
             "",
         ]
 
         if decision.stop_loss_price:
-            lines.append(f"🛑 Stop Loss: ${decision.stop_loss_price:.2f}")
+            lines.append(f"🛑 סטופ-לוס: ${decision.stop_loss_price:.2f}")
         if decision.take_profit_price:
-            lines.append(f"🎯 Take Profit: ${decision.take_profit_price:.2f}")
+            lines.append(f"🎯 יעד רווח: ${decision.take_profit_price:.2f}")
         if decision.holding_period_days:
-            lines.append(f"⏱️ Suggested Hold: {decision.holding_period_days:.0f} days")
+            lines.append(f"⏱️ החזקה מומלצת: {decision.holding_period_days:.0f} ימים")
 
         if decision.reasoning:
-            lines.extend(["", "<b>📋 Reasoning:</b>"])
+            lines.extend(["", "<b>📋 נימוקים:</b>"])
             for r in decision.reasoning[:5]:
                 lines.append(f"  • {r}")
 
         if decision.warnings:
-            lines.extend(["", "<b>⚠️ Warnings:</b>"])
+            lines.extend(["", "<b>⚠️ אזהרות:</b>"])
             for w in decision.warnings[:3]:
                 lines.append(f"  • {w}")
 
@@ -216,13 +226,13 @@ async def handle_ai_decision_command(ticker: str) -> str:
         return "\n".join(lines)
 
     except Exception as e:
-        return f"❌ AI decision error: {e}"
+        return f"❌ שגיאה בהחלטת AI: {e}"
 
 
 async def handle_backtest_command(ticker: str) -> str:
     """Handle /backtest <ticker> command - quick backtest."""
     if not ticker:
-        return "Usage: /backtest TICKER (e.g., /backtest AAPL)"
+        return "שימוש: ‎/backtest TICKER‎ (למשל: ‎/backtest AAPL‎)"
 
     try:
         ticker = ticker.upper().strip()
@@ -236,32 +246,32 @@ async def handle_backtest_command(ticker: str) -> str:
         result = await run_backtest(ticker, config, start_date, end_date)
 
         lines = [
-            f"📊 <b>Backtest: {ticker}</b>",
+            f"📊 <b>בקטסט (מבחן היסטורי): {ticker}</b>",
             "━━━━━━━━━━━━━━━━",
-            f"📅 Period: 6 months",
-            f"💰 Initial: $10,000 → Final: ${result.final_capital:,.2f}",
-            f"📈 Return: {result.total_return_pct:+.2f}%",
+            f"📅 תקופה: 6 חודשים",
+            f"💰 התחלה: $10,000 → סוף: ${result.final_capital:,.2f}",
+            f"📈 תשואה: {result.total_return_pct:+.2f}%",
             "",
-            f"🎯 Win Rate: {result.win_rate:.1f}%",
-            f"📊 Total Trades: {result.total_trades}",
-            f"📊 Sharpe Ratio: {result.sharpe_ratio:.2f}",
-            f"📉 Max Drawdown: {result.max_drawdown_pct:.1f}%",
-            f"💹 Profit Factor: {result.profit_factor:.2f}",
+            f"🎯 אחוז הצלחה: {result.win_rate:.1f}%",
+            f"📊 סה\"כ עסקאות: {result.total_trades}",
+            f"📊 מדד שארפ: {result.sharpe_ratio:.2f}",
+            f"📉 ירידה מקסימלית: {result.max_drawdown_pct:.1f}%",
+            f"💹 מקדם רווח: {result.profit_factor:.2f}",
         ]
 
         if result.total_trades > 0:
             lines.extend([
                 "",
-                f"🏆 Avg Win: ${result.avg_win:+.2f}",
-                f"💔 Avg Loss: ${result.avg_loss:.2f}",
-                f"⏱️ Avg Hold: {result.avg_holding_days:.1f} days",
-                f"🔥 Best Streak: {result.longest_winning_streak} wins",
+                f"🏆 רווח ממוצע: ${result.avg_win:+.2f}",
+                f"💔 הפסד ממוצע: ${result.avg_loss:.2f}",
+                f"⏱️ החזקה ממוצעת: {result.avg_holding_days:.1f} ימים",
+                f"🔥 רצף שיא: {result.longest_winning_streak} ניצחונות",
             ])
 
         return "\n".join(lines)
 
     except Exception as e:
-        return f"❌ Backtest error: {e}"
+        return f"❌ שגיאה בבקטסט: {e}"
 
 
 async def handle_risk_command() -> str:
@@ -566,11 +576,16 @@ async def handle_positions_command() -> str:
             atr_stop = trade.get("atr_stop_price")
             stop_str = f" | 🛑{((cur - atr_stop)/cur*100):.1f}%↓" if atr_stop else ""
 
-            # Ticker is a clickable TradingView link
+            # Full trade picture per position: qty, entry → now, P&L, age.
+            # (User asked for the complete story per stock: which stock, buy
+            # price, how many shares, what it's worth NOW — plus the TV link.)
+            entry = float(p.get('avg_entry_price') or trade.get('entry_price') or 0)
+            qty   = float(p.get('qty') or trade.get('qty') or 0)
+            qty_str = f"{qty:g}" if qty else "?"
             lines.append(
-                f"{em} <b>{_tv_link(p.get('ticker'))}</b>  ${cur:.2f}  "
-                f"<b>{plpc:+.1f}%</b>  ${pl:+.2f}  "
-                f"{days_held:.0f}d{age_icon}{stop_str}"
+                f"{em} <b>{_tv_link(p.get('ticker'))}</b>  ({qty_str} מניות)\n"
+                f"      📥 קנייה ${entry:.2f} → 💹 עכשיו ${cur:.2f}  "
+                f"<b>{plpc:+.1f}%</b> (${pl:+.2f})  {days_held:.0f}d{age_icon}{stop_str}"
             )
 
         lines += [
@@ -1443,10 +1458,10 @@ async def route_command(command: str, args: str = "") -> str:
 def get_command_list() -> str:
     """Get formatted list of available commands."""
     return """
-📋 <b>Advanced Commands</b>
+📋 <b>פקודות מתקדמות</b>
 ━━━━━━━━━━━━━━━━
 
-<b>📈 מינוציות מסחר:</b>
+<b>📈 פוזיציות ומסחר:</b>
 /מניות — רשימת פוזיציות + לינקים ל-TradingView
 /positions — פוזיציות מפורטות
 /top — הביצועים הטובים היום
@@ -1454,23 +1469,23 @@ def get_command_list() -> str:
 /sector — פיזור סקטורים
 /rotate — ניתוח סיבוב תיק
 
-<b>📊 Analysis:</b>
-/ai TICKER — AI trading decision
-/backtest TICKER — Run 6-month backtest
+<b>📊 ניתוח:</b>
+/ai TICKER — החלטת AI למניה
+/backtest TICKER — מבחן היסטורי (6 חודשים)
 /pro TICKER — ניתוח כניסה מקצועי
-/confluence — Multi-TF opportunities
-/forecast — Market forecast
+/confluence — הזדמנויות רב-טווח
+/forecast — תחזית שוק
 
-<b>📈 Performance:</b>
-/performance — Performance report (30 days)
-/risk — Portfolio risk analysis
-/drawdown — Drawdown control status
+<b>📈 ביצועים:</b>
+/performance — דוח ביצועים (30 יום)
+/risk — ניתוח סיכון התיק
+/drawdown — מצב בקרת ירידות
 
-<b>📰 Information:</b>
-/news — Portfolio news summary
-/health — System health
-/doctor — Full system diagnostic
-/tv — TradingView integration
+<b>📰 מידע:</b>
+/news — סיכום חדשות התיק
+/health — בריאות המערכת
+/doctor — אבחון מערכת מלא
+/tv — חיבור TradingView
 
 <b>🧠 למידה (אמיתית, מדודה):</b>
 /learn — סיכום למידה: טעויות, סנטימנט, ביצועים
