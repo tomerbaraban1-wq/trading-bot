@@ -13,4 +13,9 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# PARKED: run the tiny stub instead of the full bot. The old cloud instance
+# ("the ghost") was hijacking the owner's Telegram with stale answers, and the
+# full app currently fails to boot on Render anyway. The stub replaces it with
+# a harmless status page = equivalent to Suspend, but doable via git.
+# To restore the real bot in the cloud: swap back to  uvicorn main:app .
+CMD ["uvicorn", "cloud_stub:app", "--host", "0.0.0.0", "--port", "8000"]
