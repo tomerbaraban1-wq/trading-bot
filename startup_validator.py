@@ -9,6 +9,7 @@ CRITICAL: This module runs AFTER startup_checklist has verified
 all critical configuration. This module ALWAYS assumes startup was successful.
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -137,7 +138,7 @@ async def send_startup_report() -> None:
         # Add broker info
         try:
             import broker
-            acct = broker.get_account()
+            acct = await asyncio.to_thread(broker.get_account)  # sync broker API must not run on the event-loop thread (breaks ib_insync)
             cash = float(acct.get("cash", 0))
             equity = float(acct.get("equity", 0))
             lines.extend([
@@ -215,7 +216,7 @@ async def get_runtime_diagnostics() -> dict:
 
         # Broker info
         try:
-            acct = broker.get_account()
+            acct = await asyncio.to_thread(broker.get_account)  # sync broker API must not run on the event-loop thread (breaks ib_insync)
             diags["broker"] = {
                 "cash": float(acct.get("cash", 0)),
                 "equity": float(acct.get("equity", 0)),

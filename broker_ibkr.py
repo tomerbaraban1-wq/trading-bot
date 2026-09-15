@@ -96,6 +96,14 @@ class IBKRBroker(BrokerBase):
                         )
                         time.sleep(1.5 * attempt)  # 1.5s, then 3s
         logger.error(f"IBKR connection failed ({self._host}:{self._port}): {last_err}")
+        if isinstance(last_err, RuntimeError) and "another loop is running" in str(last_err):
+            # DIAGNOSTIC: identify which caller invokes the sync broker API from
+            # inside an already-running event loop (retries can never fix that).
+            import traceback
+            frames = "".join(traceback.format_stack(limit=12)[:-1])
+            logger.error(
+                f"[IBKR-DIAG] thread={threading.current_thread().name} caller stack:\n{frames}"
+            )
         raise ConnectionError(f"IBKR unavailable: {last_err}") from last_err
 
     # ------------------------------------------------------------------

@@ -2208,7 +2208,7 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             if not trade:
                 return f"❌ אין פוזיציה פתוחה עבור <b>{_ticker}</b>"
             # Price
-            pos = broker.get_position(_ticker)
+            pos = await asyncio.to_thread(broker.get_position, _ticker)  # off the event loop (ib_insync)
             cur    = float(pos.get("current_price", trade["entry_price"])) if pos else trade["entry_price"]
             entry  = float(trade["entry_price"])
             qty    = float(trade["qty"])
@@ -2994,7 +2994,7 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
                 stop = float(stop)
                 # Get current price for distance
                 try:
-                    pos = broker.get_position(tk)
+                    pos = await asyncio.to_thread(broker.get_position, tk)  # off the event loop (ib_insync)
                     cur = float(pos.get("current_price", entry)) if pos else entry
                 except Exception:
                     cur = entry
@@ -3474,7 +3474,7 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
                 entry = float(tr.get("entry_price") or 0)
                 stop  = float(tr.get("atr_stop_price") or 0)
                 try:
-                    pos = broker.get_position(tk)
+                    pos = await asyncio.to_thread(broker.get_position, tk)  # off the event loop (ib_insync)
                     cur = float(pos.get("current_price", entry)) if pos else entry
                     pct = (cur - entry) / entry * 100 if entry else 0
                 except Exception:
