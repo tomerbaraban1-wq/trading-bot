@@ -40,6 +40,7 @@ class IBKRBroker(BrokerBase):
         # connect handshake happens at a time — no more races, no more stuck
         # threads poisoning later calls.
         self._connect_lock = threading.Lock()
+        self._down_until = 0.0  # circuit breaker: monotonic time until which we fail fast
 
     def _next_client_id(self) -> int:
         with self._cid_lock:
@@ -74,19 +75,41 @@ class IBKRBroker(BrokerBase):
             asyncio.set_event_loop(None)
             raise
 
+    # How long to stop trying after Gateway refuses/times out a connection.
+    _DOWN_COOLDOWN_SEC = 60
+
     def _get_ib(self):
         ib = getattr(self._local, "ib", None)
         if ib is not None and ib.isConnected():
             return ib
         self._local.ib = None  # drop any stale/disconnected handle before retrying
 
+        # Circuit breaker. When IB Gateway is down (it logs out daily), every
+        # broker call used to make 3 slow attempts (~10s) while holding the
+        # connect lock. Dozens of background callers then queued on that lock,
+        # exhausting the worker threads and freezing the whole bot (/health and
+        # Telegram stopped responding). A refused connection means Gateway is
+        # not there — fail fast for everyone until the cooldown expires.
+        if time.monotonic() < self._down_until:
+            raise ConnectionError("IBKR unavailable: Gateway down (retrying in a minute)")
+
         last_err: Exception | None = None
         with self._connect_lock:  # one connect handshake at a time, bot-wide
-            for attempt in range(1, 4):  # up to 3 tries, short backoff between
+            if time.monotonic() < self._down_until:  # a queued caller just found it down
+                raise ConnectionError("IBKR unavailable: Gateway down (retrying in a minute)")
+            for attempt in range(1, 4):  # retries only for transient loop errors
                 try:
                     ib = self._connect_once()
                     self._local.ib = ib
+                    if self._down_until:
+                        logger.info("IBKR Gateway reachable again — connection restored")
+                        self._down_until = 0.0
                     return ib
+                except (OSError, TimeoutError, asyncio.TimeoutError) as e:
+                    # Refused / unreachable / timed out: Gateway itself is down.
+                    # Retrying right away cannot help — open the breaker.
+                    last_err = e
+                    break
                 except Exception as e:
                     last_err = e
                     if attempt < 3:
@@ -95,7 +118,11 @@ class IBKRBroker(BrokerBase):
                             f"({type(e).__name__}: {e}) — retrying"
                         )
                         time.sleep(1.5 * attempt)  # 1.5s, then 3s
-        logger.error(f"IBKR connection failed ({self._host}:{self._port}): {last_err}")
+            self._down_until = time.monotonic() + self._DOWN_COOLDOWN_SEC
+        logger.error(
+            f"IBKR connection failed ({self._host}:{self._port}): {last_err} — "
+            f"pausing connection attempts for {self._DOWN_COOLDOWN_SEC}s"
+        )
         if isinstance(last_err, RuntimeError) and "another loop is running" in str(last_err):
             # DIAGNOSTIC: identify which caller invokes the sync broker API from
             # inside an already-running event loop (retries can never fix that).
