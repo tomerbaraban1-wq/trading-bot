@@ -31,20 +31,40 @@ def _fetch_index_tickers() -> list[str]:
     import pandas as pd
     import requests
     tickers = set()
+    # Pages are located by CONTENT, not by a hardcoded (table index, column
+    # name) pair. Those pin to a layout Wikipedia keeps changing: the Nasdaq-100
+    # page silently stopped carrying a constituents table at all, so the old
+    # ("index 5", "Ticker") lookup raised KeyError('Ticker') on every refresh and
+    # the universe quietly shrank to S&P 500 only.
     sources = [
-        ("S&P 500",    "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", 0, "Symbol"),
-        ("Nasdaq 100", "https://en.wikipedia.org/wiki/Nasdaq-100",                  5, "Ticker"),
+        ("S&P 500",              "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"),
+        ("Nasdaq 100",           "https://en.wikipedia.org/wiki/Nasdaq-100"),
+        ("Nasdaq 100 (list)",    "https://en.wikipedia.org/wiki/NASDAQ-100"),
     ]
     headers = {"User-Agent": "Mozilla/5.0 TradingBot/1.0"}
-    for name, url, table_idx, col in sources:
+    _SYMBOL_COLS = ("symbol", "ticker", "ticker symbol")
+    for name, url in sources:
         try:
             resp = requests.get(url, timeout=15, headers=headers,
                                  verify=os.getenv("REQUESTS_CA_BUNDLE", True))
             resp.raise_for_status()
             import io
-            df = pd.read_html(io.StringIO(resp.text))[table_idx]
-            raw = df[col].dropna().tolist()
-            cleaned = [str(t).replace(".", "-").strip() for t in raw]
+            # Largest table that actually has a symbol column — constituent
+            # lists are long, while nav-boxes and stat tables are short.
+            best, best_col = None, None
+            for df in pd.read_html(io.StringIO(resp.text)):
+                for c in df.columns:
+                    if str(c).strip().lower() in _SYMBOL_COLS:
+                        if best is None or len(df) > len(best):
+                            best, best_col = df, c
+                        break
+            if best is None or len(best) < 50:
+                logger.warning(f"Dynamic watchlist: {name} has no constituents table — skipping")
+                continue
+            raw = best[best_col].dropna().tolist()
+            # Wikipedia writes class shares as BRK.B; IBKR/yfinance want BRK-B
+            cleaned = [str(t).replace(".", "-").strip().upper() for t in raw]
+            cleaned = [t for t in cleaned if t and len(t) <= 6 and t.replace("-", "").isalnum()]
             tickers.update(cleaned)
             logger.info(f"Dynamic watchlist: fetched {len(cleaned)} tickers from {name}")
         except Exception as e:
@@ -85,10 +105,17 @@ def refresh_large_cap_list() -> None:
 
     # Parallel market-cap checks with hard timeout — prevents hanging the bot
     import concurrent.futures as _cf
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    # The universe size is bounded by how many market-cap lookups finish, not by
+    # MIN_MARKET_CAP. Measured: 503 S&P names at $20B qualify 316 stocks, but the
+    # 150s budget only got through enough to yield ~208 — the cutoff, not the
+    # threshold, was capping the scanner's opportunities. This runs once daily in
+    # the background, so a longer budget costs nothing.
+    _CAP_CHECK_TIMEOUT = int(os.getenv("MARKET_CAP_CHECK_TIMEOUT", "600"))
+    _CAP_WORKERS       = int(os.getenv("MARKET_CAP_CHECK_WORKERS", "24"))
+    with ThreadPoolExecutor(max_workers=_CAP_WORKERS) as ex:
         futures = {ex.submit(_check, t): t for t in all_tickers}
         try:
-            _cf.wait(futures, timeout=150)   # was 60s — too short to market-cap-check ~540 tickers, which capped the universe at ~90. 150s + 20 workers lets the full S&P500+Nasdaq100 be evaluated
+            _cf.wait(futures, timeout=_CAP_CHECK_TIMEOUT)
         except Exception:
             pass
         # Cancel any still-running futures

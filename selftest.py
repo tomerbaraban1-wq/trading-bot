@@ -79,6 +79,28 @@ def _paper():
         broker = getattr(settings, "ACTIVE_BROKER", None) or os.getenv("ACTIVE_BROKER", "?")
     except Exception:
         broker = os.getenv("ACTIVE_BROKER", "?")
+
+    # ACTIVE_BROKER='ibkr' alone doesn't say paper vs live — both use the same
+    # broker name. The only reliable signal is the connected account's ID:
+    # IBKR paper accounts always start with 'D'.
+    if str(broker).lower() == "ibkr":
+        try:
+            from broker_ibkr import IBKRBroker
+            from config import settings
+            # Match the live broker's host/port, and use a high clientId (150+)
+            # so this ad-hoc connection doesn't collide with the running bot's
+            # own thread-local IBKR sessions (which use 1..~8).
+            account_id = IBKRBroker(
+                host=settings.IBKR_HOST, port=settings.IBKR_PORT, client_id=150,
+            ).get_account_id()
+        except Exception as e:
+            return (False, f"ibkr — לא הצלחתי לאמת מול חשבון אמיתי ({type(e).__name__})")
+        if not account_id:
+            return (False, "ibkr — לא הצלחתי לקבל מספר חשבון מה-Gateway")
+        is_paper = account_id.upper().startswith("D")
+        return (is_paper, f"ibkr, חשבון {account_id} (Paper ✓)" if is_paper
+                else f"🚨 ibkr, חשבון {account_id} — זה חשבון LIVE!")
+
     is_paper = "paper" in str(broker).lower()
     return (is_paper, f"{broker} (כסף מדומה ✓)" if is_paper else f"אזהרה: {broker} — לא נייר!")
 

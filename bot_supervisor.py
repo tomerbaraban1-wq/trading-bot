@@ -241,13 +241,18 @@ def start_bot() -> subprocess.Popen:
     )
     log(f"Bot started — PID {proc.pid}")
 
-    # Wait for it to actually bind to the port
-    for i in range(30):
+    # Wait for it to actually bind to the port.
+    # 180s, not 30s: startup does watchlist refresh, DB init and backtest warmup,
+    # and on a loaded machine (CPU pegged at 100%) that overruns 30s. The old
+    # limit declared the bot dead mid-startup and restarted it, which restarted
+    # startup — a loop that never let it finish and reach port 8000.
+    STARTUP_TIMEOUT = int(os.getenv("BOT_STARTUP_TIMEOUT", "180"))
+    for i in range(STARTUP_TIMEOUT):
         time.sleep(1)
         if is_port_listening(PORT):
-            log(f"Bot is healthy — port {PORT} listening")
+            log(f"Bot is healthy — port {PORT} listening (took {i + 1}s)")
             return proc
-    log(f"WARNING: Bot started but port {PORT} not listening after 30s")
+    log(f"WARNING: Bot started but port {PORT} not listening after {STARTUP_TIMEOUT}s")
     return proc
 
 
@@ -270,6 +275,10 @@ def main():
     bot_proc = start_bot()
     last_proactive_restart = time.time()
     last_daily_restart_date = _local_now().date()   # init to today → first restart fires at the NEXT local midnight (not on startup)
+    # Consecutive health checks with port 8000 down before declaring the bot
+    # hung. At HEALTH_CHECK_INTERVAL=30s, 4 misses ≈ 2 minutes of grace.
+    port_miss_count = 0
+    PORT_MISS_LIMIT = int(os.getenv("PORT_MISS_LIMIT", "4"))
     last_check_time = time.time()
     restart_times: list[float] = []
 
@@ -355,16 +364,26 @@ def main():
                 continue
 
             # ── Check 3: Is port actually listening? ─────────────────────
+            # Require several consecutive misses before calling it hung. A single
+            # miss also happens when the machine is merely slow (CPU at 100%),
+            # and killing then restarts a bot that was still coming up — the
+            # restart loop that kept this bot from ever finishing startup.
             if not is_port_listening(PORT):
-                log(f"Bot alive but port {PORT} not listening — likely hung, restarting")
-                try:
-                    bot_proc.kill()
-                    bot_proc.wait(timeout=10)
-                except Exception:
-                    pass
-                wait_for_port_free(PORT, max_wait=60)
-                bot_proc = start_bot()
-                last_proactive_restart = now
+                port_miss_count += 1
+                log(f"Port {PORT} not listening ({port_miss_count}/{PORT_MISS_LIMIT})")
+                if port_miss_count >= PORT_MISS_LIMIT:
+                    log(f"Bot alive but port {PORT} down {PORT_MISS_LIMIT}x — hung, restarting")
+                    try:
+                        bot_proc.kill()
+                        bot_proc.wait(timeout=10)
+                    except Exception:
+                        pass
+                    wait_for_port_free(PORT, max_wait=60)
+                    bot_proc = start_bot()
+                    last_proactive_restart = now
+                    port_miss_count = 0
+            else:
+                port_miss_count = 0
 
         except KeyboardInterrupt:
             log("Ctrl+C received — exiting")

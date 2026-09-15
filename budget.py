@@ -316,8 +316,18 @@ def compute_position_size(
         return 0.0, {"rejected": "zero_equity"}
     stop_loss_pct = settings.STOP_LOSS_PCT  # e.g. 5.0
 
+    # ── Step 0: Trading capital = the money the bot is allowed to deploy ───────
+    # Sizing keys off MAX_BUDGET, not the account balance, so position size stays
+    # the SAME whether it runs against a $1,000,000 paper account or a $10,000
+    # live one. Sizing off raw equity made MAX_BUDGET decorative: with the IBKR
+    # paper account it produced a $13,263 position where the configured budget
+    # implied $1,000 — 13× the intended risk, and nothing validated on paper
+    # would carry over to live.
+    # min() because the bot can never deploy more than the account actually has.
+    capital = min(equity, settings.MAX_BUDGET) if settings.MAX_BUDGET > 0 else equity
+
     # ── Step 1: Dollar risk budget for this trade ──────────────────────────────
-    dollar_risk = equity * (RISK_PER_TRADE_PCT / 100)
+    dollar_risk = capital * (RISK_PER_TRADE_PCT / 100)
 
     # ── Step 2: Risk per share (distance to stop loss) ────────────────────────
     risk_per_share = entry_price * (stop_loss_pct / 100)
@@ -343,7 +353,7 @@ def compute_position_size(
         effective_pct = settings.MAX_POSITION_PCT * 0.50  # ~7.5%
     else:
         effective_pct = settings.MAX_POSITION_PCT * 0.40  # ~6% (minimum)
-    max_notional   = equity * (effective_pct / 100)   # use EQUITY not MAX_BUDGET
+    max_notional   = capital * (effective_pct / 100)   # capital, not raw equity — see Step 0
     notional_qty   = max_notional / entry_price
 
     # ── Step 5: Cash constraint ────────────────────────────────────────────────
@@ -365,8 +375,8 @@ def compute_position_size(
     streak_mult = _get_streak_multiplier()
     if streak_mult != 1.0:
         qty = round(qty * streak_mult, 6)
-        # Re-apply notional cap after multiplier (based on actual equity, not fixed budget)
-        max_notional = equity * (settings.MAX_POSITION_PCT / 100)
+        # Re-apply notional cap after multiplier — same capital basis as Step 0
+        max_notional = capital * (settings.MAX_POSITION_PCT / 100)
         qty = min(qty, max_notional / entry_price)
     # Re-check minimum notional AFTER streak multiplier
     # Exception: don't override streak reduction for small accounts (streak protection matters)
@@ -392,7 +402,7 @@ def compute_position_size(
     kelly_f    = kelly_fraction()
     kelly_note = "disabled"
     if kelly_f > 0:
-        kelly_notional = equity * kelly_f
+        kelly_notional = capital * kelly_f   # capital, not raw equity — see Step 0
         kelly_qty      = round(kelly_notional / entry_price, 6) if entry_price > 0 else qty
         kelly_note     = f"f={kelly_f:.4f} notional=${kelly_notional:.2f}"
         if kelly_qty < qty:

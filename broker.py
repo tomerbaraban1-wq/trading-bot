@@ -10,6 +10,7 @@ Supported values for ACTIVE_BROKER:
   alpaca_paper
   alpaca_live
   ibkr
+  colmex        (Colmex Pro via the MT4 bridge — see broker_colmex.py)
   oanda
   tradier
   tradier_live
@@ -63,6 +64,14 @@ def _build_broker(name: str) -> BrokerBase:
     if name == "oanda":
         from broker_oanda import OandaBroker
         return OandaBroker()
+
+    if name == "colmex":
+        # Colmex Pro via an MT4 Expert Advisor bridge — Colmex publishes no
+        # programmatic API, so there is no HTTP client to build here. Raises
+        # ColmexNotConfigured unless COLMEX_MT4_FILES_DIR points at a real MT4
+        # sandbox, and refuses to place orders unless COLMEX_ALLOW_LIVE=true.
+        from broker_colmex import ColmexBroker
+        return ColmexBroker()
 
     if name in ("tradier", "tradier_paper"):
         from broker_tradier import TradierBroker

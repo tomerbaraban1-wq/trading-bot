@@ -273,6 +273,10 @@ def init_db():
         "ALTER TABLE trade_log ADD COLUMN high_watermark  REAL",
         "ALTER TABLE trade_log ADD COLUMN created_at     DATETIME",
         "ALTER TABLE trade_log ADD COLUMN exit_reason    TEXT",
+        # Which broker executed the trade. Needed to count validation trades on
+        # one venue only — e.g. "30 trades on IBKR paper" must not be inflated by
+        # the older tv_paper history sitting in the same table.
+        "ALTER TABLE trade_log ADD COLUMN broker         TEXT",
     ]
     for ddl in _migrations:
         try:
@@ -328,16 +332,26 @@ def init_db():
 
 def save_trade(trade: dict) -> int:
     conn = get_connection()
+    # Stamp the executing broker so per-venue counts stay honest (see the
+    # `broker` migration). Falls back to the configured broker when the caller
+    # doesn't pass one.
+    _broker = trade.get("broker")
+    if not _broker:
+        try:
+            from config import settings as _s
+            _broker = _s.ACTIVE_BROKER
+        except Exception:
+            _broker = None
     cursor = conn.execute(
         """INSERT INTO trade_log
         (ticker, action, qty, entry_price, trailing_stop_pct,
          rsi, macd, macd_signal, bb_position, volume_ratio,
-         sentiment_score, sentiment_reasoning)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+         sentiment_score, sentiment_reasoning, broker)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (trade["ticker"], trade["action"], trade["qty"], trade["entry_price"],
          trade.get("trailing_stop_pct"), trade.get("rsi"), trade.get("macd"),
          trade.get("macd_signal"), trade.get("bb_position"), trade.get("volume_ratio"),
-         trade.get("sentiment_score"), trade.get("sentiment_reasoning")),
+         trade.get("sentiment_score"), trade.get("sentiment_reasoning"), _broker),
     )
     conn.commit()
     return cursor.lastrowid
@@ -347,16 +361,27 @@ def close_trade(trade_id: int, exit_price: float, pnl_gross: float,
                 pnl_net: float, tax_reserved: float, fees: float = 0.0,
                 status: str = "closed", exit_reason: str = ""):
     conn = get_connection()
-    conn.execute(
+    # Idempotency guard: only close a trade that is still 'open'. Without this,
+    # a stale-record sweep (heartbeat stop_loss_monitor -> 'stale_restart') could
+    # fire AFTER a real exit already closed the trade and OVERWRITE the genuine
+    # outcome with a zero-P&L placeholder — exactly what corrupted trades #46/#49/#59
+    # (real stop_loss/-$21 got overwritten by stale_restart/$0). A second close on an
+    # already-closed row now updates 0 rows and is a no-op, preserving the real result.
+    cur = conn.execute(
         """UPDATE trade_log SET
         exit_price=?, exit_time=CURRENT_TIMESTAMP,
         pnl_gross=?, pnl_net=?, tax_reserved=?, fees=?, status=?,
         exit_reason=COALESCE(NULLIF(?, ''), status)
-        WHERE id=?""",
+        WHERE id=? AND status='open'""",
         (exit_price, pnl_gross, pnl_net, tax_reserved, fees, status,
          exit_reason, trade_id),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        logger.warning(
+            f"close_trade: trade #{trade_id} was not open (already closed?) — "
+            f"skipped re-close as '{status}' to preserve the real outcome"
+        )
 
 
 def update_trade_stop(trade_id: int, atr_stop_price: float, high_watermark: float) -> None:
@@ -446,6 +471,16 @@ def get_learning_entries(pattern_type: str | None = None, limit: int = 50) -> li
 
 _CLOSED_STATUSES = "('closed','stop_loss','take_profit','smart_sell','emergency_exit','time_exit','stale_restart','momentum_exit','partial_tp','news_exit','earnings_miss')"
 
+# Exits that represent an actual trading decision — the strategy opened a
+# position and something closed it. Excludes 'stale_restart', which is the
+# startup sweep force-closing rows it can't match at the broker (always $0.00
+# P&L). Use this wherever the question is "how did the strategy do", not
+# "which rows are no longer open".
+_REAL_EXIT_STATUSES = (
+    "closed", "stop_loss", "take_profit", "smart_sell", "emergency_exit",
+    "time_exit", "momentum_exit", "partial_tp", "news_exit", "earnings_miss",
+)
+
 
 def get_loss_trades(limit: int = 20) -> list[dict]:
     conn = get_connection()
@@ -496,6 +531,75 @@ def get_total_trades_count() -> dict:
     return {
         "total": total, "open": open_, "closed": closed,
         "wins": wins, "losses": losses, "today": today,
+    }
+
+
+def get_broker_trade_count(broker: str) -> dict:
+    """
+    Trade counts for ONE broker — the validation counter before going live.
+
+    The table holds history from every broker the bot has run on, so a plain
+    count would mix ~200 old tv_paper trades into an "IBKR paper" tally. Rows
+    written before the `broker` column existed have broker IS NULL and are
+    excluded, which is correct: they predate the current venue.
+    """
+    conn = get_connection()
+    # 'stale_restart' is bookkeeping, not a trading outcome: on startup the bot
+    # force-closes DB rows whose positions it can't match at the broker, writing
+    # $0.00 P&L. Counting those as completed trades inflates the validation
+    # tally — a run of restarts alone once pushed it to 8/30 when exactly one
+    # real round trip had happened. Judge the strategy on trades that actually
+    # opened and exited.
+    _REAL = _REAL_EXIT_STATUSES
+    _ph = ",".join("?" * len(_REAL))
+    row = conn.execute(
+        f"""SELECT
+              COUNT(*),
+              SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END),
+              SUM(CASE WHEN status IN ({_ph}) THEN 1 ELSE 0 END),
+              SUM(CASE WHEN status IN ({_ph}) AND pnl_gross > 0 THEN 1 ELSE 0 END),
+              SUM(CASE WHEN status IN ({_ph}) AND pnl_gross < 0 THEN 1 ELSE 0 END),
+              COALESCE(SUM(CASE WHEN status IN ({_ph}) THEN pnl_gross ELSE 0 END), 0.0)
+            FROM trade_log WHERE broker = ?""",
+        _REAL * 4 + (broker,),
+    ).fetchone()
+    return {
+        "broker":  broker,
+        "total":   int(row[0] or 0),
+        "open":    int(row[1] or 0),
+        "closed":  int(row[2] or 0),
+        "wins":    int(row[3] or 0),
+        "losses":  int(row[4] or 0),
+        "pnl":     float(row[5] or 0.0),
+    }
+
+
+def get_pnl_since_start() -> dict:
+    """
+    סה"כ רווח/הפסד *ממומש* מאז שהבוט התחיל לסחור (כל העסקאות הסגורות אי־פעם).
+    זה ה"כמה הרווחתי מההתחלה" — לא כולל רווח לא ממומש על פוזיציות פתוחות
+    (את זה מוסיפים בנפרד מתוך שווי התיק החי של הברוקר).
+    מחזיר:
+      {
+        "realized_gross": סה"כ רווח/הפסד ברוטו על עסקאות סגורות,
+        "realized_net":   סה"כ נטו (אחרי מס/עמלות) — 0 אם לא תועד,
+        "closed":         כמה עסקאות סגורות נספרו,
+        "first_trade":    זמן הכניסה של העסקה הראשונה אי־פעם (או None),
+      }
+    """
+    conn = get_connection()
+    row = conn.execute(
+        f"""SELECT COALESCE(SUM(pnl_gross), 0.0),
+                   COALESCE(SUM(pnl_net),   0.0),
+                   COUNT(*),
+                   MIN(entry_time)
+            FROM trade_log WHERE status IN {_CLOSED_STATUSES}"""
+    ).fetchone()
+    return {
+        "realized_gross": float(row[0] or 0.0),
+        "realized_net":   float(row[1] or 0.0),
+        "closed":         int(row[2] or 0),
+        "first_trade":    row[3],
     }
 
 

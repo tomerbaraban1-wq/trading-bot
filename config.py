@@ -87,11 +87,18 @@ class Settings:
 
     # Groq LLM
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+    # Optional: structured ticker news from Finnhub, alongside the RSS feeds.
+    # Empty = Finnhub is skipped and news comes from RSS only (no failure).
+    FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
 
     # Budget & Position Sizing (calibrated from live trade data)
     MAX_BUDGET: float = float(os.getenv("MAX_BUDGET", "10000"))
     MAX_POSITION_PCT: float = float(os.getenv("MAX_POSITION_PCT", "18"))   # 15→18: bigger positions for high-conviction trades
+    # Floor for position sizing, read directly from env by smart_position_sizing.py;
+    # exposed here too so callers (e.g. the /buy Telegram command) can size a trade
+    # the same way the bot's own entries do.
+    MIN_POSITION_PCT: float = float(os.getenv("MIN_POSITION_PCT", "3"))
     # ── PROFIT OPTIMIZATION (תוקן: רווחים גדולים יותר) ─────────────────
     TRAILING_STOP_PCT: float = float(os.getenv("TRAILING_STOP_PCT", "3.0"))    # 2.0→3.0: יותר אוויר לרווחים לרוץ
     STOP_LOSS_PCT: float = float(os.getenv("STOP_LOSS_PCT", "3.5"))            # סטופ-לוס קשיח, ללא שינוי
@@ -113,7 +120,18 @@ class Settings:
     # ── Entry quality filters — מאוזן בין כניסה לאיכות ──────────────────
     MIN_BUY_SCORE: int = int(os.getenv("MIN_BUY_SCORE", "55"))              # 60→55: bot scoring stocks at 51-58 due to overbought market
     MAX_BB_POSITION: float = float(os.getenv("MAX_BB_POSITION", "0.97"))    # 0.92→0.97: market BB at 89-107%, only block extreme tops
-    MIN_VOLUME_RATIO: float = max(float(os.getenv("MIN_VOLUME_RATIO", "0.50")), 0.80)  # >=0.80 floor: the low 0.50/0.70 was a workaround for unreliable yfinance volume (FIXED today) + one QCOM outlier. 11,614 learning records show volume <0.8 wins only 26%, >=1.2 wins 53%. See LEARNING_INSIGHTS_2026-06-17.md
+    # Single source of truth for the volume gate — no hidden floor.
+    # This used to be max(env, 0.80), so a .env of 0.70 silently ran at 0.80 and
+    # the setting looked tuned but did nothing. The 0.80 default preserves that
+    # effective behaviour; change it in .env to change it for real.
+    # Evidence is mixed and worth knowing before lowering it:
+    #   - learning_log (11,614 indicator signals): volume <0.8 succeeds 25.6%
+    #   - trade_log (169 executed trades): volume <0.7 won 64%, +$647
+    # Those disagree because executed trades also cleared every other filter
+    # (selection effect), and they filled on the tv_paper simulator, which fills
+    # at the exact market price with no slippage — precisely the cost a thin
+    # book imposes on a real IBKR fill.
+    MIN_VOLUME_RATIO: float = float(os.getenv("MIN_VOLUME_RATIO", "0.80"))
     REQUIRE_ABOVE_SMA50: bool = os.getenv("REQUIRE_ABOVE_SMA50", "true").lower() in ("true", "1", "yes")
     MAX_DAILY_LOSSES: int = int(os.getenv("MAX_DAILY_LOSSES", "3"))
 

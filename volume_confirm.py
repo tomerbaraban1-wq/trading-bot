@@ -45,7 +45,15 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-MULTIPLIER:   float = float(os.getenv("VOLUME_MULTIPLIER",   "0.8"))
+# Reads MIN_VOLUME_RATIO — the same knob scoring/checklist use — so one setting
+# governs the volume gate. This was its own VOLUME_MULTIPLIER (never set in
+# .env, so always 0.8), which meant tuning MIN_VOLUME_RATIO had no effect here
+# and the two gates could silently disagree.
+# VOLUME_MULTIPLIER still overrides, for the rare case this bar (5m intraday)
+# genuinely needs to differ from the daily-bar checks elsewhere.
+MULTIPLIER:   float = float(
+    os.getenv("VOLUME_MULTIPLIER") or os.getenv("MIN_VOLUME_RATIO", "0.80")
+)
 MA_PERIOD:    int   = int(os.getenv("VOLUME_MA_PERIOD",      "20"))
 BAR_INTERVAL: str   = os.getenv("VOLUME_BAR_INTERVAL",       "5m")
 CACHE_TTL:    int   = int(os.getenv("VOLUME_CACHE_TTL",      "300"))

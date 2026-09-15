@@ -709,10 +709,142 @@ async def stop_loss_monitor():
     # broker API hiccups returning None spuriously).
     STALE_THRESHOLD: int = int(_os.getenv("STALE_TRADE_THRESHOLD", "3"))
     _stale_counter: dict[int, int] = {}
+    # Short positions the user has already been alerted about, ticker → qty.
+    # Re-alerts only when the size changes, so a standing short doesn't spam.
+    _short_alerted: dict[str, float] = {}
+    # Same, for long positions the broker holds but the DB has no open row for.
+    _orphan_alerted: dict[str, float] = {}
+    # Buy-to-cover attempts per ticker. Bounded on purpose: an unbounded repair
+    # loop is exactly the failure that created these shorts (a sell that retried
+    # forever). After the cap the bot alerts and leaves it to the user.
+    _flatten_attempts: dict[str, int] = {}
+    # Defaults OFF: this is the single most destructive path in the bot. It once
+    # turned a -370 MPC short into a +1480 long (~$474k exposure) by buying on
+    # orders still PreSubmitted, then re-buying each cycle because it still saw
+    # the short — and the attempt cap below lives in process memory, so every
+    # restart handed it a fresh set of attempts. Enabling it must be a deliberate
+    # act; it must never switch itself on because a .env line went missing.
+    AUTO_FLATTEN        = _os.getenv("AUTO_FLATTEN_SHORTS", "false").lower() == "true"
+    MAX_FLATTEN_ATTEMPTS = int(_os.getenv("MAX_FLATTEN_ATTEMPTS", "3"))
 
     while True:
         try:
             await asyncio.sleep(60)
+
+            # ── Unexpected short detection ────────────────────────────────────
+            # This bot is long-only, so a negative position is always a defect —
+            # a sell that exceeded the held quantity (this happened: MPC reached
+            # -372 shares / -$111,697). Nothing else in the system looks at the
+            # sign of a position, so without this the exposure sits unnoticed;
+            # on a live account a naked short has unbounded downside.
+            # Runs BEFORE the open_trades check on purpose: shorts don't exist as
+            # DB rows, so an empty DB must not skip this.
+            try:
+                _positions = await asyncio.wait_for(
+                    asyncio.to_thread(broker.get_positions), timeout=20
+                )
+                _shorts = [p for p in (_positions or []) if float(p.get("qty", 0)) < 0]
+                _seen = set()
+                for _s in _shorts:
+                    _tk  = _s["ticker"]
+                    _qty = float(_s["qty"])
+                    _seen.add(_tk)
+                    if _short_alerted.get(_tk) == _qty:
+                        continue          # already reported at this size
+                    _short_alerted[_tk] = _qty
+                    _val = abs(_qty) * float(_s.get("current_price") or 0)
+                    logger.error(
+                        f"[SHORT] {_tk}: unexpected short position {_qty:g} shares "
+                        f"(~${_val:,.0f}) — bot is long-only"
+                    )
+                    _create_background_task(send_message(
+                        f"🚨 <b>פוזיציית שורט לא צפויה — {_tk}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📉 כמות: <b>{_qty:g}</b> מניות (~${_val:,.0f})\n\n"
+                        f"הבוט קונה בלבד — פוזיציה שלילית היא תקלה.\n"
+                        f"{'🔄 מנסה לסגור אוטומטית...' if AUTO_FLATTEN else 'סגור אותה בממשק אינטראקטיב.'}"
+                    ))
+                # ── Buy-to-cover: close the short before it can run away ──────
+                # A short loses without limit as the price rises (MPC cost this
+                # account ~$24k in a day). Buying back exactly the short size is
+                # risk-REDUCING and never opens a new position, so it's safe to
+                # do unattended — but only within the attempt cap above.
+                if AUTO_FLATTEN:
+                    for _s in _shorts:
+                        _tk    = _s["ticker"]
+                        _short = abs(float(_s["qty"]))
+                        _tries = _flatten_attempts.get(_tk, 0)
+                        if _tries >= MAX_FLATTEN_ATTEMPTS:
+                            continue
+                        _flatten_attempts[_tk] = _tries + 1
+                        try:
+                            # Re-read the live size: never buy more than is
+                            # actually short, or the cover itself opens a long.
+                            _cur = await asyncio.to_thread(broker.get_position, _tk)
+                            _now = abs(float(_cur["qty"])) if _cur and float(_cur["qty"]) < 0 else 0.0
+                            if _now <= 0:
+                                logger.info(f"[SHORT] {_tk}: already flat — nothing to cover")
+                                continue
+                            _buy = min(_short, _now)
+                            logger.warning(f"[SHORT] {_tk}: buying {_buy:g} to cover (attempt {_tries + 1})")
+                            _res = await asyncio.wait_for(
+                                asyncio.to_thread(broker.submit_buy, _tk, _buy), timeout=60
+                            )
+                            logger.warning(f"[SHORT] {_tk}: cover order {_res.get('status')}")
+                            _create_background_task(send_message(
+                                f"🔄 <b>סגרתי שורט — {_tk}</b>\n"
+                                f"קניתי {_buy:g} מניות לכיסוי | סטטוס: {_res.get('status')}"
+                            ))
+                        except Exception as _cover_err:
+                            logger.error(f"[SHORT] {_tk}: cover FAILED — {_cover_err}")
+                            if _flatten_attempts[_tk] >= MAX_FLATTEN_ATTEMPTS:
+                                _create_background_task(send_message(
+                                    f"⛔ <b>לא הצלחתי לסגור שורט — {_tk}</b>\n"
+                                    f"אחרי {MAX_FLATTEN_ATTEMPTS} ניסיונות. סגור ידנית באינטראקטיב.\n"
+                                    f"שגיאה: {str(_cover_err)[:100]}"
+                                ))
+
+                # Forget tickers that are no longer short, so a recurrence re-alerts
+                for _tk in list(_short_alerted):
+                    if _tk not in _seen:
+                        _short_alerted.pop(_tk, None)
+                        _flatten_attempts.pop(_tk, None)   # reset cap once resolved
+
+                # ── Orphan long detection ─────────────────────────────────
+                # The stop-loss sweep below walks DB rows and checks them at the
+                # broker — never the reverse. A long the broker holds with no DB
+                # row is therefore invisible to every protection in the system:
+                # no stop loss, no trailing, no time exit, no portfolio report.
+                # ECL sat like this unnoticed (a restart had marked its row
+                # stale_restart without actually closing the position) and was
+                # only found by reading the account by hand. Shorts have their
+                # own alert above, so this covers qty > 0 only.
+                _db_open = {t["ticker"] for t in
+                            (await asyncio.to_thread(database.get_open_trades) or [])}
+                _orphans = {p["ticker"]: float(p["qty"])
+                            for p in (_positions or [])
+                            if float(p.get("qty", 0)) > 0 and p["ticker"] not in _db_open}
+                for _tk, _qty in _orphans.items():
+                    if _orphan_alerted.get(_tk) == _qty:
+                        continue          # already reported at this size
+                    _orphan_alerted[_tk] = _qty
+                    logger.error(
+                        f"[ORPHAN] {_tk}: {_qty:g} shares held at broker with no open "
+                        f"DB row — unprotected (no stop loss / trailing / time exit)"
+                    )
+                    _create_background_task(send_message(
+                        f"🟠 <b>פוזיציה ללא הגנה — {_tk}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📦 מוחזק בברוקר: <b>{_qty:g}</b> מניות\n"
+                        f"❗ אין לה רישום פתוח ב-DB, ולכן <b>אין עליה stop loss "
+                        f"ולא ניטור</b>.\n\n"
+                        f"שלח /sync לתמונה מלאה."
+                    ))
+                for _tk in list(_orphan_alerted):
+                    if _tk not in _orphans:
+                        _orphan_alerted.pop(_tk, None)
+            except Exception as _short_err:
+                logger.warning(f"[SHORT] detection failed: {_short_err}")
 
             open_trades = await asyncio.to_thread(database.get_open_trades)
             if not open_trades:
@@ -1248,8 +1380,16 @@ async def stop_loss_monitor():
                                     f"✅ שיחררתי הון לעסקה טובה יותר"
                                 ))
                                 continue
-                    except Exception:
-                        pass
+                    except Exception as _stagnant_err:
+                        # Log, never swallow. A silent `pass` here meant a failed
+                        # stagnant-exit left the DB row 'open', so the next cycle
+                        # retried the same sell — MPC repeated 24 times and every
+                        # sell past the first one opened a short, ending at
+                        # -372 shares. A visible error is what makes a stuck exit
+                        # findable instead of compounding.
+                        logger.error(
+                            f"[STAGNANT] {ticker}: stale-position exit failed — {_stagnant_err}"
+                        )
 
                     # ── 1b2. Profit Milestone Alerts — celebrate winning positions! ──
                     # שולח התראה ב-+2%, +5%, +10%, +15% רווח (פעם אחת לכל יעד)
@@ -5830,7 +5970,7 @@ async def health_monitoring_loop():
 
             elif report.overall_status == "degraded":
                 # Just log for degraded state
-                logger.warning(f"[HEALTH] Degraded: {len(report.issues)} issues")
+                logger.warning(f"[HEALTH] Degraded: {len(report.issues)} issues — {'; '.join(report.issues)}")
 
         except asyncio.CancelledError:
             raise

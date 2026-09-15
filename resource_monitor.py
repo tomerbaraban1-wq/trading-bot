@@ -25,12 +25,16 @@ CPU_CRIT_PCT    = 250.0   # critical if CPU avg > 250%
 MEM_WARN_MB     = 500     # warn at 500 MB
 MEM_GC_MB       = 750     # force GC at 750 MB
 MEM_CRIT_MB     = 1000    # critical at 1 GB
-DISK_WARN_MB    = 500     # warn if disk < 500 MB free
+DISK_WARN_MB    = 3000    # warn if disk < 3 GB free — 500MB was too late: past
+                          # instability (Defender scanning the bot's ever-growing
+                          # log/DB folder, causing CPU spikes and slow startups)
+                          # already happened with 1.5-2.4GB free, well above 500MB
 
 # State
 _cpu_high_count   = 0      # consecutive high-CPU checks
 _last_mem_alert   = 0.0
 _last_cpu_alert   = 0.0
+_last_disk_alert  = 0.0
 _ALERT_COOLDOWN   = 1800   # 30 min between same-type alerts
 
 
@@ -65,7 +69,7 @@ async def resource_monitor_loop() -> None:
     Background task: checks memory, CPU, and disk every 60 seconds.
     Sends Telegram alerts on threshold violations.
     """
-    global _cpu_high_count, _last_mem_alert, _last_cpu_alert
+    global _cpu_high_count, _last_mem_alert, _last_cpu_alert, _last_disk_alert
 
     await asyncio.sleep(120)   # 2 min after startup — let bot settle
 
@@ -130,7 +134,8 @@ async def resource_monitor_loop() -> None:
 
             # ── Disk check ───────────────────────────────────────────────
             disk_free = _get_disk_free_mb()
-            if disk_free < DISK_WARN_MB:
+            if disk_free < DISK_WARN_MB and now - _last_disk_alert > _ALERT_COOLDOWN:
+                _last_disk_alert = now
                 await _send_alert(
                     f"💽 <b>דיסק כמעט מלא!</b>\n"
                     f"פנוי: {disk_free:.0f} MB בלבד"

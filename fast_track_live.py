@@ -162,11 +162,19 @@ async def evaluate_stage_performance() -> dict:
 
         # Get trades since stage started
         stage_start = get_stage_start_date() or (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        # Exclude 'stale_restart' rows: these are broker-sync artifacts (position
+        # vanished from the broker, true outcome unknown), not real strategy
+        # results. backtest_learner.py later backfills their pnl_gross with a
+        # SIMULATED "what-if-held-10-days" value for the learning log — that
+        # synthetic number must never feed a real promote/demote decision here.
+        # Without this filter, a run of unlucky simulated values reads as
+        # "consecutive losses" and demotes the bot to Stage 0 (max_positions=0),
+        # locking out all new buys despite real (pnl_net) performance being fine.
         rows = conn.execute("""
             SELECT pnl_gross,
                    (julianday(COALESCE(exit_time, 'now')) - julianday(entry_time)) * 24 as hold_h
             FROM trade_log
-            WHERE status NOT IN ('open')
+            WHERE status NOT IN ('open', 'stale_restart')
             AND entry_time >= ?
         """, (stage_start,)).fetchall()
 

@@ -64,7 +64,12 @@ async def _webhook_suppressor(token: str) -> None:
     which it can intercept incoming messages. The reactive 409 handler in
     _fetch_updates already covers the common case; this just tightens it."""
     while _running:
-        await asyncio.sleep(30)
+        # 10s (was 30): the cloud ghost re-registers its webhook every few
+        # minutes; each second it stays up is a window where a user message can
+        # be STOLEN (delivered to the ghost, never seen by local polling).
+        # Tightening 30→10 cuts stolen-message windows ~3x. One deleteWebhook
+        # call per 10s is negligible API load.
+        await asyncio.sleep(10)
         try:
             await _delete_webhook(token)
         except Exception:

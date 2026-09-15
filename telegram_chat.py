@@ -39,6 +39,42 @@ def _safe_ticker(raw: str) -> str | None:
     return t if _TICKER_RE.match(t) else None
 
 
+_AUTOBUY_MAX_DAYS = 14  # safety cap — standing approval can never be set longer than this
+
+
+def _autobuy_state_path():
+    from pathlib import Path
+    db_path = Path(settings.DATABASE_PATH)
+    return db_path.parent / "autobuy_state.json"
+
+
+def _set_autobuy_until(until) -> None:
+    """Persist (or clear, if until=None) the standing manual-buy approval expiry."""
+    path = _autobuy_state_path()
+    if until is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"until": until.isoformat()}), encoding="utf-8")
+
+
+def _autobuy_active() -> bool:
+    """True if a standing manual-buy approval is currently set and not expired."""
+    from datetime import datetime, timezone
+    path = _autobuy_state_path()
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        until = datetime.fromisoformat(data["until"])
+        if datetime.now(timezone.utc) >= until:
+            path.unlink(missing_ok=True)  # expired — clean up
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _score_bar(score: float, width: int = 10) -> str:
     """Visual progress bar: ██████░░░░  65/100"""
     filled = round(score / 100 * width)
@@ -339,15 +375,29 @@ def _build_context() -> dict:
         except Exception:
             return False
 
-    with _cf.ThreadPoolExecutor(max_workers=4) as _exec:
+    # רץ במקביל, אבל *לא* חוסם על קריאה תקועה: אם yfinance/חדשות איטיים,
+    # לוקחים ברירת מחדל וממשיכים. `with ThreadPoolExecutor` הישן חסם ביציאה
+    # (shutdown wait=True) עד שכל קריאה תקועה הסתיימה — מה שגרם לתשובות טלגרם
+    # לחרוג מ-25 שניות ולעשות timeout. כאן shutdown(wait=False) משחרר מיד.
+    _exec = _cf.ThreadPoolExecutor(max_workers=4)
+    try:
         _f_vix    = _exec.submit(_safe_get_vix)
         _f_market = _exec.submit(_safe_market_open)
         _f_news   = _exec.submit(_safe_news)
         _f_cb     = _exec.submit(_safe_cb)
-        vix         = _f_vix.result(timeout=8)
-        market_open = _f_market.result(timeout=8)
-        news        = _f_news.result(timeout=8)
-        cb_tripped  = _f_cb.result(timeout=8)
+
+        def _res(_f, _default, _t=6):
+            try:
+                return _f.result(timeout=_t)
+            except Exception:
+                return _default
+
+        vix         = _res(_f_vix, None)
+        market_open = _res(_f_market, False)
+        news        = _res(_f_news, [])
+        cb_tripped  = _res(_f_cb, False)
+    finally:
+        _exec.shutdown(wait=False)
 
     # ── Trading hours (Israeli time) ─────────────────────────────────
     from datetime import datetime, timezone, timedelta
@@ -891,6 +941,7 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             "/pause — עצור קניות חדשות\n"
             "/resume — חדש קניות\n"
             "/sell AAPL — מכור מניה עכשיו\n"
+            "/buy AAPL — קנה מניה ידנית (דורש אישור)\n"
             "/alert AAPL 200 — הגדר התראת מחיר\n"
             "/alerts — ראה כל ההתראות הפעילות\n"
             "/budget — הגדרות הבוט\n"
@@ -948,7 +999,97 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
         ]
         if today:
             lines.append(f"📅 נפתחו היום: <b>{today}</b>")
+
+        # Validation progress on the CURRENT broker only. The totals above span
+        # every broker the bot has ever run on, so they can't answer "how far am
+        # I through validating this venue before going live?".
+        try:
+            import database as _dbv
+            from config import settings as _sv
+            _bt = await asyncio.to_thread(_dbv.get_broker_trade_count, _sv.ACTIVE_BROKER)
+            _goal = 30
+            _done = _bt["closed"]
+            _filled = min(int(_done / _goal * 10), 10)
+            _bar = "🟩" * _filled + "⬜" * (10 - _filled)
+            lines.append("━━━━━━━━━━━━━━━━")
+            lines.append(f"🎯 <b>אימות {_sv.ACTIVE_BROKER}</b>: {_bar} <b>{_done}/{_goal}</b>")
+            if _bt["closed"]:
+                _bwr = _bt["wins"] / _bt["closed"] * 100
+                lines.append(f"   ✅{_bt['wins']} ❌{_bt['losses']} | {_bwr:.0f}% | {_fmt_pnl(_bt['pnl'])}")
+            if _done >= _goal:
+                lines.append("   ✔️ יעד האימות הושלם")
+        except Exception:
+            pass
+
         return "\n".join(lines)
+
+    # /sync — DB vs broker reconciliation.
+    # Divergence between the two has caused every serious incident in this bot:
+    # orphaned positions the DB forgot (so no stop-loss ever fires on them),
+    # and rows the DB still thought were open after the broker had moved on.
+    # Each time it went unnoticed for weeks. This surfaces it on demand.
+    if cmd in ("/sync", "sync", "סנכרון", "בדוק סנכרון", "השוואה"):
+        import database as _dbs
+        import broker as _bks
+
+        try:
+            _db_rows = await asyncio.to_thread(_dbs.get_open_trades) or []
+        except Exception as e:
+            return f"❌ קריאת ה-DB נכשלה: {type(e).__name__}"
+
+        # get_positions() swallows connection errors and returns [] — indistinguishable
+        # from "the account genuinely holds nothing". Reporting "synced" off that would
+        # be the exact false reassurance this command exists to prevent, so confirm the
+        # broker is actually reachable before trusting an empty list.
+        try:
+            _acct = await asyncio.to_thread(_bks.get_account) or {}
+        except Exception as e:
+            return f"❌ אין חיבור לברוקר: {type(e).__name__}\n<i>לא ניתן לבדוק סנכרון — בדוק ש-Gateway פתוח</i>"
+        if _acct.get("status") == "unavailable":
+            return "❌ <b>אין חיבור לברוקר</b>\n<i>לא ניתן לבדוק סנכרון — בדוק ש-Gateway פתוח</i>"
+
+        try:
+            _bk_rows = await asyncio.to_thread(_bks.get_positions) or []
+        except Exception as e:
+            return f"❌ קריאה מהברוקר נכשלה: {type(e).__name__}\n(ייתכן ש-Gateway סגור)"
+
+        _db = {r["ticker"]: float(r["qty"]) for r in _db_rows}
+        _bk = {r["ticker"]: float(r["qty"]) for r in _bk_rows}
+
+        _only_broker = sorted(set(_bk) - set(_db))          # no protection on these
+        _only_db     = sorted(set(_db) - set(_bk))          # phantom rows
+        _qty_diff    = sorted(t for t in set(_db) & set(_bk)
+                              if abs(_db[t] - _bk[t]) > 0.01)
+        _shorts      = sorted(t for t, q in _bk.items() if q < 0)
+
+        out = ["🔄 <b>סנכרון DB מול ברוקר</b>", "━━━━━━━━━━━━━━━━",
+               f"📀 ב-DB: <b>{len(_db)}</b>   |   🏦 בברוקר: <b>{len(_bk)}</b>"]
+
+        if not (_only_broker or _only_db or _qty_diff):
+            out.append("\n✅ <b>מסונכרן לגמרי</b> — אין פערים")
+        else:
+            if _only_broker:
+                out.append("\n🔴 <b>בברוקר אבל לא ב-DB</b>")
+                out.append("<i>אין עליהן stop loss ולא ניטור — הבוט לא רואה אותן</i>")
+                for t in _only_broker:
+                    out.append(f"   • {t}: {_bk[t]:g}")
+            if _only_db:
+                out.append("\n🟡 <b>ב-DB אבל לא בברוקר</b>")
+                out.append("<i>שורות רפאים — הבוט עלול לנסות למכור מה שלא קיים</i>")
+                for t in _only_db:
+                    out.append(f"   • {t}: {_db[t]:g}")
+            if _qty_diff:
+                out.append("\n🟠 <b>כמות שונה</b>")
+                for t in _qty_diff:
+                    out.append(f"   • {t}: DB={_db[t]:g} | ברוקר={_bk[t]:g}")
+
+        if _shorts:
+            out.append("\n⚠️ <b>פוזיציות שורט</b> (הבוט קונה בלבד!)")
+            for t in _shorts:
+                out.append(f"   • {t}: {_bk[t]:g}")
+            out.append("<i>סגור אותן ידנית ב-IBKR (buy to cover)</i>")
+
+        return "\n".join(out)
 
     # /risk_score — overall portfolio risk metric
     if cmd in ("/risk_score", "סיכון", "ניקוד סיכון", "סיכון תיק"):
@@ -4270,6 +4411,96 @@ async def _handle_command_async(text: str, context: dict) -> str | None:
             "כדי לראות את הלוגים המלאים:\n"
             "Render → tradebot → <b>Logs</b>"
         )
+
+    # /autobuy [days] | /autobuy off — standing approval so /buy skips the
+    # "confirm" step for a window of time. This REMOVES the per-trade safety
+    # net on purpose, at the user's explicit request — meant for paper trading
+    # convenience. Must be turned off again before any move to Live money.
+    if cmd == "/autobuy":
+        parts = t.split()
+        arg = parts[1].lower() if len(parts) > 1 else ""
+        if arg == "off" or arg == "":
+            _set_autobuy_until(None)
+            return (
+                "🔒 אישור עומד כובה — כל /buy דורש שוב \"confirm\" מפורש בכל פעם."
+                if arg == "off" else
+                "שימוש: /autobuy 7 — אשר קניות ל-7 ימים בלי לאשר כל פעם\n/autobuy off — כבה"
+            )
+        try:
+            days = float(arg)
+        except ValueError:
+            return "שימוש: /autobuy 7 — מספר ימים תקין"
+        if days <= 0:
+            return "מספר הימים חייב להיות חיובי"
+        if days > _AUTOBUY_MAX_DAYS:
+            return f"❌ מקסימום {_AUTOBUY_MAX_DAYS} ימים לאישור עומד (בטיחות — לא ניתן לשינוי). נסה: /autobuy {_AUTOBUY_MAX_DAYS}"
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        until = _dt.now(_tz.utc) + _td(days=days)
+        _set_autobuy_until(until)
+        return (
+            f"🔓 <b>אישור עומד הופעל</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"כל /buy TICKER יבוצע <b>מיד, בלי שלב אישור</b>, עד {until.strftime('%d/%m/%Y %H:%M')} UTC.\n"
+            f"⚠️ זה מבטל הגנה מפני קנייה בטעות. לביטול: <code>/autobuy off</code>"
+        )
+
+    # /buy TICKER [confirm] — manual buy, requires explicit confirmation step
+    # (skipped automatically if /autobuy is currently active — see above)
+    if cmd == "/buy" or (cmd == "קנה" and len(t.split()) > 1):
+        parts = t.split()
+        ticker_to_buy = _safe_ticker(parts[1]) if len(parts) > 1 else ""
+        confirmed = (len(parts) > 2 and parts[2].lower() == "confirm") or _autobuy_active()
+        if not ticker_to_buy:
+            return "שימוש: /buy AAPL — לדוגמה, ואז /buy AAPL confirm לאישור"
+        import broker as _brb
+        try:
+            acct = await asyncio.to_thread(_brb.get_account)
+            cash = float(acct.get("cash", 0) or 0)
+            price_info = await asyncio.to_thread(_brb.get_position, ticker_to_buy)
+            # get_position only returns open positions; for a fresh buy we need a quote.
+            import yfinance as _yfb
+            hist = await asyncio.to_thread(
+                lambda: _yfb.Ticker(ticker_to_buy).history(period="1d")
+            )
+            if hist is None or hist.empty:
+                return f"❌ לא הצלחתי למצוא מחיר עבור <b>{ticker_to_buy}</b>"
+            cur_price = float(hist["Close"].iloc[-1])
+        except Exception as e:
+            return f"❌ שגיאה בבדיקת {ticker_to_buy}: {e}"
+
+        # Default position size: same MIN_POSITION_PCT the bot itself uses for entries.
+        from config import settings as _cfgb
+        target_value = cash * (_cfgb.MIN_POSITION_PCT / 100)
+        qty = round(target_value / cur_price, 4) if cur_price > 0 else 0
+
+        if not confirmed:
+            return (
+                f"⚠️ <b>אישור קנייה — {ticker_to_buy}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💵 מחיר נוכחי: ${cur_price:.2f}\n"
+                f"📦 כמות משוערת: {qty:g} מניות (~${target_value:,.2f})\n"
+                f"💰 מזומן זמין: ${cash:,.2f}\n\n"
+                f"⚠️ זו קנייה ידנית — עוקפת את ניתוח הבוט (ציון, RSI, חדשות).\n"
+                f"לאישור סופי, שלח:\n"
+                f"<code>/buy {ticker_to_buy} confirm</code>"
+            )
+
+        if target_value > cash:
+            return f"❌ אין מספיק מזומן. נדרש ${target_value:,.2f}, זמין ${cash:,.2f}"
+        if qty <= 0:
+            return f"❌ כמות לא תקינה לחישוב — בדוק את המחיר של {ticker_to_buy}"
+
+        try:
+            result = await asyncio.to_thread(_brb.submit_buy, ticker_to_buy, qty)
+            return (
+                f"✅ <b>קנייה בוצעה — {ticker_to_buy}</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"📦 כמות: {qty:g} מניות\n"
+                f"💵 מחיר: ${result.get('price') or cur_price:.2f}\n"
+                f"📋 סטטוס: {result.get('status', 'submitted')}"
+            )
+        except Exception as e:
+            return f"❌ הקנייה נכשלה: {e}"
 
     # /sell TICKER — force sell a position
     if cmd == "/sell" or (cmd == "מכור" and len(t.split()) > 1):

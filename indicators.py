@@ -218,7 +218,12 @@ def get_current_indicators(symbol: str) -> dict | None:
             except (ValueError, KeyError):
                 pass
 
-    df = get_stock_data(symbol, period="3mo")  # 3mo instead of 6mo — faster
+    # 1y (~252 bars), not 3mo (~64): SMA200 needs 200 bars, so shorter windows
+    # left sma_200/above_sma200 permanently None — golden cross scored "N/A" for
+    # every stock, no trend ever earned its +8, and the REQUIRE_GOLDEN_CROSS
+    # guard (which tests `above_sma200 is False`) silently never fired.
+    # Measured: 1y fetch is not slower than 3mo, so there's no cost to this.
+    df = get_stock_data(symbol, period="1y")
     if df.empty:
         return None
     df = add_all_indicators(df)

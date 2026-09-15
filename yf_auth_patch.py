@@ -30,6 +30,47 @@ import time
 
 logger = logging.getLogger("yf_auth_patch")
 
+
+def _fix_ca_bundle_path() -> None:
+    """Point curl at an ASCII-safe copy of the CA bundle.
+
+    yfinance now fetches through curl-cffi, and libcurl takes the CA file path as
+    bytes in the system codepage. This machine's Python lives under a Hebrew user
+    folder, so the path never survives that conversion and every HTTPS call dies
+    with `curl: (77) error setting certificate verify locations`. The symptom is
+    silent and total: every ticker returns an empty frame, AAPL included, so the
+    bot simply sees a market with no data rather than an error it can report.
+
+    Windows keeps an ASCII 8.3 alias for the same file, which libcurl accepts.
+    """
+    import os
+    if os.name != "nt" or os.environ.get("CURL_CA_BUNDLE"):
+        return                                   # not Windows, or already set
+    try:
+        import ctypes
+        import certifi
+        path = certifi.where()
+        if path.isascii():
+            return                               # nothing to work around
+        buf = ctypes.create_unicode_buffer(1024)
+        if not ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024):
+            logger.warning("CA bundle path is non-ASCII and has no 8.3 alias — "
+                           "market data may fail with curl error 77")
+            return
+        short = buf.value
+        if not (short and short.isascii() and os.path.exists(short)):
+            logger.warning("CA bundle 8.3 alias unusable — market data may fail")
+            return
+        os.environ["CURL_CA_BUNDLE"] = short
+        os.environ.setdefault("SSL_CERT_FILE", short)
+        logger.info(f"CA bundle remapped to ASCII path: {short}")
+    except Exception as e:
+        logger.warning(f"CA bundle remap skipped ({type(e).__name__}: {e})")
+
+
+# Must run before any curl-cffi session is created, i.e. before the first fetch.
+_fix_ca_bundle_path()
+
 # Minimum spacing between yfinance HTTP requests (process-wide). Smooths the
 # bursts that trip Yahoo's rate limit. Modest so scans stay fast.
 _MIN_INTERVAL = 0.15  # seconds (tuned up from 0.10 to cut residual 401 bursts)

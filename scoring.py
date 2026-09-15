@@ -165,6 +165,17 @@ _FUNDAMENTAL_CACHE_TTL = 7 * 24 * 3600  # 7 days — fundamentals don't change d
 _fundamental_rate_limit_until: float = 0.0
 
 
+# ETFs carry no company fundamentals (no ROE / margins / EPS) — yfinance
+# returns a 404 "No fundamentals data" for them, which spams the log at ERROR
+# and wastes an API call. Used to skip the fetch and return neutral instead.
+_KNOWN_ETFS = {
+    "SPY", "QQQ", "IWM", "DIA", "VOO", "VTI", "VEA", "VWO", "VXUS", "VUG", "VTV",
+    "XLE", "XLF", "XLK", "XLV", "XLI", "XLP", "XLY", "XLU", "XLB", "XLRE", "XLC",
+    "GLD", "GDX", "GDXJ", "SLV", "USO", "UNG", "OIH", "XOP", "SMH", "SOXX",
+    "ARKK", "TLT", "HYG", "LQD", "VNQ", "EEM", "EFA", "XBI", "KRE", "ITB", "IBB",
+}
+
+
 def get_fundamental_score(ticker: str) -> float:
     """
     Return a fundamental quality score 0-10 for *ticker* — Buffett-style analysis.
@@ -184,6 +195,10 @@ def get_fundamental_score(ticker: str) -> float:
     Result is cached for 24 hours per ticker.
     Returns 5.0 (neutral) if data is unavailable (fail-open).
     """
+    # ETFs have no fundamentals — skip the 404-prone fetch, return neutral.
+    if ticker.upper() in _KNOWN_ETFS:
+        return 5.0
+
     now_ts = _time_module.time()
     cached = _fundamental_cache.get(ticker)
     if cached is not None:

@@ -577,6 +577,41 @@ async def notify_trade_close(
         ],
     ]
 
+    # ── סיכום רץ: שווי התיק כרגע + כמה הרווחנו סה"כ מאז ההתחלה ──
+    running_summary = ""
+    try:
+        import database as _dbtot
+        _ss = _dbtot.get_pnl_since_start()
+        _since_gross = _ss["realized_gross"]
+        _since_emoji = "🟢" if _since_gross >= 0 else "🔴"
+        try:
+            from telegram_chat import _fmt_price as _fp2, _fmt_pnl as _fpnl2
+            _since_str = _fpnl2(_since_gross)
+        except Exception:
+            _fp2 = None
+            _since_str = f"${_since_gross:+,.2f}"
+        # שווי תיק חי מהברוקר (כמה הוא שווה באותו רגע)
+        _equity_line = ""
+        try:
+            import broker as _brtot
+            _acct = await asyncio.to_thread(_brtot.get_account)
+            _eq = float(_acct.get("equity", 0) or 0)
+            if _eq > 0:
+                try:
+                    _eq_str = _fp2(_eq) if _fp2 else f"${_eq:,.2f}"
+                except Exception:
+                    _eq_str = f"${_eq:,.2f}"
+                _equity_line = f"\n💼 שווי תיק כרגע:      <b>{_eq_str}</b>"
+        except Exception:
+            pass
+        running_summary = (
+            f"\n━━━━━━━━━━━━━━━━"
+            f"{_equity_line}"
+            f"\n{_since_emoji} סה\"כ מאז ההתחלה:  <b>{_since_str}</b>  ({_ss['closed']} עסקאות)"
+        )
+    except Exception:
+        pass
+
     await send_message(
         f"{title}\n"
         f"━━━━━━━━━━━━━━━━\n"
@@ -592,7 +627,8 @@ async def notify_trade_close(
         f"⏱️  זמן:   {dur_str}"
         + (f"\n{reason_emoji}" if reason_emoji else "")
         + (f"\n🔖 עסקה #{trade_id}" if trade_id else "")
-        + streak_line,
+        + streak_line
+        + running_summary,
         reply_markup={"inline_keyboard": sell_buttons},
     )
 

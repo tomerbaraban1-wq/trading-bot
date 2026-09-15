@@ -551,23 +551,91 @@ async def lifespan(app: FastAPI):
 
             # Cross-check: close SQLite records that no longer exist in the broker
             # (prevents stop-loss monitor from trying to sell non-existent positions)
+            #
+            # This runs at startup, the worst possible moment to trust a position
+            # snapshot: IB Gateway accepts the API socket before it has finished
+            # streaming the portfolio, so ib.positions() can legitimately return a
+            # PARTIAL list for the first few seconds. The old code closed on a
+            # single snapshot, so one half-filled reply destroyed real open trades
+            # — 17 'stale_restart' rows on the ibkr broker, four of them written
+            # inside the same 6-second sweep on 2026-08-25.
+            #
+            # heartbeat.stop_loss_monitor already requires STALE_TRADE_THRESHOLD
+            # consecutive misses before closing a record. Startup now applies the
+            # same standard, so the two paths agree instead of one undoing the
+            # other's work.
             try:
                 from database import close_trade as _close_trade
-                broker_positions = await asyncio.wait_for(asyncio.to_thread(_broker.get_positions), timeout=20)
-                # Guard: if broker returns empty list (API error / transient failure),
-                # skip cross-check entirely to avoid closing ALL valid positions
-                if not broker_positions:
+
+                _confirms = max(1, int(os.getenv("RECONCILE_CONFIRMATIONS", "3")))
+                _gap_secs = max(0.0, float(os.getenv("RECONCILE_GAP_SECONDS", "5")))
+
+                # Poll the broker _confirms times. A ticker counts as missing only
+                # if it is absent from EVERY snapshot — one sighting proves the
+                # position is alive and settles the question in its favour.
+                _seen_tickers = set()
+                _good_snapshots = 0
+                for _attempt in range(_confirms):
+                    if _attempt:
+                        await asyncio.sleep(_gap_secs)
+                    try:
+                        _snap = await asyncio.wait_for(
+                            asyncio.to_thread(_broker.get_positions), timeout=20
+                        )
+                    except Exception as _se:
+                        logger.warning(
+                            f"RECONCILE: snapshot {_attempt + 1}/{_confirms} failed: {_se}"
+                        )
+                        continue
+                    # get_positions() returns [] both for "account holds nothing"
+                    # and for a swallowed API error, so an empty reply proves
+                    # nothing and must not count as evidence either way.
+                    if not _snap:
+                        logger.warning(
+                            f"RECONCILE: snapshot {_attempt + 1}/{_confirms} returned 0 positions "
+                            f"— not counting it as evidence"
+                        )
+                        continue
+                    _good_snapshots += 1
+                    _seen_tickers |= {p.get("ticker", "").upper() for p in _snap}
+
+                if _good_snapshots == 0:
                     logger.warning(
-                        "RECONCILE: broker returned 0 positions — skipping cross-check "
+                        "RECONCILE: no usable position snapshot — skipping cross-check "
                         "(could be API error; not closing valid SQLite records)"
                     )
                 else:
-                    broker_tickers = {p.get("ticker", "").upper() for p in broker_positions}
-                    for t in open_trades:
-                        if t["ticker"].upper() not in broker_tickers:
+                    _missing = [
+                        t for t in open_trades
+                        if t["ticker"].upper() not in _seen_tickers
+                    ]
+
+                    # Safety valve: if the broker accounts for NONE of our open
+                    # trades, the likely cause is a bad connection or the wrong
+                    # account — not every position vanishing at once. Closing the
+                    # whole book on that guess is unrecoverable, so report it and
+                    # leave the records alone.
+                    if _missing and len(_missing) == len(open_trades):
+                        logger.error(
+                            f"RECONCILE: broker accounts for 0 of {len(open_trades)} open SQLite "
+                            f"trade(s) across {_good_snapshots} good snapshot(s) — refusing to "
+                            f"close them all. Verify the API is bound to the intended account."
+                        )
+                        try:
+                            from telegram_bot import send_message as _sm
+                            _warn_lines = [
+                                "⚠️ <b>אזהרת סנכרון</b>",
+                                f"הברוקר לא מזהה אף אחת מ-{len(open_trades)} הפוזיציות הפתוחות ברישום.",
+                                "לא סגרתי כלום — ייתכן שההתחברות ל-API תקולה או שמדובר בחשבון אחר.",
+                            ]
+                            await _sm("\n".join(_warn_lines))
+                        except Exception:
+                            pass
+                    else:
+                        for t in _missing:
                             logger.warning(
-                                f"RECONCILE: {t['ticker']} is open in SQLite but NOT in broker — "
-                                f"closing as stale_restart"
+                                f"RECONCILE: {t['ticker']} is open in SQLite but absent from all "
+                                f"{_good_snapshots} broker snapshot(s) — closing as stale_restart"
                             )
                             _close_trade(t["id"], t["entry_price"], 0.0, 0.0, 0.0, 0.0, "stale_restart")
             except Exception as _ce:

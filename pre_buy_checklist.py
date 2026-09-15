@@ -51,8 +51,15 @@ async def run_pre_buy_checklist(
     # Without this, ALL current candidates (NVDA, AVGO, ORCL at RSI 50) were blocked.
     rsi_death_zone_min = float(os.getenv("RSI_AVOID_MIN", "42"))
     rsi_death_zone_max = float(os.getenv("RSI_AVOID_MAX", "55"))
+    rsi_overbought = float(os.getenv("RSI_OVERBOUGHT_MAX", "70"))
 
-    if rsi and rsi_death_zone_min <= rsi <= rsi_death_zone_max:
+    if rsi and rsi >= rsi_overbought:
+        # DATA-DRIVEN (2026-06-27): across 1,153 simulated own-trade entries, RSI >= 70
+        # had a 1.4% win rate (vs 38.9% baseline) — chasing overbought stocks almost
+        # always loses. This 'else: passed normal' gap used to let those entries straight
+        # through. Now a hard block. Tune or disable via RSI_OVERBOUGHT_MAX.
+        failed.append(f"RSI {rsi:.0f} overbought (>={rsi_overbought:.0f}) — WR 1.4% היסטורי")
+    elif rsi and rsi_death_zone_min <= rsi <= rsi_death_zone_max:
         # NEW: Allow high-score override (composite >= 65 = strong signal regardless of RSI)
         if score >= 65:
             passed.append(f"RSI {rsi:.0f} ב-zone אבל ציון {score:.0f} גבוה — חריגה מאושרת")
@@ -69,9 +76,17 @@ async def run_pre_buy_checklist(
     # ── Check 2: Volume ──────────────────────────────────────────────────
     min_vol = float(os.getenv("MIN_VOLUME_RATIO", "0.75"))
     if volume_ratio and volume_ratio < min_vol:
-        # SOFT (balanced): low volume reduces confidence but does not block
-        soft_failed.append(f"Volume {volume_ratio:.2f}x נמוך מ-{min_vol}x")
-        confidence_boost -= 1
+        # SOFT but heavy: low volume reduces confidence (does not hard-block, to keep
+        # some flexibility). DATA-DRIVEN (2026-06-27): vol < 0.75x had only ~30% WR;
+        # filtering these would lift overall WR from ~41% to ~47%. Penalty raised
+        # -1 -> -3 so a low-volume name now needs a much stronger score to pass.
+        soft_failed.append(f"Volume {volume_ratio:.2f}x נמוך מ-{min_vol}x (WR ~30% היסטורי)")
+        confidence_boost -= 3
+    elif volume_ratio and volume_ratio >= 1.5:
+        # DATA-DRIVEN (2026-06-27): vol >= 1.5x had a 69.6% win rate (vs 38.9% baseline) —
+        # the single strongest bullish confirmation in the data. Reward it heavily.
+        passed.append(f"Volume {volume_ratio:.2f}x — נפח גבוה מאוד (WR 70% היסטורי)")
+        confidence_boost += 4
     elif volume_ratio and volume_ratio >= 1.0:
         passed.append(f"Volume {volume_ratio:.2f}x — confirmation חזקה")
         confidence_boost += 2
@@ -89,8 +104,12 @@ async def run_pre_buy_checklist(
         passed.append("מעל SMA200 — long-term trend חיובי")
         confidence_boost += 2
     elif above_sma50:
-        passed.append("מעל SMA50 — short-term trend חיובי")
-        confidence_boost += 1
+        # DATA-DRIVEN (2026-06-27): above SMA50 but BELOW SMA200 had only ~28% win rate
+        # (vs 39% baseline). Being under the 200-day line is a long-term downtrend — this
+        # used to score +1 (treated as a positive); now penalized. Requiring above-SMA200
+        # (with RSI<70 + vol>=0.75) lifts projected WR to ~52%.
+        soft_failed.append("מתחת SMA200 — מגמה ארוכת-טווח יורדת (WR ~28% היסטורי)")
+        confidence_boost -= 2
 
     # ── Check 4: Portfolio Concentration ─────────────────────────────────
     max_positions = int(os.getenv("MAX_OPEN_POSITIONS", "6"))

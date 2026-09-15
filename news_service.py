@@ -44,6 +44,47 @@ def _ticker_feeds(ticker: str) -> list[tuple[str, str]]:
          f"https://www.benzinga.com/stock/{t.lower()}/feed"),
     ]
 
+def _fetch_finnhub(ticker: str) -> list[dict]:
+    """
+    Ticker news from the Finnhub API — structured JSON, faster and more reliable
+    than scraping RSS. Returns [] (silently) when FINNHUB_API_KEY isn't set, so
+    the RSS path keeps working unchanged for anyone without a key.
+    Free tier: 60 calls/min. Docs: https://finnhub.io/docs/api/company-news
+    """
+    api_key = getattr(settings, "FINNHUB_API_KEY", "") or ""
+    if not api_key:
+        return []
+    from datetime import timedelta
+    today = datetime.now()
+    frm = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+    to = today.strftime("%Y-%m-%d")
+    try:
+        resp = requests.get(
+            "https://finnhub.io/api/v1/company-news",
+            params={"symbol": ticker.upper(), "from": frm, "to": to, "token": api_key},
+            timeout=6,
+        )
+        if resp.status_code == 429:
+            logger.warning("Finnhub rate limit hit — falling back to RSS only")
+            return []
+        resp.raise_for_status()
+        items = resp.json()
+        if not isinstance(items, list):
+            return []
+        return [
+            {
+                "headline": it.get("headline", "").strip(),
+                "summary": it.get("summary", "").strip(),
+                "source": "Finnhub",
+            }
+            for it in items
+            if it.get("headline")
+        ]
+    except Exception as e:
+        logger.warning(f"Finnhub news fetch failed for {ticker}: {e}")
+        return []
+
+
 _news_cache: dict = {}
 _cache_time: dict = {}
 _cache_lock = threading.Lock()   # guards _news_cache / _cache_time against concurrent threads
@@ -144,11 +185,14 @@ def get_headlines(ticker: str, limit: int = 8, bypass_cache: bool = False) -> li
     ticker_feed_list = _ticker_feeds(ticker)
     all_feed_list = RSS_FEEDS + ticker_feed_list
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=11) as ex:
         futures = {
             ex.submit(_fetch_one_feed, name, url): name
             for name, url in all_feed_list
         }
+        # Finnhub runs alongside the RSS feeds (not instead of them) — it's a
+        # no-op returning [] when no API key is configured.
+        futures[ex.submit(_fetch_finnhub, ticker)] = "Finnhub"
         processed = set()
         try:
             for fut in as_completed(futures, timeout=8):
@@ -167,15 +211,23 @@ def get_headlines(ticker: str, limit: int = 8, bypass_cache: bool = False) -> li
 
     # From ticker-specific feeds: accept all headlines
     # From general feeds: filter to those mentioning the ticker
-    ticker_source_names = {name for name, _ in ticker_feed_list}
-    matched = []
+    # Finnhub is queried per-symbol, so treat it like the ticker-specific feeds:
+    # its headlines are already about this stock and need no keyword filtering.
+    ticker_source_names = {name for name, _ in ticker_feed_list} | {"Finnhub"}
+    # Two tiers, because the caller only keeps the first `limit` headlines:
+    # symbol-specific sources are genuinely about this stock, while general
+    # feeds contribute keyword matches that are often listicle spam ("Best Tech
+    # Stocks Right Now"). Ordering by tier — not by which feed happened to
+    # finish first — keeps the relevant news from being crowded out.
+    specific: list[str] = []
+    general: list[str] = []
     for item in all_items:
         if item.get("source") in ticker_source_names:
-            matched.append(item["headline"])  # already ticker-specific
+            specific.append(item["headline"])
         elif pattern.search(item["headline"] + " " + item.get("summary", "")):
-            matched.append(item["headline"])  # general feed mentioning ticker
+            general.append(item["headline"])
 
-    unique = _dedup(matched)
+    unique = _dedup(specific + general)
     _cache_set(cache_key, unique)
     return unique[:limit]
 

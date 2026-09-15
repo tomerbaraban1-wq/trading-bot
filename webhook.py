@@ -1464,11 +1464,10 @@ async def backtest_insights(_auth: None = Depends(_verify_secret)):
 
 
 @router.get("/activity")
-async def activity_feed(limit: int = 30):
+async def activity_feed(limit: int = 30, _auth: None = Depends(_verify_secret)):
     """
     Real-time activity feed — last N bot actions parsed from the log file.
     Returns structured events with Hebrew descriptions for the dashboard sidebar.
-    No auth needed — read-only, no sensitive data.
     """
     import re
     from pathlib import Path
