@@ -64,12 +64,12 @@ async def _webhook_suppressor(token: str) -> None:
     which it can intercept incoming messages. The reactive 409 handler in
     _fetch_updates already covers the common case; this just tightens it."""
     while _running:
-        # 10s (was 30): the cloud ghost re-registers its webhook every few
-        # minutes; each second it stays up is a window where a user message can
-        # be STOLEN (delivered to the ghost, never seen by local polling).
-        # Tightening 30→10 cuts stolen-message windows ~3x. One deleteWebhook
-        # call per 10s is negligible API load.
-        await asyncio.sleep(10)
+        # 4s (was 30, then 10): the cloud ghost re-registers its webhook every
+        # 5 minutes (measured 2026-09-16: exactly 12/hour, 07:00-17:00); each
+        # second it stays up is a window where a user message can be STOLEN
+        # (delivered to the ghost, never seen by local polling). One
+        # deleteWebhook call per 4s is well within Telegram's rate limits.
+        await asyncio.sleep(4)
         try:
             await _delete_webhook(token)
         except Exception:
