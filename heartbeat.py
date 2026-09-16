@@ -60,6 +60,47 @@ _partial_sell_done: set[str] = set()  # "trade_id:stage" strings
 # If we hit this limit, oldest tasks are forcibly cancelled.
 _MAX_BACKGROUND_TASKS = 200
 
+_last_pause_reminder_day = None
+
+
+def _remind_paused_once_a_day() -> None:
+    """Telegram reminder (max once a day) that buying is paused.
+
+    A BOT_PAUSED=true line sat in .env from 2026-09-04 to 09-16: twelve days
+    without a single buy, and nobody noticed. It also explains why /resume
+    didn't stick: /resume only clears the in-memory flag, so the .env line
+    re-paused the bot on every daily restart. The reminder says which case
+    applies so the user knows whether /resume is enough.
+    """
+    global _last_pause_reminder_day
+    today = _dt.date.today()
+    if _last_pause_reminder_day == today:
+        return
+    _last_pause_reminder_day = today
+
+    persistent = False
+    try:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        with open(env_path, encoding="utf-8-sig") as f:
+            persistent = any(
+                line.strip().lower() == "bot_paused=true" for line in f
+            )
+    except Exception as e:
+        logger.debug(f"[PAUSE-REMINDER] could not read .env: {e}")
+
+    how_to_resume = (
+        "⚠️ ההשהיה כתובה בקובץ <b>.env</b> — /resume לא יספיק, "
+        "כי כל אתחול משהה מחדש. צריך למחוק את השורה <code>BOT_PAUSED=true</code>."
+        if persistent else
+        "לחידוש: שלח <b>/resume</b>"
+    )
+    _create_background_task(send_message(
+        "⏸️ <b>הבוט מושהה — לא קונה מניות</b>\n"
+        "━━━━━━━━━━━━━━━━\n"
+        "הבורסה פתוחה, אבל כל סריקת קנייה מדולגת.\n"
+        f"{how_to_resume}"
+    ))
+
 
 def _create_background_task(coro):
     """
@@ -1830,6 +1871,7 @@ async def auto_invest_loop():
             # /pause command check — user can pause buying via Telegram
             if _os.getenv("BOT_PAUSED", "").lower() == "true":
                 logger.info("AUTO-INVEST: Bot paused by user — skipping scan")
+                _remind_paused_once_a_day()
                 await asyncio.sleep(5 * 60)
                 continue
 
