@@ -59,6 +59,22 @@ if (-not (Test-BotPort)) {
     }
 }
 
+# ── Gateway is only needed when the bot trades through IBKR ────────────────
+# On tv_paper (internal demo) Gateway is irrelevant, and launching it every
+# 30 minutes just pops a login window at the user (reported 2026-09-18).
+# The deadman check above still runs for every broker.
+$activeBroker = ''
+$envFile = Join-Path $PSScriptRoot '.env'
+if (Test-Path $envFile) {
+    foreach ($line in Get-Content $envFile -Encoding UTF8) {
+        if ($line -match '^\s*ACTIVE_BROKER\s*=\s*(\S+)') { $activeBroker = $Matches[1].Trim().ToLower() }
+    }
+}
+if ($activeBroker -ne 'ibkr') {
+    Write-Output "ACTIVE_BROKER='$activeBroker' - Gateway not needed, skipping launch."
+    exit 0
+}
+
 if (Test-ApiPort) {
     Write-Output "Gateway already connected - nothing to do."
     exit 0
