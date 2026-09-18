@@ -102,6 +102,54 @@ def _remind_paused_once_a_day() -> None:
     ))
 
 
+async def _adopt_orphan(ticker: str, qty: float, entry_price: float) -> int:
+    """Give a broker-held position with no open DB row a proper DB row, so every
+    protection (stop loss, trailing, time exit, reports) starts covering it.
+
+    Uses the broker's average entry price. Recorded through log_trade_open like
+    a normal fill (single insert → safe to retry on "database is locked")."""
+    from models import WebhookPayload, TradeAction
+
+    payload = WebhookPayload(
+        secret=settings.WEBHOOK_SECRET,
+        ticker=ticker, action=TradeAction.BUY, price=entry_price,
+    )
+    order = {"price": entry_price, "filled_qty": qty, "order_id": "adopted-orphan"}
+
+    trade_id = None
+    for attempt in range(6):
+        try:
+            trade_id = await asyncio.to_thread(
+                log_trade_open, payload, None, order, qty, {"adopted_orphan": True}, None,
+            )
+            break
+        except Exception as e:
+            if "locked" not in str(e).lower() or attempt == 5:
+                raise
+            await asyncio.sleep(2 ** attempt)
+
+    stop_txt = "ברירת המחדל של הבוט"
+    try:
+        from atr_stop import compute_initial_stop
+        stop_price, _meta = await asyncio.to_thread(compute_initial_stop, ticker, entry_price)
+        await asyncio.to_thread(database.update_trade_stop, trade_id, stop_price, entry_price)
+        stop_txt = f"${stop_price:.2f}"
+    except Exception as e:
+        logger.warning(f"[ORPHAN] {ticker}: adopted without ATR stop ({e}) — default stop applies")
+
+    logger.warning(
+        f"[ORPHAN] {ticker}: ADOPTED {qty:g} shares @ ${entry_price:.2f} as trade #{trade_id} "
+        f"— now protected (stop {stop_txt})"
+    )
+    _create_background_task(send_message(
+        f"🟢 <b>פוזיציה יתומה אומצה — {ticker}</b>\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📦 {qty:g} מניות @ ${entry_price:.2f}\n"
+        f"🛡️ עכשיו מוגנת: סטופ-לוס {stop_txt}, ניטור ויציאה בזמן"
+    ))
+    return trade_id
+
+
 def _create_background_task(coro):
     """
     Create a background task and track it to prevent garbage collection.
@@ -755,6 +803,11 @@ async def stop_loss_monitor():
     _short_alerted: dict[str, float] = {}
     # Same, for long positions the broker holds but the DB has no open row for.
     _orphan_alerted: dict[str, float] = {}
+    # When each orphan was first seen (monotonic seconds). An orphan is adopted
+    # only after it has persisted this long, so a buy whose DB write is still
+    # retrying (up to ~2 min) is never mistaken for one and double-recorded.
+    _orphan_first_seen: dict[str, float] = {}
+    ORPHAN_ADOPT_AFTER_SEC = 5 * 60
     # Buy-to-cover attempts per ticker. Bounded on purpose: an unbounded repair
     # loop is exactly the failure that created these shorts (a sell that retried
     # forever). After the cap the bot alerts and leaves it to the user.
@@ -884,6 +937,37 @@ async def stop_loss_monitor():
                 for _tk in list(_orphan_alerted):
                     if _tk not in _orphans:
                         _orphan_alerted.pop(_tk, None)
+
+                # ── Orphan adoption (tv_paper only) ───────────────────────
+                # Alerting alone left PSX/EOG/VLO unprotected for hours
+                # (2026-09-17). Once an orphan has persisted past the grace
+                # period, record an open DB row at the broker's average entry
+                # price so the stop loss / trailing / time exit cover it.
+                # tv_paper only: fills are immediate there. On IBKR a position
+                # can linger while a SELL is still pending, and adopting it
+                # would invite a second sell — the pattern behind the August
+                # shorts — so IBKR stays alert-only.
+                import time as _orph_time
+                _now_m = _orph_time.monotonic()
+                for _tk in list(_orphan_first_seen):
+                    if _tk not in _orphans:
+                        _orphan_first_seen.pop(_tk, None)
+                if (settings.ACTIVE_BROKER or "").lower() == "tv_paper":
+                    _pos_by_tk = {p["ticker"]: p for p in (_positions or [])}
+                    for _tk, _qty in _orphans.items():
+                        _first = _orphan_first_seen.setdefault(_tk, _now_m)
+                        if _now_m - _first < ORPHAN_ADOPT_AFTER_SEC:
+                            continue
+                        _p = _pos_by_tk.get(_tk) or {}
+                        _entry = float(_p.get("avg_entry_price") or 0)
+                        if _entry <= 0:
+                            continue
+                        try:
+                            await _adopt_orphan(_tk, _qty, _entry)
+                            _orphan_first_seen.pop(_tk, None)
+                            _orphan_alerted.pop(_tk, None)
+                        except Exception as _adopt_err:
+                            logger.error(f"[ORPHAN] {_tk}: adoption failed: {_adopt_err}")
             except Exception as _short_err:
                 logger.warning(f"[SHORT] detection failed: {_short_err}")
 
@@ -3142,7 +3226,30 @@ async def auto_invest_loop():
                             secret=settings.WEBHOOK_SECRET,
                             ticker=ticker, action=TradeAction.BUY, price=actual_price,
                         )
-                        trade_id = log_trade_open(fake_payload, sentiment, order, filled_qty, sizing_meta, slip)
+                        # The broker has ALREADY filled this order. If the DB write
+                        # fails, the shares become an orphan with no stop loss —
+                        # 2026-09-17: PSX/EOG/VLO hit "database is locked" after a
+                        # >15s write lock and sat unprotected. Retry hard, and off
+                        # the event loop (this used to block every other loop for
+                        # the whole busy_timeout). log_trade_open does a single
+                        # insert, so a retry after "locked" cannot duplicate a row.
+                        trade_id = None
+                        for _db_try in range(6):
+                            try:
+                                trade_id = await _asyncio.to_thread(
+                                    log_trade_open, fake_payload, sentiment, order,
+                                    filled_qty, sizing_meta, slip,
+                                )
+                                break
+                            except Exception as _db_err:
+                                if "locked" not in str(_db_err).lower() or _db_try == 5:
+                                    raise
+                                _wait = 2 ** _db_try  # 1, 2, 4, 8, 16s
+                                logger.warning(
+                                    f"[BUY-DB] {ticker}: DB locked while recording the fill "
+                                    f"(attempt {_db_try + 1}/6) — retrying in {_wait}s"
+                                )
+                                await _asyncio.sleep(_wait)
 
                         # Set ATR trailing stop immediately after fill
                         try:
